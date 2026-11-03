@@ -1,7 +1,9 @@
-# U30 Pro OpenWrt（MU300 维护分支基底）
+# U30 Pro OpenWrt
 
 这是独立的 U30 Pro 源码移植仓库，基底为 `kanoqwq/mu300-linux` 的
-**minikano-openwrt-feats** 分支 `29061dc8`。当前工作分支：`u30pro-bringup`。
+**minikano-openwrt-feats** 分支 `29061dc8`，从 `u30pro-bringup` 保留历史独立维护。
+公开仓库：[kanoqwq/u30pro_openwrt](https://github.com/kanoqwq/u30pro_openwrt)，
+日常维护分支为 `main`。
 
 采用 MU300 的公共看板、管理与工具框架；U30 Pro 的 Linux 6.12.94、
 AIC8800 SDIO、240×240 原生屏幕及基带/电源驱动来自其干净参考仓库。

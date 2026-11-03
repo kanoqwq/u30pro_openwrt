@@ -1,7 +1,9 @@
 # Independent U30 Pro port
 
-- This repository is D:/Git/u30pro_openwrt/mu300-linux, branch u30pro-bringup,
-  based on kanoqwq/mu300-linux minikano-openwrt-feats at 29061dc8, never main.
+- This repository is https://github.com/kanoqwq/u30pro_openwrt, maintained on
+  main at D:/Git/u30pro_openwrt/mu300-linux. Its starting branch was
+  u30pro-bringup, based on kanoqwq/mu300-linux minikano-openwrt-feats at
+  29061dc8, never the MU300 main branch.
 - Read docs/U30PRO-PORT.zh-CN.md. U30 Pro uses UMS9632, Linux 6.12.94,
   AIC8800 SDIO and its own native panel. Never assemble MU300 hardware images
   as a U30 Pro release or run the inherited MU300 platform services blindly.
