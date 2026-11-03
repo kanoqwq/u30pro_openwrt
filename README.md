@@ -5,6 +5,9 @@
 公开仓库：[kanoqwq/u30pro_openwrt](https://github.com/kanoqwq/u30pro_openwrt)，
 日常维护分支为 `main`。
 
+本机维护目录为 `D:/Git/u30pro_openwrt/source`；旁边的 `../U30pro-openwrt/` 是保留的
+只读参考检出，不属于本仓库源码，也不作为自动构建入口。
+
 采用 MU300 的公共看板、管理与工具框架；U30 Pro 的 Linux 6.12.94、
 AIC8800 SDIO、240×240 原生屏幕及基带/电源驱动来自其干净参考仓库。
 原 MU300、E5 和用户提供的参考目录均不修改。

@@ -3,7 +3,7 @@
 先读 [LOCAL-BUILD.zh-CN.md](LOCAL-BUILD.zh-CN.md) 和
 [U30PRO-PORT.zh-CN.md](U30PRO-PORT.zh-CN.md)。
 
-- 本地路径 `D:/Git/u30pro_openwrt/mu300-linux`，分支 `u30pro-bringup`。
+- 本地路径 `D:/Git/u30pro_openwrt/source`，独立仓库 `kanoqwq/u30pro_openwrt`，维护分支 `main`。
 - 基底为用户的 `minikano-openwrt-feats`，不得改用 MU300 main。
 - 内核为 U30 Pro 原生 6.12.94，不是 MU300 的 7.2/6.18。
 - `tools/build-layout.json` 已登记共享缓存和只读原厂输入。

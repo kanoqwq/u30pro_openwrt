@@ -1,6 +1,7 @@
 # U30 Pro 本地构建规范
 
-本仓库从用户的 MU300 `minikano-openwrt-feats` 分支创建，当前 `u30pro-bringup`。
+本仓库从用户的 MU300 `minikano-openwrt-feats` 分支创建，现为独立仓库
+`kanoqwq/u30pro_openwrt`，维护分支 `main`。
 这里构建 U30 Pro，不是 MU300/F50/V50/U30 Air；不能使用它们的 Image、模块、
 SC2355 固件或单 boot 安装布局。硬件代码来自 [移植记录](U30PRO-PORT.zh-CN.md)。
 
@@ -8,8 +9,8 @@ SC2355 固件或单 boot 安装布局。硬件代码来自 [移植记录](U30PRO
 
 | 内容 | 路径 |
 | --- | --- |
-| Windows 源码 | D:/Git/u30pro_openwrt/mu300-linux |
-| WSL 源码 | /mnt/d/Git/u30pro_openwrt/mu300-linux |
+| Windows 源码 | D:/Git/u30pro_openwrt/source |
+| WSL 源码 | /mnt/d/Git/u30pro_openwrt/source |
 | Linux 工作区 | /home/kano/openwrt-build |
 | 已有 Linux 6.12.94 源码 | 工作区 sources/u30pro-linux-6.12.94 |
 | 已有独立对象缓存 | 工作区 objects/u30pro/release |
@@ -27,7 +28,7 @@ stock 三镜像和公开构建输入归档暂时仍在 `D:/Git/U30pro-openwrt` �
 在 WSL Ubuntu-22.04 执行：
 
 ```sh
-cd /mnt/d/Git/u30pro_openwrt/mu300-linux
+cd /mnt/d/Git/u30pro_openwrt/source
 python3 tools/build-release.py plan
 python3 tools/build-release.py check
 python3 tools/build-release.py run --label u30pro-native-regression -- \
