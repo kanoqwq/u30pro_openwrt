@@ -209,6 +209,10 @@ def sources(refresh=False):
     # Native screen extensions keep their public RPC/module names. Only their
     # persistent directory and hardware actions are adapted, not the protocol.
     native_files = {
+        'ui/native-control/overlay/usr/share/u30pro/battery-log.uc':'usr/share/u30pro/battery-log.uc',
+        'ui/native-control/overlay/usr/sbin/u30pro-battlog':'usr/sbin/u30pro-battlog',
+        'ui/native-control/overlay/etc/init.d/u30pro-battlog':'etc/init.d/u30pro-battlog',
+
         'ui/native-control/overlay/usr/share/u30pro/wallpaper.uc':'usr/share/u30pro/wallpaper.uc',
         'ui/native-control/overlay/usr/libexec/rpcd/u30pro-wallpaper':'usr/libexec/rpcd/u30pro-wallpaper',
         'ui/native-control/overlay/usr/share/rpcd/acl.d/u30pro-wallpaper.json':'usr/share/rpcd/acl.d/u30pro-wallpaper.json',
@@ -386,7 +390,7 @@ def finish():
         'network','dnsmasq','odhcpd','firewall','dropbear','rpcd','uhttpd','wpad',
         'cron','sysntpd','done','umount','u30pro-watchdog','u30pro-factory','mu300-cpu-driver','mu300-vendor','mu300-hw',
         'mu300-atd','mu300-smsd','mu300-network-recovery','mu300-accounts','mu300-user-packages','ttyd',
-        'mu300-ndp','mu300-charge','u30pro-panel','mu300-post','unisoc-modem-ui',
+        'mu300-ndp','mu300-charge','u30pro-battlog','u30pro-panel','mu300-post','unisoc-modem-ui',
         'unisoc-cpu','unisoc-cpu-cores','unisoc-network-performance','unisoc-sms-forward',
         'unisoc-traffic','unisoc-ttl','u30pro-nfc')
     rc = ROOT/'etc/rc.d'; rc.mkdir(exist_ok=True)
@@ -559,6 +563,8 @@ def package():
                     package_root/'docs/U30PRO-INSTALLER-20261102.zh-CN.md')
     shutil.copyfile(TOP/'docs/U30PRO-NFC-20261103.zh-CN.md',
                     package_root/'docs/U30PRO-NFC-20261103.zh-CN.md')
+    shutil.copyfile(TOP/'docs/DATA-ROAMING-20261103.zh-CN.md',
+                    package_root/'docs/DATA-ROAMING-20261103.zh-CN.md')
     shutil.copyfile(STAGE/'Image.manifest.json',package_root/'docs/KERNEL-WRAPPER.json')
     shutil.copyfile(KERNEL/'u30pro-build.json',package_root/'docs/KERNEL-BUILD.json')
     shutil.copyfile(RUNTIME/'runtime.json',package_root/'docs/HARDWARE-RUNTIME.json')

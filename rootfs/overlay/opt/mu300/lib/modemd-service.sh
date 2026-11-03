@@ -2,7 +2,7 @@
 # OpenWrt native modem service and model-specific channel layouts.
 modemd_require() {
     [ -x /opt/mu300/bin/mu300-atd-io ] && [ -r /opt/mu300/bin/mu300-modemd ] &&
-        /usr/bin/ucode -e "import * as a from 'uloop'; import * as b from 'socket'; import * as c from 'ubus'; import * as d from 'mu300.registration'; import * as e from 'mu300.cellparse'; import * as f from 'uci';" || {
+        /usr/bin/ucode -e "import * as a from 'uloop'; import * as b from 'socket'; import * as c from 'ubus'; import * as d from 'mu300.registration'; import * as e from 'mu300.cellparse'; import * as f from 'uci'; import * as g from 'mu300.signal-queue';" || {
         echo 'mu300-atd: native modem runtime is incomplete' >&2; return 1;
     }
     # Refuse an unsafe in-place transition from an old physical owner. Repair
@@ -63,6 +63,10 @@ modemd_single_layout() {
             modemd_broker atd4 /dev/stty_nr5 /run/mu300-at4 '' "$live" 0 ''
             modemd_broker atd5 /dev/stty_nr3 /run/mu300-at5 '' "$live" 0 ''
         fi
+        # Shared engineering ports; keep SPACTCARD in every collector request.
+        # The same C bridge owns them permanently, with no tty reopen.
+        modemd_broker atd6 /dev/stty_nr6 /run/mu300-at6 '' '' 0 ''
+        modemd_broker atd7 /dev/stty_nr7 /run/mu300-at7 '' '' 0 ''
         modemd_start 0
         return
     fi

@@ -292,7 +292,14 @@ class Android:
         helper=package_root()/'desktop/binary_io.py'
         spec=importlib.util.spec_from_file_location('desktop_binary_io',helper)
         binary=importlib.util.module_from_spec(spec);spec.loader.exec_module(binary)
-        return binary.pull_binary(self.call,self.shell,command,destination,expected_size)
+        # Native container backups also run through this portable entry on
+        # Windows/macOS and embedded Android ADB. Keep the transfer budget here
+        # so slow links do not inherit the small shared metadata-read timeout.
+        def transfer(*args, **kwargs):
+            if args and args[0] == 'pull':
+                kwargs['timeout'] = max(888, kwargs.get('timeout', 0))
+            return self.call(*args, **kwargs)
+        return binary.pull_binary(transfer,self.shell,command,destination,expected_size)
 
     def read(self,command):
         with tempfile.TemporaryDirectory() as temp:

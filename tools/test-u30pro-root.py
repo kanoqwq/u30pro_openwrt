@@ -23,7 +23,13 @@ def main():
     # These are production inputs, never files recovered from a hotfixed device.
     # Compare the assembled root too: source-only syntax tests miss stale staging.
     inputs={
+        'usr/share/u30pro/battery-log.uc':'devices/u30pro/native/ui/native-control/overlay/usr/share/u30pro/battery-log.uc',
+        'usr/sbin/u30pro-battlog':'devices/u30pro/native/ui/native-control/overlay/usr/sbin/u30pro-battlog',
+        'etc/init.d/u30pro-battlog':'devices/u30pro/native/ui/native-control/overlay/etc/init.d/u30pro-battlog',
+        'www/luci-static/resources/view/mu300/battery.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/battery.js',
+
         'opt/mu300/bin/mu300-modemd':'rootfs/overlay/opt/mu300/bin/mu300-modemd',
+        'opt/mu300/lib/modemd-service.sh':'rootfs/overlay/opt/mu300/lib/modemd-service.sh',
         'opt/mu300/bin/mu300-at':'rootfs/overlay/opt/mu300/bin/mu300-at',
         'opt/mu300/bin/mu300-dual-radio':'rootfs/overlay/opt/mu300/bin/mu300-dual-radio',
         'opt/mu300/bin/mu300-sim-env':'rootfs/overlay/opt/mu300/bin/mu300-sim-env',
@@ -41,6 +47,16 @@ def main():
         'www/luci-static/resources/mu300/common.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/common.js',
         'www/luci-static/resources/view/mu300/device.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/device.js',
         'www/luci-static/resources/mu300/nfc.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/nfc.js',
+        'www/luci-static/resources/mu300/roaming.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/roaming.js',
+        'www/luci-static/resources/view/mu300/locks.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/locks.js',
+        'opt/mu300/lib/roaming.uc':'rootfs/overlay/opt/mu300/lib/roaming.uc',
+        'opt/mu300/lib/registration.sh':'rootfs/overlay/opt/mu300/lib/registration.sh',
+        'usr/share/ucode/mu300/registration.uc':'rootfs/overlay/usr/share/ucode/mu300/registration.uc',
+        'usr/share/ucode/mu300/signal-queue.uc':'rootfs/overlay/usr/share/ucode/mu300/signal-queue.uc',
+        'opt/mu300/lib/network-recovery.uc':'openwrt/overlay/opt/mu300/lib/network-recovery.uc',
+        'opt/mu300/bin/mu300-network-recovery':'openwrt/overlay/opt/mu300/bin/mu300-network-recovery',
+        'usr/libexec/unisoc-modem/roaming':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/roaming',
+        'usr/libexec/rpcd/unisoc-roaming':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/unisoc-roaming',
         'usr/libexec/unisoc-modem/nfc':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/nfc',
         'usr/libexec/rpcd/unisoc-nfc':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/unisoc-nfc',
         'usr/share/rpcd/acl.d/luci-app-mu300.json':'openwrt/luci-app-mu300/root/usr/share/rpcd/acl.d/luci-app-mu300.json',
@@ -68,6 +84,7 @@ def main():
         assert (ROOT/target).read_bytes()==expected,'Prepared root missed current source: '+source
     print('Current hotfix sources/native adapters/catalogs match prepared root: '+str(len(inputs)))
     scripts=['/opt/mu300/bin/mu300-modemd','/usr/sbin/u30pro-ui-feed',
+        '/usr/libexec/unisoc-modem/roaming','/opt/mu300/bin/mu300-network-recovery',
         '/usr/share/ucode/mu300/dash.uc','/usr/libexec/unisoc-modem/charge.uc',
         '/opt/mu300/bin/wifi-client','/usr/share/ucode/mu300/wifi-native.uc',
         '/usr/share/u30pro/wallpaper.uc',
@@ -167,10 +184,16 @@ def main():
                     '-p','test_u30pro_nfc.py'],check=True)
     # Execute the real target ucode/UCI module with an isolated configuration
     # and mocked ubus, never attach a physical wireless interface.
-    for source in ('u30pro_wifi_native.uc','u30pro_channels.uc','u30pro_carrier.uc'):
+    for source in ('u30pro_wifi_native.uc','u30pro_channels.uc','u30pro_carrier.uc','roaming.uc','signal_queue.uc'):
         testfile=ROOT/'tmp'/source
         try:
-            testfile.write_bytes((TOP/'tests'/source).read_bytes())
+            content=(TOP/'tests'/source).read_bytes()
+            for original,target in {
+                b'../rootfs/overlay/opt/mu300/lib/roaming.uc':b'/opt/mu300/lib/roaming.uc',
+                b'../openwrt/overlay/opt/mu300/lib/network-recovery.uc':b'/opt/mu300/lib/network-recovery.uc',
+                b'../rootfs/overlay/usr/share/ucode/mu300/signal-queue.uc':b'/usr/share/ucode/mu300/signal-queue.uc',
+            }.items():content=content.replace(original,target)
+            testfile.write_bytes(content)
             print(run('chroot /target /usr/bin/ucode /tmp/'+source),end='')
         finally:
             testfile.unlink(missing_ok=True)

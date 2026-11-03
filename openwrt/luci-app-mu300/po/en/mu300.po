@@ -38,3 +38,72 @@ msgstr "CPU settings"
 
 msgid "SIM 卡管理"
 msgstr "SIM management"
+
+msgid "电池与电量"
+msgstr "Battery & power"
+
+msgid "电池历史"
+msgstr "Battery history"
+
+msgid "电池使用时间"
+msgstr "On battery"
+
+msgid "预估续航"
+msgstr "Estimated time left"
+
+msgid "自上次充满"
+msgstr "Since last full charge"
+
+msgid "自上次充电"
+msgstr "Since last charge"
+
+msgid "24 小时"
+msgstr "24 hours"
+
+msgid "7 天"
+msgstr "7 days"
+
+msgid "小时"
+msgstr "h"
+
+msgid "分钟"
+msgstr "min"
+
+msgid "已连接电源，未充电"
+msgstr "Plugged in, not charging"
+
+msgid "正在充电或已充满"
+msgstr "Charging or full"
+
+msgid "电池放电功率"
+msgstr "Power drawn from the battery"
+
+msgid "时间区间"
+msgstr "Time range"
+
+msgid "每分钟记录，保留最近 10 天；关机或缺失时段留空。功率和电流为电池净值，不是充电器输入值。"
+msgstr "Recorded every minute, kept for 10 days. Off-device and missing periods stay blank. Power and current are net battery values, not charger input."
+
+msgid "未检测到电池"
+msgstr "No battery detected"
+
+msgid "暂无历史记录，采集后自动显示"
+msgstr "No history yet; new readings will appear automatically"
+
+msgid "电池记录读取失败，请稍后重试"
+msgstr "Could not read battery history; retry shortly"
+
+msgid "连接电源时不估算续航"
+msgstr "Not estimated while plugged in"
+
+msgid "放电记录不足，暂不估算"
+msgstr "More discharge history is needed"
+
+msgid "按最近放电速度估算"
+msgstr "Based on recent discharge"
+
+msgid "暂无记录"
+msgstr "No readings"
+
+msgid "已更新"
+msgstr "Updated"

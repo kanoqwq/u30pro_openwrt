@@ -163,5 +163,25 @@
     "source_sha256": "81fa9e7dcc7c74fef631812ee3061dd02a6edd5fae69947fcd7b32f016a619b4",
     "sha256": "0a9646c4f463362b8b0857831ec905fae642c007cdb11c39809e7cdf094cbbb8",
     "reason": "Integrate native FM11NT08x Wi-Fi provisioning with a persistent native function-menu switch and event-only synchronization. Validate tag permissions and WSC bounds, publish NDEF length last, reject truncated or multiline keys, skip unchanged EEPROM pages and verify readback. No AT, NV or modem ownership changes."
+  },
+  "ui/native-control/overlay/usr/share/u30pro/battery-log.uc": {
+    "source_sha256": "f1a7dbfebeacfa68954f6e6712c26e1b4b9dd7b7c10ab3e17aad3c875faf1ead",
+    "sha256": "35e59dd0e0f51606b93ce9ffef74a95a70bc61c3083b13e8fa4683e0dce04e76",
+    "reason": "Connect native battery history to the MU300 persistent root and shared dashboard. Preserve screen file/RPC contracts; detect actual battery presence, expose live readings and estimate only from continuous discharge, with bounded retention and offline validation."
+  },
+  "ui/native-control/overlay/usr/sbin/u30pro-battlog": {
+    "source_sha256": "e1caaf788baa6e53845f0af6de5005aa470715811bec8632f16e70223868115f",
+    "sha256": "60c5a70656c4ae04c470b343c8875c11af1e3037bd16f8c1e462f11b3b2b8405",
+    "reason": "Connect native battery history to the MU300 persistent root and shared dashboard. Preserve screen file/RPC contracts; detect actual battery presence, expose live readings and estimate only from continuous discharge, with bounded retention and offline validation."
+  },
+  "ui/native-control/overlay/etc/init.d/u30pro-battlog": {
+    "source_sha256": "ac1a5c2aae8f37b2b87d8b1ab15e4e094193155f276bfc14c17d1d68e73a02be",
+    "sha256": "581c7e3a0fbf91d5fbdab23afabbd17334811e7ab9380ed8d98c7a97a267dfa5",
+    "reason": "Connect native battery history to the MU300 persistent root and shared dashboard. Preserve screen file/RPC contracts; detect actual battery presence, expose live readings and estimate only from continuous discharge, with bounded retention and offline validation."
+  },
+  "tests/test_battery_log.uc": {
+    "source_sha256": "8c7ff359958bc64fdf1e60722b398fd415d20ef77a8ae87432396c0ed1cf4115",
+    "sha256": "fbf24ce387bf945503daf86290bb245454b7c549a3569eb90ec687e741d2ce10",
+    "reason": "Connect native battery history to the MU300 persistent root and shared dashboard. Preserve screen file/RPC contracts; detect actual battery presence, expose live readings and estimate only from continuous discharge, with bounded retention and offline validation."
   }
 }

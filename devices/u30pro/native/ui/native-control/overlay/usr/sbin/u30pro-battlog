@@ -3,6 +3,7 @@
  * web page: history {range: full|charge|24h|7d, points: 10..1000}. */
 import * as uloop from 'uloop';
 import { connect } from 'ubus';
+import { mkdir, writefile, unlink, readfile, glob } from 'fs';
 import * as blog from '/usr/share/u30pro/battery-log.uc';
 
 uloop.init();
@@ -12,6 +13,17 @@ if (!bus) {
 	exit(1);
 }
 blog.init();
+/* The menu depends on detected hardware, not the product name. */
+function publish_presence() {
+	let path = '/run/u30pro-battery/present', present = blog.present();
+	if ((readfile(path) != null) == present) return;
+	mkdir('/run/u30pro-battery', 0755);
+	if (present) writefile(path, '1\n'); else unlink(path);
+	/* LuCI caches evaluated filesystem menu dependencies. Invalidate only when
+	 * the detected hardware presence changes, never on every sample/request. */
+	for (let cache in glob('/tmp/luci-indexcache.*.json')) unlink(cache);
+}
+publish_presence();
 /* ubus_rpc_session: calls through the web server (uhttpd's /ubus) carry it, and ucode refuses a message with a field the policy does not list */
 bus.publish('u30pro.battery', {
 	history: { args: { range: '', points: 0, ubus_rpc_session: '' }, call: function(req) { return blog.history(req.args.range ?? '24h', req.args.points); } }
@@ -19,9 +31,11 @@ bus.publish('u30pro.battery', {
 
 let timer;
 function run() {
-	try { blog.tick(); }
+	try { publish_presence(); if (blog.present()) blog.tick(); }
 	catch (e) { warn(`u30pro-battlog: ${e}\n`); }
 	timer.set(10000);
 }
 timer = uloop.timer(1000, run);
+const terminate = uloop.signal(15, () => uloop.end()), interrupt = uloop.signal(2, () => uloop.end());
 uloop.run();
+bus.disconnect();

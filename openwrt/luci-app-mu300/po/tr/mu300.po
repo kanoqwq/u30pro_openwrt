@@ -38,3 +38,72 @@ msgstr "CPU ayarları"
 
 msgid "SIM 卡管理"
 msgstr "SIM yönetimi"
+
+msgid "电池与电量"
+msgstr "Pil ve güç"
+
+msgid "电池历史"
+msgstr "Pil geçmişi"
+
+msgid "电池使用时间"
+msgstr "Pilde geçen süre"
+
+msgid "预估续航"
+msgstr "Tahmini kalan süre"
+
+msgid "自上次充满"
+msgstr "Son tam şarjdan beri"
+
+msgid "自上次充电"
+msgstr "Son şarjdan beri"
+
+msgid "24 小时"
+msgstr "24 saat"
+
+msgid "7 天"
+msgstr "7 gün"
+
+msgid "小时"
+msgstr "sa"
+
+msgid "分钟"
+msgstr "dk"
+
+msgid "已连接电源，未充电"
+msgstr "Güce bağlı, şarj olmuyor"
+
+msgid "正在充电或已充满"
+msgstr "Şarj oluyor veya dolu"
+
+msgid "电池放电功率"
+msgstr "Pilden çekilen güç"
+
+msgid "时间区间"
+msgstr "Zaman aralığı"
+
+msgid "每分钟记录，保留最近 10 天；关机或缺失时段留空。功率和电流为电池净值，不是充电器输入值。"
+msgstr "Dakikada bir kaydedilir, 10 gün saklanır. Kapalı veya eksik dönemler boş kalır. Güç ve akım, şarj girişi değil net pil değerleridir."
+
+msgid "未检测到电池"
+msgstr "Pil algılanmadı"
+
+msgid "暂无历史记录，采集后自动显示"
+msgstr "Henüz geçmiş yok; yeni ölçümler otomatik görünür"
+
+msgid "电池记录读取失败，请稍后重试"
+msgstr "Pil geçmişi okunamadı; biraz sonra yeniden deneyin"
+
+msgid "连接电源时不估算续航"
+msgstr "Güce bağlıyken tahmin edilmez"
+
+msgid "放电记录不足，暂不估算"
+msgstr "Daha fazla deşarj geçmişi gerekiyor"
+
+msgid "按最近放电速度估算"
+msgstr "Son deşarj hızına göre"
+
+msgid "暂无记录"
+msgstr "Ölçüm yok"
+
+msgid "已更新"
+msgstr "Güncellendi"

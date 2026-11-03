@@ -10,6 +10,7 @@ python3 "$top/tools/u30pro-build.py" check --sources-only
 python3 "$top/tests/u30pro_port.py"
 python3 "$top/tests/u30pro_navigation.py"
 python3 "$top/tests/u30pro_power_events.py"
+python3 "$top/tests/u30pro_battery_history.py"
 python3 "$top/tests/u30pro_charge_sources.py"
 python3 "$top/tests/u30pro_usb_roles.py"
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_nfc.py

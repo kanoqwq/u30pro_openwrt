@@ -42,6 +42,23 @@ class CLIBinaryBackup(unittest.TestCase):
             self.assertFalse(any(b'\0' in output for output in shell_results))
             self.assertEqual(list(staging.iterdir()),[])
 
+    def test_native_download_budget_reaches_any_bound_transport(self):
+        from types import SimpleNamespace
+        android=object.__new__(installer.Android)
+        android.shell=Mock()
+        def exercise(call, shell, command, destination, expected_size):
+            call('pull','remote',str(destination),timeout=120)
+            call('pull','remote',str(destination),timeout=1800)
+            return expected_size
+        module=SimpleNamespace(pull_binary=exercise)
+        spec=SimpleNamespace(loader=SimpleNamespace(exec_module=lambda module:None))
+        for platform in ('desktop','android-bound'):
+            android.call=Mock(return_value=b'')
+            with patch.object(installer.importlib.util,'spec_from_file_location',return_value=spec), \
+                 patch.object(installer.importlib.util,'module_from_spec',return_value=module):
+                self.assertEqual(android.download('cat fixture',Path('backup'),expected_size=32),32)
+            self.assertEqual([c.kwargs['timeout'] for c in android.call.call_args_list],[888,1800],platform)
+
     def test_helper_is_generated_from_the_shared_backend(self):
         self.assertEqual((TOP/'desktop/binary_io.py').read_bytes(),(TOP/'installer/backend/binary_io.py').read_bytes())
 

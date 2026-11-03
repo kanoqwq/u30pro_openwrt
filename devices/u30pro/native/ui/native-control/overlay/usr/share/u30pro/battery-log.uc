@@ -1,5 +1,5 @@
 /* Battery history: the fuel gauge read every 10 s (tick), one record a minute with the minute's averages, kept for 10 days on the data store
- * (/mnt/data/log/battery.csv; in /run until the store is mounted) and in memory for the queries:
+ * (/etc/mu300/battery/battery.csv; in /run until the store is mounted) and in memory for the queries:
  *   history(range, points)   the web page (ubus u30pro.battery history): the charge and the power drawn from the battery over a range
  *   the screen's file        /run/u30pro-battery/screen, written every minute: the same for the four ranges in 60 steps (tools/ui/data.h)
  * Ranges: "full" since the device was last full and left the charger (when it sits full now, the full charge before that), "charge" since the
@@ -12,7 +12,7 @@ import { readfile, writefile, open, rename, unlink, mkdir } from 'fs';
 /* U30PRO_BATTLOG_ROOT: a fake root for the host test (tests/run_battlog_offline.sh) */
 const ROOT = getenv('U30PRO_BATTLOG_ROOT') || '';
 const PS = ROOT + '/sys/class/power_supply', BAT = PS + '/u30pro-battery', CHG = PS + '/u30pro-charger-master';
-const DIR = ROOT + '/mnt/data/log', FILE = DIR + '/battery.csv', RUN = ROOT + '/run/u30pro-battery', PENDING = RUN + '/pending.csv', SCREEN = RUN + '/screen';
+const DIR = ROOT + '/etc/mu300/battery', FILE = DIR + '/battery.csv', RUN = ROOT + '/run/u30pro-battery', PENDING = RUN + '/pending.csv', SCREEN = RUN + '/screen';
 const KEEP = 10 * 86400, STEP = 60;
 const RANGES = [ 'full', 'charge', '24h', '7d' ], FULL_PCT = 95;
 
@@ -22,7 +22,8 @@ let acc = null, trimmed = 0;
 
 function text(p) { let s = readfile(p); return s == null ? null : trim(s); }
 function int_of(p) { let s = text(p); return s != null && match(s, /^-?[0-9]+$/) ? int(s) : null; }
-function mounted() { return ROOT ? !!readfile(ROOT + '/mounted') : index(readfile('/proc/mounts') ?? '', ' /mnt/data ext4 ') >= 0; }
+function mounted() { return ROOT ? !!readfile(ROOT + '/mounted') : true; }
+function present() { return text(BAT + '/type') == 'Battery' && text(BAT + '/present') != '0'; }
 
 function state(pct) {
 	if (int_of(CHG + '/online') != 1) return 'D';
@@ -65,7 +66,8 @@ function store(t, pct, ma, mw, mv, st, temp) {
 	add(t, pct, ma, mw, st);
 	let line = sprintf('%d,%d,%d,%d,%d,%s,%d\n', t, pct, ma, mw, mv, st, temp ?? 0);
 	if (mounted()) {
-		mkdir(DIR, 0755);
+		mkdir(ROOT + '/etc/mu300', 0755);
+		mkdir(DIR, 0700);
 		let p = readfile(PENDING);
 		if (p != null && append(FILE, p)) unlink(PENDING);
 		if (append(FILE, line)) return;
@@ -148,12 +150,35 @@ function series(t0, now, points) {
 			avg_mw: onbat ? int(energy * 3600 / onbat) : null, per_hour: onbat >= 600 ? used * 3600.0 / onbat : null } };
 }
 
+/* Live sysfs readings are independent of the one-minute history bucket. No AT,
+ * charger write or UI request can change the fuel gauge or charge policy. */
+function snapshot() {
+	let pct = int_of(BAT + '/capacity'), ua = int_of(BAT + '/current_now'), uv = int_of(BAT + '/voltage_now');
+	return { t: time(), pct: pct != null && pct >= 0 && pct <= 100 ? pct : null,
+		ma: ua != null ? ua / 1000.0 : null, mv: uv != null ? uv / 1000.0 : null,
+		mw: ua != null && uv != null ? ua * uv / 1000000000.0 : null,
+		st: state(pct), online: int_of(CHG + '/online') == 1, temp: int_of(BAT + '/temp') };
+}
+
+/* Estimate only from a recent, continuous discharge. Charging, an off-device
+ * gap, a rising/stuck gauge and insufficient history produce no estimate. */
+function estimate(now) {
+	let n = length(T), live = snapshot();
+	if (!n || live.online || live.pct == null || S[-1] != 'D' || now - T[-1] > 3 * STEP) return null;
+	let i = n - 1;
+	while (i > 0 && T[i] - T[i - 1] <= 3 * STEP && S[i - 1] == 'D' && P[i - 1] >= P[i] && T[i - 1] >= now - 3600) i--;
+	let seconds = T[-1] - T[i], drop = P[i] - live.pct;
+	return seconds >= 600 && drop > 0 ? int(live.pct * seconds / drop) : null;
+}
+
 function history(key, points) {
 	if (index(RANGES, key) < 0) return { error: 'Unknown range' };
 	points = type(points) == 'int' && points >= 10 && points <= 1000 ? points : 240;
 	let now = time(), r = range_start(key, now), s = series(r.t0, now, points);
 	s.range = key; s.found = r.found; s.first = length(T) ? T[0] : null; s.now = now;
-	s.current = length(T) ? { t: T[-1], pct: P[-1], ma: MA[-1], mw: MW[-1], st: S[-1] } : null;
+	s.current = snapshot();
+	s.present = present();
+	s.estimate_s = estimate(now);
 	return s;
 }
 
@@ -195,7 +220,8 @@ function tick() {
 
 function init() {
 	load();
+	trim_old(time());
 	screen_file(time());
 }
 
-export { init, tick, history, range_start, series, load, store, screen_file, RANGES };
+export { init, tick, history, range_start, series, load, store, screen_file, present, snapshot, estimate, RANGES };

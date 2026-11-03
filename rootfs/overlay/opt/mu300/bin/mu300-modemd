@@ -33,6 +33,7 @@ import { readfile, open, stat, lstat, mkdir, unlink, rename, chmod, popen, rmdir
 import * as fs from 'fs';
 import * as cp from 'mu300.cellparse';
 import { cache } from 'mu300.registration';
+import * as signalq from 'mu300.signal-queue';
 
 // ------------------------------------------------------------------ small things
 function log(msg) { warn('mu300-modemd: ' + msg + '\n'); }
@@ -516,8 +517,8 @@ function cmd_line(b, c, line) {
 			let slot=native_channel.slot(b.dev);
 			registration.event(slot, line);
 			// A late CEREG query starts with <n>,<stat>; it is not a URC.
-			if (!match(line, /^\+CEREG:\s*[0-9]+,\s*[0-9]+(,|$)/)) registration.registration(slot, line, false);
-			if (match(line, /^\+(CEREG|ECIND):/)) urc_event(c.name, line);
+            if (!match(line, /^\+(CEREG|C5GREG):\s*[0-9]+,\s*[0-9]+(,|$)/)) registration.registration(slot, line, false);
+            if (match(line, /^\+(CEREG|C5GREG|ECIND):/)) urc_event(c.name, line);
 		}
 		// a new message's index the modem routed here, between commands, is announced as on the unsolicited
 		// channel (mu300-smsd syncs on it); nothing else from a command channel, where a late reply can hold a secret
@@ -721,6 +722,11 @@ function broker_by(key) {
 const RUN_DIR = '/tmp/unisoc-modem';
 const IDENT_MAXAGE = 21600, IDENT_RETRY = 60;
 let round = null, live_serial = 0;
+let signal_queue = null;
+function single_collector(slot) {
+    return trim(fs.readfile('/etc/mu300/platform') || '')!='u30pro' &&
+        (slot=='1' || exists(RUN+'/mu300-radio-freeze'));
+}
 
 function mkdir_parents(path) {
     let s = lstat(path);
@@ -788,7 +794,7 @@ function round_end(R, silent) {
         R.timer?.cancel();
         rm_rf(R.dir);
         if (!silent && !R.replied) R.reply(round_current(R) ? (R.result || {error:'live signal read failed'}) : {error:'SIM changed during live signal read'});
-    } else round = null;
+    } else { round = null; signal_queue?.resume(); }
 }
 
 function round_publish(R, path, text) {
@@ -804,14 +810,18 @@ function round_at(R, cmd, t, cb) {
 	let tryit;
 	tryit = () => {
 		if (!round_current(R)) { cb(''); return; }
-		while (i < length(R.cands) && !R.cands[i].served) i++;
+		while (i < length(R.cands) && !R.cands[i].served) {
+			if (chans[R.cands[i].chan].state=='open') R.busy=true;
+			i++;
+		}
 		if (i >= length(R.cands)) { cb(''); return; }
 		let left = R.deadline - time();
 		if (left < 1) { cb(''); return; }
 		if (left > t + 4) left = t + 4;
 		let b = R.cands[i++];
 		internal_at(b, 'AT+SPACTCARD=' + R.slot + ';' + substr(cmd, 2), t, (text, clean) => {
-			if (text == null || !match(text, cp.FINAL)) { tryit(); return; }
+			if (text == null) { R.busy=true; tryit(); return; }
+			if (!match(text, cp.FINAL)) { tryit(); return; }
 			cb(replace(text, /\r/g, ''));
 		});
 	};
@@ -972,8 +982,11 @@ function run_round(R) {
 	// the files: sig.json always, cell.json in a full round (the same JSON as the collector program's)
 	write_out = (x, partial, neigh_pending, signal_only) => {
 		// "no answer at all" is a modem/daemon problem, not "no signal"
-		if ((x.CFUN ?? '') + (x.CEREG ?? '') + (x.CESQ ?? '') + x.SP_LTE + x.SP_NR + x.COPS == '') {
+		if ((x.CFUN ?? '') + (x.CEREG ?? '') + (x.C5GREG ?? '') + (x.CESQ ?? '') + x.SP_LTE + x.SP_NR + x.COPS == '') {
 			x.aborted = true;
+			// A competing AT owner did not grant a read. It says nothing about
+			// the modem being alive. Never replace good background data with it.
+			if (R.busy) { if (R.live) R.result={busy:1,error:'busy'}; return; }
 			let err = jstr({ ts: time(), error: 'AT backend did not answer (radio off, modem restarting, or adapter unavailable)' }) + '\n';
 			round_publish(R, SIGF, err);
 			if (full)
@@ -1021,6 +1034,7 @@ function start_round(mode, requested_slot, reply) {
     let scoped = requested_slot != null;
     let slot = scoped ? requested_slot : sim_slot();
     if (slot != '0' && slot != '1') return 'invalid SIM slot';
+    if (!live && single_collector(slot) && signal_queue?.has(slot)) return 'busy';
     if (scoped && slot == '1' && uget('unisoc_modem', 'main', 'sim_slots') != '2') return 'SIM slot is not available';
     let DIR = env('MU300_DASH_DIR', RUN_DIR) + ((scoped && slot == '1') ? '/sim1' : '');
     if (!private_dir(DIR)) return 'the runtime directory is not safe';
@@ -1034,8 +1048,11 @@ function start_round(mode, requested_slot, reply) {
         ATC = RUN + '/mu300-at4'; channels = ['4']; fallbacks = [RUN + '/mu300-at4'];
         ident_dir = scoped ? env('MU300_DASH_IDENT_DIR', state_dir) + '/sim1/identity' : ident_dir;
     }
+    if (trim(fs.readfile('/etc/mu300/platform') || '')=='u30pro') {
+        channels=['6','7'];fallbacks=[RUN+'/mu300-at6',RUN+'/mu300-at7'];
+    }
     let IDENT = ident_dir + ((slot == '1' && !scoped) ? '/sim-slot1.json' : '/sim.json');
-    if (native && slot == '0') { channels = ['1']; fallbacks = [RUN + '/mu300-at']; }
+    if (native && slot == '0' && trim(fs.readfile('/etc/mu300/platform') || '')!='u30pro') { channels = ['1']; fallbacks = [RUN + '/mu300-at']; }
 	// one collector at a time for this directory (the same lock as the collector program's)
 	let LOCK = DIR + '/collect.lck';
 	while (!mkdir(LOCK)) {
@@ -1095,11 +1112,14 @@ function start_round(mode, requested_slot, reply) {
 
 
 // ------------------------------------------------------------------ ubus object
+signal_queue=signalq.queue((slot,reply)=>start_round('fast',slot,reply),
+    slot=>single_collector(slot) && round!=null && round.slot==slot, (ms,cb)=>uloop.timer(ms,cb));
+
 function status_reply() {
 	let out = { bridge: io ? 'connected' : 'waiting', bridge_pid: io_pid, round: round ? round.mode : null, brokers: [] };
 	for (let b in brokers)
 		push(out.brokers, { name: b.name, dev: b.dev, dir: b.dir, state: chans[b.chan].state, phase: b.phase,
-			queued: length(b.queue) + (b.cur ? 1 : 0), silent: b.silent, clean: b.clean });
+			ready:b.served, queued: length(b.queue) + (b.cur ? 1 : 0), silent: b.silent, clean: b.clean });
 	out.urc = {};
 	for (let name in chans)
 		if (chans[name].kind == 'urc')
@@ -1145,8 +1165,7 @@ function ubus_setup() {
                 msg ??= req.args;
                 if (msg?.slot!='0' && msg?.slot!='1') return req.reply({error:'invalid SIM slot'});
                 req.defer();
-                let why=start_round('fast',msg.slot,result=>req.reply(result));
-                if (why!=null) req.reply({error:why,busy:why=='busy'?1:0});
+                signal_queue.request(msg.slot,result=>req.reply(result));
             }
         },
         collect: {

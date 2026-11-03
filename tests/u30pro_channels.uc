@@ -10,4 +10,12 @@ for(let n=0;n<6;n++) {
 }
 check(channel.slot('/dev/stty_nr31')==null);
 check(channel.wire('/dev/stty_nr31','AT')==null);
+for(let n in [6,7]) {
+    check(channel.slot('/dev/stty_nr'+n)==null);
+    check(channel.wire('/dev/stty_nr'+n,'AT+CFUN?')==null);
+    for(let slot in [0,1]) {
+        let cmd='AT+SPACTCARD='+slot+';+CEREG?';
+        check(channel.wire('/dev/stty_nr'+n,cmd)==cmd);
+    }
+}
 printf('Native dual SIM channel mapping: %d assertions passed; no AT/device access\n',count);

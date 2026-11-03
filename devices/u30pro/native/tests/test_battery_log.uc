@@ -11,7 +11,7 @@ function check(name, ok, info) {
 }
 const ROOT = getenv('U30PRO_BATTLOG_ROOT');
 const B = ROOT + '/sys/class/power_supply/u30pro-battery', C = ROOT + '/sys/class/power_supply/u30pro-charger-master';
-const FILE = ROOT + '/mnt/data/log/battery.csv', PENDING = ROOT + '/run/u30pro-battery/pending.csv';
+const FILE = ROOT + '/etc/mu300/battery/battery.csv', PENDING = ROOT + '/run/u30pro-battery/pending.csv';
 
 /* a day of records ending a minute ago: 600 min on battery 100 -> 70 % at 1.5 W, then charging 70 -> 100 % in 90 min, 30 min full, then on
  * battery again 100 -> 85 % at 2 W until now (with a 30 min gap: the device was off) */
@@ -73,6 +73,7 @@ r = blog.range_start('charge', minute);
 check('plugged now: this charge (from the short Full on)', r.found && r.t0 == minute - 30, r);
 
 /* history over ubus and the screen file */
+writefile(B + '/capacity', '100'); writefile(C + '/online', '1'); writefile(C + '/status', 'Full');
 let h = blog.history('7d', 100);
 check('history 7d', h.range == '7d' && h.found && length(h.pct) <= 100 && h.current.st == 'F', [ h.range, length(h.pct), h.current ]);
 check('history refuses an unknown range', blog.history('1y').error != null);
