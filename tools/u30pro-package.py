@@ -453,7 +453,7 @@ def canonical_boot():
     owned()
     check = runpy.run_path(str(TOP/'tools/u30pro-build.py'))
     check['check_sources']()
-    _, paths = check['load_layout'](TOP/'tools/build-layout.json', WORK)
+    _, paths = check['load_layout'](None, WORK)
     check['check_inputs'](paths)
     report = verified_kernel()
     image = KERNEL/'arch/arm64/boot/Image'

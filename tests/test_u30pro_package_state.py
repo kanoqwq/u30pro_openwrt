@@ -110,6 +110,31 @@ class RetainedRoot(unittest.TestCase):
             package.busybox_aliases(self.root,['../outside'])
         self.assertFalse((self.root/'opt/mu300/outside').exists())
 
+    def test_boot_validation_uses_the_selected_layout(self):
+        config = json.loads((TOP/'tools/build-layout.json').read_text())
+        config['kernel_objects'] = '{workspace}/selected-objects'
+        config['boot_templates'] = '{workspace}/selected-templates'
+        selected = self.work/'selected.json'
+        selected.write_text(json.dumps(config))
+        original = package.runpy.run_path
+
+        def inspect_inputs(paths):
+            self.assertEqual(paths['kernel_objects'], self.work/'selected-objects')
+            self.assertEqual(paths['boot_templates'], self.work/'selected-templates')
+            raise SourceCopyReached
+
+        def load(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            if Path(path) == TOP/'tools/u30pro-build.py':
+                result['check_sources'] = mock.Mock()
+                result['check_inputs'] = inspect_inputs
+            return result
+
+        with mock.patch.dict(os.environ, {'U30PRO_BUILD_CONFIG': str(selected)}), \
+                mock.patch.object(package.runpy, 'run_path', side_effect=load), \
+                self.assertRaises(SourceCopyReached):
+            package.canonical_boot()
+
 
 if __name__ == '__main__':
     unittest.main()
