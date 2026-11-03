@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
-"""Compile only U30 Pro hardware helpers/panel with the existing musl SDK."""
+"""Compile U30 Pro helpers/panel with the selected source-pinned musl toolchain."""
 import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import runpy
 
 TOP = Path(__file__).resolve().parents[1]
 NATIVE = TOP / 'devices/u30pro/native'
-WORKSPACE = Path('/home/kano/openwrt-build')
+_, WORKSPACE, LAYOUT = runpy.run_path(str(TOP/'tools/build-settings.py'))['settings']()
 OUT = WORKSPACE / 'artifacts/u30pro-runtime'
-TOOLCHAIN = '/build/openwrt/staging_dir/toolchain-aarch64_generic_gcc-14.3.0_musl'
-TARGET = '/build/openwrt/staging_dir/target-aarch64_generic_musl'
-IMAGE = 'e5-modem-build:20261017'
-VOLUME = 'e5-openwrt-src'
+COMPILER = runpy.run_path(str(TOP/'tools/u30pro-compiler.py'))
+HEADERS = Path(LAYOUT['headers'])
+ROOT = WORKSPACE/'package-work/u30pro-release/root'
+LINK_LIBS = WORKSPACE/'artifacts/u30pro-dev/lib'
 CP_FILES = ('main', 'boot', 'layout', 'util', 'secure', 'hw_linux', 'nvglue', 'nv', 'mon', 'logchan')
 SOURCES = {
     'u30-modemd': ['modem-native-re/src/' + p + '.c' for p in CP_FILES],
@@ -57,8 +58,17 @@ def build():
         if name == 'sml-voltage-check': dependencies = [TOP/'tools/sml-voltage/sml-voltage-check.c']
         dependencies += sorted((NATIVE / ('tools/ui' if dynamic else 'modem-native-re/src')).glob('*.h'))
         inputs = {str(p.relative_to(TOP)): digest(p) for p in dependencies}
-        identity = {'sources': inputs, 'toolchain': TOOLCHAIN, 'image': IMAGE,
-                    'volume': VOLUME, 'dynamic': dynamic,
+        libraries = []
+        if dynamic:
+            for soname in ('libubus.so.20251202', 'libubox.so.20260213', 'libuci.so.20250120'):
+                source = LINK_LIBS/soname
+                data = source.read_bytes()
+                if data[:6] != b'\x7fELF\x02\x01' or int.from_bytes(data[18:20], 'little') != 183:
+                    raise ValueError('Expected ARM64 target library: '+soname)
+                libraries.append(source)
+        identity = {'sources': inputs, 'compiler': LAYOUT['compiler'], 'dynamic': dynamic,
+                    'headers': {str(p.relative_to(HEADERS)): digest(p) for p in HEADERS.rglob('*.h')} if dynamic else {},
+                    'libraries': {p.name: digest(p) for p in libraries},
                     'builder': digest(Path(__file__))}
         old = previous.get('files', {}).get(name, {})
         target = OUT / name
@@ -69,18 +79,17 @@ def build():
         pending = OUT / (name + '.building')
         if pending.exists():
             raise ValueError('Failed compiler output retained: ' + str(pending))
-        flags = ['-std=gnu11', '-Os', '-Wall', '-Wextra', '-Wno-error=misleading-indentation', '-s']
-        flags += ['-I' + TARGET + '/usr/include', '-L' + TARGET + '/usr/lib'] if dynamic else ['-static']
+        flags = ['-std=gnu11', '-Os', '-Wall', '-Wextra', '-Wno-error=misleading-indentation', '-s',
+                 '-ffile-prefix-map='+str(TOP)+'=/source',
+                 '-ffile-prefix-map='+str(WORKSPACE)+'=/build']
+        flags += ['-I'+str(HEADERS), '-L'+str(LINK_LIBS),
+                  '-Wl,-rpath-link,'+str(LINK_LIBS)] if dynamic else ['-static']
         if name == 'u30-modemd':
             flags += ['-pthread', '-Wno-unused-parameter']
-        command = ['docker', 'run', '--rm', '-v', VOLUME + ':/build:ro',
-                   '-v', str(NATIVE) + ':/source:ro', '-v', str(TOP/'tools/sml-voltage') + ':/voltage:ro', '-v', str(OUT) + ':/output',
-                   '--entrypoint', '/bin/sh', IMAGE, '-ec',
-                   'export STAGING_DIR=/build/openwrt/staging_dir; exec "$@"', 'compile',
-                   TOOLCHAIN + '/bin/aarch64-openwrt-linux-musl-gcc', *flags,
-                   *(['/voltage/sml-voltage-check.c'] if name == 'sml-voltage-check' else ['/source/' + p for p in sources]), '-o', '/output/' + pending.name,
-                   *(['-lubus', '-lubox', '-luci', '-lm'] if dynamic else [])]
-        subprocess.run(command, check=True)
+        command = [COMPILER['prefix'](LAYOUT)+'gcc', *flags,
+                   *([TOP/'tools/sml-voltage/sml-voltage-check.c'] if name == 'sml-voltage-check' else [NATIVE/p for p in sources]),
+                   '-o', pending, *(['-l:'+p.name for p in libraries]+['-lm'] if dynamic else [])]
+        COMPILER['execute'](command, LAYOUT, WORKSPACE)
         verify_elf(pending, dynamic)
         pending.replace(target)
         result['files'][name] = {'inputs': identity, 'sha256': digest(target), 'bytes': target.stat().st_size}

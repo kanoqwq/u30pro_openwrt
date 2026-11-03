@@ -1,16 +1,24 @@
 {
   "format": 1,
   "family": "u30pro",
-  "workspace": "/home/kano/openwrt-build",
+  "workspace": "~/openwrt-build",
+  "kernel_source_kind": "downloaded",
   "kernel_source": "{workspace}/sources/u30pro-linux-6.12.94",
   "kernel_objects": "{workspace}/objects/u30pro/release",
-  "input_archive": "/mnt/d/Git/U30pro-openwrt/build/inputs/upstream/u30pro-build-inputs-20261025.tar.xz",
-  "input_manifest": "/mnt/d/Git/U30pro-openwrt/build/inputs/upstream/MANIFEST.sha256",
-  "stock_capture": "/mnt/d/Git/U30pro-openwrt/work/u30pro-stock-reference/MU5358-20260203/native-board",
-  "partition_reference": "/mnt/d/Git/U30pro-openwrt/work/u30pro-stock-reference/MU5358-20260203/loader/capture.json",
-  "busybox": "/mnt/d/Git/mu300-linux/work/busybox",
-  "at_transport": "/mnt/d/Git/mu300-linux/work/tools/atd-io/mu300-atd-io",
-  "maintenance": "/mnt/d/Git/mu300-linux-clean-tf-7.2/work/v50-20261014/installer-final/desktop/files/boot/repair",
-  "theme": "/mnt/d/Git/mu300-linux-clean-tf-7.2/work/luci-theme-aurora-1.4.0-r20260920.apk",
-  "installer_artifacts": "{repo}/installer/artifacts"
+  "input_archive": "{workspace}/cache/u30pro-inputs/upstream/u30pro-build-inputs-20261025.tar.xz",
+  "input_manifest": "{workspace}/cache/u30pro-inputs/upstream/MANIFEST.sha256",
+  "boot_templates": "{workspace}/cache/u30pro-inputs/templates",
+  "board_bundle": "{workspace}/artifacts/u30pro-board",
+  "busybox": "{workspace}/artifacts/u30pro-tools/busybox",
+  "at_transport": "{workspace}/artifacts/u30pro-tools/mu300-atd-io",
+  "maintenance": "{workspace}/package-work/u30pro-release/root",
+  "theme": "{workspace}/cache/u30pro-inputs/theme/luci-theme-aurora-1.4.0-r20260920.apk",
+  "installer_artifacts": "{workspace}/artifacts/u30pro-installers",
+  "installer_artifacts_kind": "published",
+  "headers": "{workspace}/artifacts/u30pro-dev/include",
+  "rootfs_image": "u30pro-rootfs:25.12.5",
+  "compiler": {
+    "kind": "toolchain",
+    "directory": "{workspace}/toolchains/openwrt-25.12.5"
+  }
 }

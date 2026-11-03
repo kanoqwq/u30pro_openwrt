@@ -2,6 +2,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -104,7 +105,9 @@ class PortBoundaries(unittest.TestCase):
 
     def test_layout_and_kernel_recipe_cannot_select_mu300(self):
         workspace, paths = build.load_layout(TOP / 'tools/build-layout.json')
-        self.assertEqual(str(workspace), '/home/kano/openwrt-build')
+        expected = Path(os.environ.get('U30PRO_WORKSPACE', str(Path.home()/'openwrt-build'))).resolve()
+        self.assertEqual(workspace, expected)
+        self.assertTrue(paths['kernel_source'].is_relative_to(workspace))
         command = build.kernel_command(paths, 2)
         self.assertIn('hardware-native-kexec-modem', command)
         self.assertIn('CONFIG_UNISOC_AIC8800=m', command)

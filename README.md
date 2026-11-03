@@ -44,19 +44,19 @@ git clone --recurse-submodules https://github.com/kanoqwq/u30pro_openwrt.git
 cd u30pro_openwrt
 ```
 
-已有检出可初始化子模块并检查构建输入：
+在 Linux x86_64／WSL2 安装[构建依赖](docs/BUILD.zh-CN.md)后，一条命令完成依赖准备、编译和打包：
 
 ```sh
 git submodule update --init --recursive
-python3 tools/build-release.py plan
-python3 tools/build-release.py check
+sudo python3 tools/build-release.py build --workspace "$HOME/openwrt-build" --jobs 4 --label public-build
 ```
 
-本机构建复用 WSL 的 `/home/kano/openwrt-build` 工作区，输入路径由
-`tools/build-layout.json` 登记。请通过 `tools/build-release.py` 执行检查、编译及组包；
-具体环境、命令和目录规则见以下文档。
+默认使用 `~/openwrt-build`，自动下载并校验固定版本的公开依赖，后续增量复用。
+不需要作者本机文件、其他固件仓库、个人设备备份或 GitHub 登录。
+固件 ZIP 输出到 `release/`；环境要求、输入来源和维护机缓存规则见以下文档。
 
-- [本地构建与打包](docs/LOCAL-BUILD.zh-CN.md)
+- [从公开源码构建](docs/BUILD.zh-CN.md)
+- [维护机本地缓存与打包规则](docs/LOCAL-BUILD.zh-CN.md)
 - [Agent 构建指导](docs/AGENT-BUILD.zh-CN.md)
 - [硬件适配与验证记录](docs/U30PRO-PORT.zh-CN.md)
 - [安装器接入说明](docs/U30PRO-INSTALLER-20261102.zh-CN.md)

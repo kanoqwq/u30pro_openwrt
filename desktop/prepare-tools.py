@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 import shutil
 import struct
+import runpy
+
+TARGET_FILE=runpy.run_path(str(Path(__file__).resolve().parents[1]/'tools/target-root.py'))['target_file']
 
 FILES=('sbin/fsck.f2fs','sbin/resize.f2fs','lib/ld-musl-aarch64.so.1','lib/libf2fs.so.10',
  'lib/libuuid.so.1','lib/libgcc_s.so.1','usr/bin/ucode','lib/libucode.so.20230711',
@@ -15,9 +18,15 @@ FILES=('sbin/fsck.f2fs','sbin/resize.f2fs','lib/ld-musl-aarch64.so.1','lib/libf2
 def prepare(source,out):
     hashes={}
     for name in FILES:
-        choices=[source/name,source/'usr'/name]
-        if name=='sbin/resize.f2fs':choices.append(source/'sbin/fsck.f2fs')
-        found=next((p for p in choices if p.is_file()),None)
+        choices=[name,'usr/'+name]
+        if name=='sbin/resize.f2fs':choices.append('sbin/fsck.f2fs')
+        found=None
+        for choice in choices:
+            try:
+                found=TARGET_FILE(source,choice)
+                break
+            except FileNotFoundError:
+                continue
         if found is None:raise ValueError('missing ARM64 maintenance file: '+name)
         data=found.read_bytes()
         if data[:6]!=b'\x7fELF\x02\x01' or struct.unpack_from('<H',data,18)[0]!=183:raise ValueError('not ARM64 ELF: '+name)

@@ -1,0 +1,64 @@
+{
+  "format": 1,
+  "openwrt": "25.12.5",
+  "kernel": "6.12.94",
+  "installer_commit": "591648b552cd31edb9395619515c3fd43aca1dda",
+  "assets": {
+    "kernel": {
+      "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.94.tar.xz",
+      "sha256": "e998a232b9418db3301cb58468e291a4f41d6ab8306029b30d991f56251dc8d2"
+    },
+    "rootfs": {
+      "url": "https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-25.12.5-armsr-armv8-rootfs.tar.gz",
+      "sha256": "493336e176fdc1d6a377763e87a58c5854c24f51e83e586b209783e4bb648d42"
+    },
+    "toolchain": {
+      "url": "https://downloads.openwrt.org/releases/25.12.5/targets/armsr/armv8/openwrt-toolchain-25.12.5-armsr-armv8_gcc-14.3.0_musl.Linux-x86_64.tar.zst",
+      "sha256": "65975c8d7f700aa0610ac65ea6c878be3446980b8fa6b7d6147023a0b3eb6c79"
+    },
+    "native": {
+      "url": "https://github.com/33333s/U30pro-openwrt/releases/download/build-inputs-20261025/u30pro-build-inputs-20261025.tar.xz",
+      "sha256": "c8ebf96318436c7581d65676de0241c9cb401719484cdd118ccc079945dfb9ae"
+    },
+    "native_manifest": {
+      "url": "https://github.com/33333s/U30pro-openwrt/releases/download/build-inputs-20261025/MANIFEST.sha256",
+      "sha256": "f2d97092e63f7be9bebb855e48dc2ae8f689d6a0a0fe80d91d7042a66670c9d9"
+    },
+    "busybox": {
+      "url": "https://busybox.net/downloads/busybox-1.37.0.tar.bz2",
+      "sha256": "3311dff32e746499f4df0d5df04d7eb396382d7e108bb9250e7b519b837043a4"
+    },
+    "json-c": {
+      "url": "https://sources.openwrt.org/json-c-0.18-nodoc.tar.gz",
+      "sha256": "602cdefc1d2aab8318fc0814b7ce7d59e72514d4276ca3eff92f35f86cf1c160"
+    },
+    "libubox": {
+      "url": "https://sources.openwrt.org/libubox-2026.06.19~7dd12784.tar.zst",
+      "sha256": "82f1a83069c0636722fc1c57d567a21f8b14d14904c8bf10059d2a467edd2a10"
+    },
+    "ubus": {
+      "url": "https://sources.openwrt.org/ubus-2026.06.28~24864e78.tar.zst",
+      "sha256": "33072c12e6d9a1fd59e3774f029575df61393b5a465486726609ff59314b8a84"
+    },
+    "uci": {
+      "url": "https://sources.openwrt.org/uci-2025.12.02~66127cd7.tar.zst",
+      "sha256": "ff23a9825aeac8da14a7142e985d598043c0287a463279f24863c580622bf18d"
+    },
+    "installer_windows": {
+      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-591648b/installer-windows-x64-591648b.tar.gz",
+      "sha256": "bd905c650dd9d050b5a5d84209cf536f7a75e6931d48e6bb7bfd97b934202506"
+    },
+    "installer_macos": {
+      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-591648b/installer-macos-arm64-591648b.tar.gz",
+      "sha256": "70cf615745b9595456fc768e7776b17d5329a57dc0e7a0100e5826a364e06dad"
+    },
+    "installer_android": {
+      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-591648b/installer-android-aarch64-591648b.tar.gz",
+      "sha256": "c3e232bdb3d5a82a250667bdbfc4808d1ac627f3cf166508631dba0aa92a451d"
+    },
+    "theme": {
+      "url": "https://github.com/eamonxg/luci-theme-aurora/releases/download/v1.4.0/luci-theme-aurora-1.4.0-r20260920.apk",
+      "sha256": "05f9015e0a4e2859f6a153f69e472f2984481490d4ce6db19b8a41bba7264f1e"
+    }
+  }
+}

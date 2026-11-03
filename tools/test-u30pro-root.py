@@ -7,14 +7,16 @@ import re
 import subprocess
 import sys
 import shutil
+import runpy
 
 TOP=Path(__file__).resolve().parents[1]
-ROOT=Path('/home/kano/openwrt-build/package-work/u30pro-release/root')
+_, WORK, LAYOUT=runpy.run_path(str(TOP/'tools/build-settings.py'))['settings']()
+ROOT=WORK/'package-work/u30pro-release/root'
 
 
 def run(command):
     return subprocess.check_output(['docker','run','--rm','--platform','linux/arm64',
-        '-v',str(ROOT)+':/target','--entrypoint','/bin/sh','mu300-openwrt-base:25.12.5',
+        '-v',str(ROOT)+':/target','--entrypoint','/bin/sh',LAYOUT['rootfs_image'],
         '-ec',command],text=True)
 
 
@@ -116,7 +118,7 @@ def main():
     assert (ROOT/'etc/rc.d/S95u30pro-nfc').is_symlink()
     assert (ROOT/'usr/share/u30pro/ui-plugins/nfc.plugin').is_file()
     import hashlib
-    runtime=json.loads(Path('/home/kano/openwrt-build/artifacts/u30pro-runtime/runtime.json').read_text())
+    runtime=json.loads((WORK/'artifacts/u30pro-runtime/runtime.json').read_text())
     nfc=ROOT/'usr/sbin/u30pro-nfc'
     assert hashlib.sha256(nfc.read_bytes()).hexdigest()==runtime['files']['u30pro-nfc']['sha256']
     encoded=bytes.fromhex(run('chroot /target /usr/sbin/u30pro-nfc encode OpenWrt open').strip())

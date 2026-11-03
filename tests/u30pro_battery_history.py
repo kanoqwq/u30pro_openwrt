@@ -40,7 +40,7 @@ class BatteryHistory(unittest.TestCase):
         command = ['docker','run','--rm','--platform','linux/arm64',
             '-v',str(LIB)+':/usr/share/u30pro/battery-log.uc:ro',
             '-v',str(self.root)+':/fixture','-e','U30PRO_BATTLOG_ROOT=/fixture',
-            '--entrypoint','/usr/bin/ucode','mu300-openwrt-base:25.12.5','-e',
+            '--entrypoint','/usr/bin/ucode',os.environ.get('U30PRO_ROOTFS_IMAGE','u30pro-rootfs:25.12.5'),'-e',
             "import * as b from '/usr/share/u30pro/battery-log.uc'; b.init(); "+script]
         result = subprocess.run(command, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
@@ -105,7 +105,7 @@ class BatteryHistory(unittest.TestCase):
             '-v',str(LIB)+':/usr/share/u30pro/battery-log.uc:ro',
             '-v',str(test)+':/native-test.uc:ro','-v',str(self.root)+':/fixture',
             '-e','U30PRO_BATTLOG_ROOT=/fixture','--entrypoint','/usr/bin/ucode',
-            'mu300-openwrt-base:25.12.5','/native-test.uc'],capture_output=True,text=True,timeout=30)
+            os.environ.get('U30PRO_ROOTFS_IMAGE','u30pro-rootfs:25.12.5'),'/native-test.uc'],capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stdout+result.stderr)
         self.assertIn('passed',result.stdout)
 
@@ -113,7 +113,7 @@ class BatteryHistory(unittest.TestCase):
         menu=TOP/'openwrt/luci-app-mu300/root/usr/share/luci/menu.d/luci-app-mu300.json'
         script='import { open } from "fs"; let m=json(open("/menu.json","r")); printf("%J",m["admin/modem/battery"]);'
         result=subprocess.run(['docker','run','--rm','--platform','linux/arm64','-v',str(menu)+':/menu.json:ro',
-            '--entrypoint','/usr/bin/ucode','mu300-openwrt-base:25.12.5','-e',script],capture_output=True,text=True,timeout=30)
+            '--entrypoint','/usr/bin/ucode',os.environ.get('U30PRO_ROOTFS_IMAGE','u30pro-rootfs:25.12.5'),'-e',script],capture_output=True,text=True,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
         entry=json.loads(result.stdout)
         self.assertEqual(entry['action']['path'],'mu300/battery')

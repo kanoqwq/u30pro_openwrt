@@ -47,6 +47,7 @@ upstream/out-*/
 
 # U30 Pro source-only port: reuse registered external caches, never vendor them.
 /.cache/
+/tools/build-layout.local.json
 /build/
 *.cpio
 *.cpio.gz

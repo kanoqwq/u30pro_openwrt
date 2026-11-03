@@ -1,0 +1,15 @@
+nr_factorynv /dev/block/by-name/nr_factorynv
+nr_runtimenv1 /dev/block/by-name/nr_runtimenv1
+nr_runtimenv2 /dev/block/by-name/nr_runtimenv2
+nr_modem_a /dev/block/by-name/nr_modem_a
+nr_modem_b /dev/block/by-name/nr_modem_b
+nr_phy_a /dev/block/by-name/nr_phy_a
+nr_phy_b /dev/block/by-name/nr_phy_b
+pm_sys_a /dev/block/by-name/pm_sys_a
+pm_sys_b /dev/block/by-name/pm_sys_b
+ch_sys_a /dev/block/by-name/ch_sys_a
+ch_sys_b /dev/block/by-name/ch_sys_b
+nr_downloadnv_a /dev/block/by-name/nr_downloadnv_a
+nr_downloadnv_b /dev/block/by-name/nr_downloadnv_b
+nr_deltanv_a /dev/block/by-name/nr_deltanv_a
+nr_deltanv_b /dev/block/by-name/nr_deltanv_b

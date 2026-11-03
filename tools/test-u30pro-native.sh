@@ -8,6 +8,8 @@ testdir=$(mktemp -d "${TMPDIR:?runner supplies owned temporary storage}/u30pro-n
 trap 'rm -rf -- "$testdir"' EXIT HUP INT TERM
 python3 "$top/tools/u30pro-build.py" check --sources-only
 python3 "$top/tests/u30pro_port.py"
+python3 -m unittest discover -s "$top/tests" -p test_u30pro_package_state.py
+python3 -m unittest discover -s "$top/tests" -p test_u30pro_public_build.py
 python3 "$top/tests/u30pro_navigation.py"
 python3 "$top/tests/u30pro_power_events.py"
 python3 "$top/tests/u30pro_battery_history.py"

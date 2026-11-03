@@ -1,0 +1,33 @@
+name: U30 Pro public-source build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang llvm lld cmake ninja-build pkg-config bc bison flex libelf-dev libssl-dev libncurses-dev rsync cpio xz-utils zstd lz4 patch curl ca-certificates openssl file kmod qemu-user-static binfmt-support
+          sudo update-binfmts --enable qemu-aarch64
+      - name: Build from pinned public inputs
+        run: sudo python3 tools/build-release.py build --workspace "$RUNNER_TEMP/u30pro-build" --jobs 4 --label public-ci
+      - uses: actions/upload-artifact@v4
+        with:
+          name: u30pro-openwrt
+          path: release/*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: u30pro-build-logs
+          path: out/build-logs/

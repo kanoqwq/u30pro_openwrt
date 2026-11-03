@@ -11,8 +11,8 @@
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/usb/musb/musb_trace.h": {
     "source_sha256": "910b376b7ed3b209f6074530029074420c9e302babc1ca8e638d8487ac215674",
-    "sha256": "d68cfc9931be1c22641c09229e47f603fd227a332a2b77b8500f6d1ee64e913b",
-    "reason": "Linux 6.12 trace events use one-argument __assign_str; keep the field source in __string and adapt the vendor 6.6 MUSB trace API."
+    "sha256": "044a848b89f3816bba57edfde4e8e457f0946e3c0398725e763382bed9e115a5",
+    "reason": "Linux 6.12 trace events use one-argument __assign_str; keep the field source in __string and adapt the vendor 6.6 MUSB trace API. Record the committed LF bytes required by .gitattributes; the previous receipt described the same source with CRLF."
   },
   "tools/u30pro_ui.c": {
     "source_sha256": "509f50da062d843c0f59d4d2c62ea856925ae103524e14c0b5ba1a2ac3d188a6",
@@ -31,8 +31,8 @@
   },
   "tools/ui/wall.h": {
     "source_sha256": "8f508c9dffd87358076ddc4400ae0a105ba51596df5d111bca5c01bc74e7c1bb",
-    "sha256": "8cff83da80594bb09b66d13f41bcedb0071466af4669d5e4e3bb5fe804209711",
-    "reason": "Keep upstream screen/plugin RPC and UCI contracts; route key actions to MU300 policy owners and store wallpaper in the persistent MU300 root rather than the reference /mnt/data layout."
+    "sha256": "298496bbe2c0c01f0b38f763f5ed8d1db0420e980b2892323f4ec376995fa3e6",
+    "reason": "Keep upstream screen/plugin RPC and UCI contracts; route key actions to MU300 policy owners and store wallpaper in the persistent MU300 root rather than the reference /mnt/data layout. Record the committed LF bytes required by .gitattributes; the previous receipt described the same source with CRLF."
   },
   "ui/native-control/overlay/usr/share/u30pro/wallpaper.uc": {
     "source_sha256": "6c91885b7fa813829fac86ac9d0d1f64b36098788a88263f9ffbbcdfe65963a7",
@@ -41,8 +41,8 @@
   },
   "ui/native-control/overlay/usr/share/rpcd/acl.d/u30pro-wallpaper.json": {
     "source_sha256": "150f57004aefc80a5f77056d85ba747d43055b38272503427bfff701567456c4",
-    "sha256": "ce66de62afafc7d9300b54a0842a0e8af9fecf876dbb76af5b148e93dbd6eed4",
-    "reason": "Keep upstream screen/plugin RPC and UCI contracts; route key actions to MU300 policy owners and store wallpaper in the persistent MU300 root rather than the reference /mnt/data layout."
+    "sha256": "45844b947b4be25d64adf5b34272fa511b903353157e7cb1988d05221b3a7306",
+    "reason": "Keep upstream screen/plugin RPC and UCI contracts; route key actions to MU300 policy owners and store wallpaper in the persistent MU300 root rather than the reference /mnt/data layout. Record the committed LF bytes required by .gitattributes; the previous receipt described the same source with CRLF."
   },
   "ui/native-control/overlay/www/luci-static/resources/view/system/u30pro-wallpaper.js": {
     "source_sha256": "04341b79cf71b57dbe96c8828ecbe5458506b6cafd75618241cec8f0994b2037",

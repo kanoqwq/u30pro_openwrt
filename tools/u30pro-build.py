@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import runpy
 
 TOP = Path(__file__).resolve().parents[1]
 PROFILE = TOP / 'devices/u30pro'
@@ -78,20 +79,13 @@ def check_sources(profile=PROFILE):
 
 
 def load_layout(config, workspace=None):
-    data = read_json(config)
-    if data.get('format') != 1 or data.get('family') != 'u30pro':
-        raise ValueError('Expected an explicit U30 Pro build layout')
-    workspace = Path(workspace or data['workspace']).expanduser()
-    if not workspace.is_absolute() or workspace.resolve() in {Path('/'), Path.home().resolve()}:
-        raise ValueError('Use a dedicated absolute build workspace')
-    if str(workspace).lower().startswith(('/mnt/c/', 'c:')):
-        raise ValueError('Do not migrate builds to C:')
-    values = {'workspace': str(workspace), 'repo': str(TOP)}
+    import runpy
+    _, workspace, data = runpy.run_path(str(TOP/'tools/build-settings.py'))['settings'](config, workspace)
     paths = {}
     for key in ('kernel_source', 'kernel_objects', 'input_archive', 'input_manifest',
-                'stock_capture', 'partition_reference', 'busybox', 'at_transport',
+                'boot_templates', 'busybox', 'at_transport',
                 'maintenance', 'theme', 'installer_artifacts'):
-        path = Path(data[key].format(**values)).expanduser()
+        path = Path(data[key]).expanduser()
         if not path.is_absolute():
             raise ValueError('Registered path must be absolute: ' + key)
         paths[key] = path
@@ -113,25 +107,24 @@ def check_inputs(paths):
     version = [re.search(r'^' + key + r'\s*=\s*(\d+)\s*$', makefile, re.M) for key in ('VERSION', 'PATCHLEVEL', 'SUBLEVEL')]
     if not all(version) or '.'.join(m[1] for m in version) != '6.12.94':
         raise ValueError('Registered source is not U30 Pro Linux 6.12.94')
-    for name in ('boot.img', 'vendor_boot.img', 'init_boot.img', 'stock-images.json'):
-        if not (paths['stock_capture'] / name).is_file():
+    for name in ('boot.img', 'vendor_boot.img', 'init_boot.img', 'templates.json'):
+        if not (paths['boot_templates'] / name).is_file():
             raise ValueError('Missing model-specific stock input: ' + name)
-    stock = read_json(paths['stock_capture'] / 'stock-images.json')
-    if stock.get('profile') != 'u30pro' or stock.get('device_writes') is not False:
-        raise ValueError('Stock boot templates have no read-only U30 Pro provenance')
-    android_slot = stock.get('android_slot')
-    if android_slot not in ('a', 'b', '_a', '_b'):
-        raise ValueError('Stock boot templates have no verified Android slot')
-    android_slot = android_slot.removeprefix('_')
+    stock = read_json(paths['boot_templates'] / 'templates.json')
+    lock = read_json(TOP/'tools/public-inputs.lock.json')['assets']
+    if (stock.get('profile') != 'u30pro' or stock.get('device_bound') is not False or
+            stock.get('origin') != {'archive_sha256': lock['native']['sha256'],
+                                   'manifest_sha256': lock['native_manifest']['sha256']} or
+            sha(paths['input_manifest']) != lock['native_manifest']['sha256']):
+        raise ValueError('Boot templates differ from the pinned public input')
+    public_files = dict((line.split(None, 1)[1].lstrip('*'), line.split(None, 1)[0])
+                        for line in paths['input_manifest'].read_text().splitlines())
     for name in ('boot', 'vendor_boot', 'init_boot'):
-        path = paths['stock_capture'] / (name + '.img')
+        path = paths['boot_templates'] / (name + '.img')
         record = stock.get('files', {}).get(path.name, {})
-        if (record.get('source') != '/dev/block/by-name/' + name + '_' + android_slot or
-                record.get('size') != path.stat().st_size or record.get('sha256') != sha(path)):
-            raise ValueError('Stock boot template source/hash differs: ' + name)
-    capture = read_json(paths['partition_reference'])
-    if capture.get('device_writes') is not False or '/MU5358/' not in capture.get('fingerprint', ''):
-        raise ValueError('Stock reference is not the read-only MU5358 capture')
+        if (record.get('size') != path.stat().st_size or record.get('sha256') != sha(path) or
+                public_files.get(record.get('source')) != record.get('sha256')):
+            raise ValueError('Published boot template source/hash differs: ' + name)
     # Presence checks here are not an artifact-reuse receipt: changed kernel
     # sources still require Image plus complete matching modules to be rebuilt.
     # Availability is not a reuse receipt; package() still validates Image,
@@ -174,10 +167,16 @@ def dispatch_release(args, command, workspace, profiles, *, workspace_lock, task
     if args.action == 'check':
         print(json.dumps({**sources, **check_inputs(paths)}, indent=2))
         return
-    if args.action == 'package':
+    if args.action in ('bootstrap', 'build'):
+        if not 1 <= args.jobs <= 256:
+            raise ValueError('Build jobs must be between 1 and 256')
+        command = [sys.executable, str(TOP/'tools/u30pro-build-all.py'),
+                   '--jobs', str(args.jobs)]
+        if args.action == 'bootstrap':
+            command.append('--prepare-only')
+    elif args.action == 'package':
         check_inputs(paths)
-        command=['taskset','-c','14,15','nice','-n','19','ionice','-c','3',
-                 sys.executable,str(TOP/'tools/u30pro-package.py'),'package']
+        command=[sys.executable,str(TOP/'tools/u30pro-package.py'),'package']
     elif args.action != 'run':
         raise ValueError('Unsupported U30 Pro build action')
     if not command:
@@ -185,7 +184,10 @@ def dispatch_release(args, command, workspace, profiles, *, workspace_lock, task
     with workspace_lock(workspace):
         task = task_type(workspace, args.label)
         try:
-            task.run('command', command, {'U30PRO_BUILD_LOCKED': '1'})
+            _, _, layout = runpy.run_path(str(TOP/'tools/build-settings.py'))['settings'](args.config, workspace)
+            task.run('command', command, {'U30PRO_BUILD_LOCKED': '1',
+                'U30PRO_BUILD_CONFIG': str(args.config.resolve()), 'U30PRO_WORKSPACE': str(workspace),
+                'U30PRO_ROOTFS_IMAGE': layout['rootfs_image']})
             task.save(state='complete', profile=profiles[0])
         except BaseException as error:
             task.save(state='failed', error=str(error))
@@ -195,7 +197,7 @@ def dispatch_release(args, command, workspace, profiles, *, workspace_lock, task
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('plan', 'check', 'kernel'))
-    parser.add_argument('--config', type=Path, default=TOP / 'tools/build-layout.json')
+    parser.add_argument('--config', type=Path, default=Path(os.environ.get('U30PRO_BUILD_CONFIG', str(TOP/'tools/build-layout.json'))))
     parser.add_argument('--workspace', type=Path)
     parser.add_argument('--sources-only', action='store_true')
     parser.add_argument('--configure-only', action='store_true')

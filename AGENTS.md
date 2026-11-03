@@ -1,7 +1,7 @@
 # Independent U30 Pro port
 
 - This repository is https://github.com/kanoqwq/u30pro_openwrt, maintained on
-  main at D:/Git/u30pro_openwrt/source. Its starting branch was
+  main at D:/Git/u30pro_openwrt. Its starting branch was
   u30pro-bringup, based on kanoqwq/mu300-linux minikano-openwrt-feats at
   29061dc8, never the MU300 main branch.
 - Read docs/U30PRO-PORT.zh-CN.md. U30 Pro uses UMS9632, Linux 6.12.94,
@@ -66,7 +66,7 @@
   receipts. Register new files/services/catalogs in the tracked assembly path;
   a successful copy to the device alone is not release integration.
 
-- Read `docs/LOCAL-BUILD.zh-CN.md` and `docs/AGENT-BUILD.zh-CN.md` before a local build or release. Use the
+- Read `docs/BUILD.zh-CN.md`, `docs/LOCAL-BUILD.zh-CN.md` and `docs/AGENT-BUILD.zh-CN.md` before a local build or release. Public defaults must build without adjacent repos or private captures; local cache overrides must be explicitly selected, never auto-discovered. Use the
   version-controlled `tools/build-release.py` entry point for task logging,
   workspace locking and release assembly. Never generate another release worker
   in `work/`, or execute/modify an old worker to assemble a new release.

@@ -24,18 +24,16 @@ import tarfile
 
 TOP = Path(__file__).resolve().parents[1]
 NATIVE = TOP / 'devices/u30pro/native'
-WORK = Path('/home/kano/openwrt-build')
+_, WORK, LAYOUT = runpy.run_path(str(TOP/'tools/build-settings.py'))['settings']()
 STAGE = WORK / 'package-work/u30pro-release'
 ROOT = STAGE / 'root'
 OWNER = 'u30pro-mu300-release-v1'
 BASE = WORK / 'cache/u30pro-root/openwrt-25.12.5-armsr-armv8-rootfs.tar.gz'
 BASE_SHA = '493336e176fdc1d6a377763e87a58c5854c24f51e83e586b209783e4bb648d42'
-BOARD = WORK / 'package-work/u30pro-board'
+BOARD = Path(LAYOUT['board_bundle'])
 RUNTIME = WORK / 'artifacts/u30pro-runtime'
-KERNEL = WORK / 'objects/u30pro/release'
-LAYOUT = json.loads((TOP / 'tools/build-layout.json').read_text())
-LAYOUT = {key:value.format(repo=str(TOP),workspace=str(WORK)) if isinstance(value,str) else value
-          for key,value in LAYOUT.items()}
+KERNEL = Path(LAYOUT['kernel_objects'])
+ROOT_IMAGE = LAYOUT['rootfs_image']
 PACKAGES = ('luci', 'luci-i18n-base-zh-cn', 'luci-i18n-firewall-zh-cn',
             'luci-i18n-package-manager-zh-cn', 'bash', 'ip-full', 'iw-full',
             'iwinfo', 'wireless-regdb', 'wifi-scripts', 'wpad-basic-mbedtls', 'openssl-util',
@@ -140,13 +138,13 @@ def dependencies():
     owned()
     command = ['docker', 'run', '--rm', '--platform', 'linux/arm64',
                '-v', str(ROOT) + ':/target', '--entrypoint', '/usr/bin/apk',
-               'mu300-openwrt-base:25.12.5', '--root', '/target', '--timeout', '60']
+               ROOT_IMAGE, '--root', '/target', '--timeout', '60']
     subprocess.run(command + ['update'], check=True)
     subprocess.run(command + ['add', '--scripts=no', '--commit-hooks=no', *PACKAGES], check=True)
     # Materialize only package user declarations; never start target services.
     subprocess.run(['docker', 'run', '--rm', '--platform', 'linux/arm64',
                     '-v', str(ROOT) + ':/target', '--entrypoint', '/bin/sh',
-                    'mu300-openwrt-base:25.12.5', '-ec',
+                    ROOT_IMAGE, '-ec',
                     'export IPKG_INSTROOT=/target; root=/target; . /target/lib/functions.sh; '
                     'for f in /target/lib/apk/packages/*.rusers; do [ ! -f "$f" ] || add_group_and_user "$f"; done'], check=True)
     (STAGE / 'state.json').write_text(json.dumps({'base': BASE_SHA, 'step': 'dependencies-installed'}))
@@ -181,15 +179,20 @@ def copy_tree(source, target):
 def sources(refresh=False):
     owned()
     state = json.loads((STAGE / 'state.json').read_text())
-    allowed=('packaged',) if refresh else ('dependencies-installed', 'sources-installed', 'root-ready')
+    allowed=('packaged',) if refresh else ('dependencies-installed', 'sources-installed', 'root-ready', 'packaged')
     if state['step'] not in allowed:
         raise ValueError('Finish target dependency installation before applying sources')
-    if refresh:
+    if state.get('base') != BASE_SHA:
+        raise ValueError('Retained root has a different OpenWrt base')
+    if ROOT.is_symlink() or ROOT.resolve().parent != STAGE.resolve() or not ROOT.is_dir():
+        raise ValueError('Retained root escaped its owned staging')
+    if state['step'] in ('root-ready', 'packaged'):
         if (ROOT/'etc/mu300/platform').read_text().strip()!='u30pro':
             raise ValueError('Retained root is not the registered U30 Pro profile')
-        release=Path(state['release'])
-        if not release.is_file() or digest(release)!=state['sha256']:
-            raise ValueError('Previous verified release receipt is unavailable')
+    # The prepared root belongs to this workspace, not to the previous ZIP's
+    # checkout location. Archives may be moved/deleted after publication.
+    # Reapply current sources, then verify kernel/runtime and the resulting root
+    # before a new package; never treat the old archive as a build input.
     # Reuse software, configuration and netifd protocol implementation, not any
     # MU300 board blobs or its 6.18/7.2 kernel.
     copy_tree(TOP / 'rootfs/overlay/opt/mu300', ROOT / 'opt/mu300')
@@ -327,7 +330,7 @@ def refresh_sources():
 def target(command):
     return subprocess.check_output(['docker', 'run', '--rm', '--platform', 'linux/arm64',
         '-v', str(ROOT) + ':/target', '--entrypoint', '/bin/sh',
-        'mu300-openwrt-base:25.12.5', '-ec', command], text=True)
+        ROOT_IMAGE, '-ec', command], text=True)
 
 
 def apply_alternatives(root):
@@ -353,6 +356,26 @@ def apply_alternatives(root):
         path.symlink_to(os.path.relpath(target,path.parent))
 
 
+def busybox_aliases(root, applets):
+    bindir = root/'opt/mu300/busybox-bin'
+    bindir.mkdir(parents=True, exist_ok=True)
+    (root/'bin').mkdir(exist_ok=True)
+    for applet in applets:
+        if not re.fullmatch(r'[A-Za-z0-9_\[.\]-]+', applet) or applet in ('.','..'):
+            raise ValueError('Invalid busybox applet')
+        link = bindir/applet
+        # This is the generated alias namespace, not package-owned /bin.
+        # Retire a prior regular shim when the selected BusyBox now supplies it.
+        if link.is_dir() and not link.is_symlink():
+            raise ValueError('Unexpected directory in BusyBox aliases: '+applet)
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to('../bin/busybox')
+        if not any((root/folder/applet).exists() or (root/folder/applet).is_symlink()
+                   for folder in ('bin','sbin','usr/bin','usr/sbin')):
+            (root/'bin'/applet).symlink_to('/opt/mu300/bin/busybox')
+
+
 def finish():
     owned()
     if json.loads((STAGE/'state.json').read_text())['step'] != 'sources-installed':
@@ -360,16 +383,7 @@ def finish():
     bb = ROOT / 'opt/mu300/bin/busybox'
     shutil.copyfile(LAYOUT['busybox'], bb); bb.chmod(0o755)
     applets = target('/target/opt/mu300/bin/busybox --list').splitlines()
-    bindir = ROOT / 'opt/mu300/busybox-bin'; bindir.mkdir(exist_ok=True)
-    for applet in applets:
-        if not re.fullmatch(r'[A-Za-z0-9_\[.\]-]+', applet):
-            raise ValueError('Invalid busybox applet')
-        link = bindir / applet
-        if not link.is_symlink(): link.symlink_to('../bin/busybox')
-        # Fill absent target tools, without replacing package-owned programs.
-        if not any((ROOT / folder / applet).exists() or (ROOT / folder / applet).is_symlink()
-                   for folder in ('bin', 'sbin', 'usr/bin', 'usr/sbin')):
-            (ROOT / 'bin' / applet).symlink_to('/opt/mu300/bin/busybox')
+    busybox_aliases(ROOT, applets)
     etc = ROOT / 'etc/mu300'; etc.mkdir(exist_ok=True)
     (etc/'hotspot.conf').write_text('SSID=U30Pro-OpenWrt\nPSK=openwrt1234\nBAND=5\nCHANNEL=36\nCOUNTRY=CN\n')
     (etc/'default-boot').write_text('android\n')
@@ -407,7 +421,7 @@ def finish():
     theme=Path(LAYOUT['theme'])
     subprocess.run(['docker','run','--rm','--platform','linux/arm64','-v',str(ROOT)+':/target',
         '-v',str(theme)+':/theme.apk:ro','--entrypoint','/usr/bin/apk',
-        'mu300-openwrt-base:25.12.5','--root','/target','--no-network','add','--allow-untrusted',
+        ROOT_IMAGE,'--root','/target','--no-network','add','--allow-untrusted',
         '--scripts=no','--commit-hooks=no','/theme.apk'],check=True)
     defaults.write_text(defaults.read_text().replace('exit 0\n',
         "uci set luci.main.mediaurlbase='/luci-static/aurora'\nuci commit luci\nexit 0\n"))
@@ -461,7 +475,7 @@ def canonical_boot():
         'usr/sbin/u30pro-usb':NATIVE/'ui/native-control/overlay/usr/sbin/u30pro-usb'}.items():
         files[name] = (path.read_bytes().replace(b'\r\n',b'\n') if name != 'bin/busybox' and path.read_bytes().startswith(b'#!') else path.read_bytes(), stat.S_IFREG|0o755)
     ram = builder['lz4_legacy'](builder['cpio_archive']({'dev','proc','sys','run','tmp','disk','newroot'},files))
-    stock = (paths['stock_capture']/'boot.img').read_bytes()
+    stock = (paths['boot_templates']/'boot.img').read_bytes()
     header = bytearray(stock[:4096]); kernel = wrapped.read_bytes()
     struct.pack_into('<II',header,8,len(kernel),len(ram))
     struct.pack_into('<I',header,1580,0)
@@ -482,7 +496,7 @@ def boot_smoke(package_root):
     native=load('native_package_containers',package_root/'desktop/native_u30pro.py')
     parser=load('native_package_metadata',TOP/'installer/runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/boot.py')
     base=(package_root/'payload/boot-linux.img').read_bytes()
-    stock=Path(LAYOUT['stock_capture'])
+    stock=Path(LAYOUT['boot_templates'])
     templates={name:(stock/(name+'.img')).read_bytes() for name in ('boot','vendor_boot','init_boot')}
     proof=[]
     for slot,mode in (('a','part'),('b','part'),('a','prepare'),('b','install-part')):
