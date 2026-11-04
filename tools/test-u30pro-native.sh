@@ -12,6 +12,7 @@ python3 -m unittest discover -s "$top/tests" -p test_u30pro_package_state.py
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_public_build.py
 python3 "$top/tests/u30pro_navigation.py"
 python3 "$top/tests/u30pro_power_events.py"
+python3 "$top/tests/u30pro_uninstall_storage.py"
 python3 "$top/tests/u30pro_battery_history.py"
 python3 "$top/tests/u30pro_charge_sources.py"
 python3 "$top/tests/u30pro_usb_roles.py"

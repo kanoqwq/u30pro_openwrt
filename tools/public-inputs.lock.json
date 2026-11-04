@@ -2,7 +2,7 @@
   "format": 1,
   "openwrt": "25.12.5",
   "kernel": "6.12.94",
-  "installer_commit": "591648b552cd31edb9395619515c3fd43aca1dda",
+  "installer_commit": "cdc6f1569dede8a043b3486767719d68e7135e22",
   "assets": {
     "kernel": {
       "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.94.tar.xz",
@@ -45,16 +45,16 @@
       "sha256": "ff23a9825aeac8da14a7142e985d598043c0287a463279f24863c580622bf18d"
     },
     "installer_windows": {
-      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-591648b/installer-windows-x64-591648b.tar.gz",
-      "sha256": "bd905c650dd9d050b5a5d84209cf536f7a75e6931d48e6bb7bfd97b934202506"
+      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-cdc6f15/installer-windows-x64-cdc6f15.tar.gz",
+      "sha256": "4e82ffb8437659f9384647e101e662ec9a8029aaf6dd564c8b64384db29a57e8"
     },
     "installer_macos": {
-      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-591648b/installer-macos-arm64-591648b.tar.gz",
-      "sha256": "70cf615745b9595456fc768e7776b17d5329a57dc0e7a0100e5826a364e06dad"
+      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-cdc6f15/installer-macos-arm64-cdc6f15.tar.gz",
+      "sha256": "9a7fd4335deb06e8a319b72b0f05692b342464a983c49dd1a947d3fc3aeee3cf"
     },
     "installer_android": {
-      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-591648b/installer-android-aarch64-591648b.tar.gz",
-      "sha256": "c3e232bdb3d5a82a250667bdbfc4808d1ac627f3cf166508631dba0aa92a451d"
+      "url": "https://github.com/kanoqwq/u30pro_openwrt/releases/download/build-tools-cdc6f15/installer-android-aarch64-cdc6f15.tar.gz",
+      "sha256": "a9b0923e502ceb850f1ae57e44e772dc5e645b217fa0ff1137d1d77496eac8c1"
     },
     "theme": {
       "url": "https://github.com/eamonxg/luci-theme-aurora/releases/download/v1.4.0/luci-theme-aurora-1.4.0-r20260920.apk",

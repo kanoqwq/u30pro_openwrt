@@ -20,7 +20,7 @@ SC2355 固件或单 boot 安装布局。硬件代码来自 [移植记录](U30PRO
 | 默认公开输入登记 | tools/build-layout.json、tools/public-inputs.lock.json |
 | 本机缓存覆盖 | tools/build-layout.local.json（忽略，不自动选择） |
 | 原生输入与原厂模板 | 工作区 cache/u30pro-inputs/ |
-| 固定版本原生安装器产物 | 工作区 artifacts/u30pro-installers（公开 Release 下载并校验） |
+| 固定版本原生安装器产物 | 工作区 artifacts/u30pro-installers/<固定提交>（公开 Release 下载并校验） |
 | 日志 / 状态 | out/build-logs/、out/build-state/ |
 | 后续正式交付 | release/ |
 
