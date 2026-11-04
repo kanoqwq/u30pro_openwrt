@@ -61,7 +61,7 @@ python3 tools/build-release.py status
 | AT 传输和硬件服务、屏幕程序 | 本仓库和已固定的原生源码，现场编译 |
 | 启动模板、AIC 固件和基带 XML | 原作者公开的 `build-inputs-20261025` Release，按成员摘要提取 |
 | Aurora 主题 | 作者公开的固定版本 APK |
-| Windows / Mac / Android 安装器 | 本仓库 `build-tools-dc84da1` 公开 Release，与安装器子模块提交及构建指纹绑定 |
+| Windows / Mac / Android 安装器 | 本仓库 `build-tools-88172cc` 公开 Release，与安装器子模块提交及构建指纹绑定 |
 
 构建会校验下载文件及提取成员，复核安装器文件和源码指纹。失败即报告具体输入，
 不会读取旁边的 E5/MU300 目录、旧安装包、个人备份或任意其他缓存来填补缺失项。
