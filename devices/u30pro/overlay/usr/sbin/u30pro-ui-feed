@@ -14,29 +14,43 @@ if(!bus)die('Screen feed: ubus is unavailable\n');
 let requested={}, timer;
 function clean(v) { return replace(''+(type(v)=='bool'?(v?1:0):(v ?? '')) ,/[\r\n\t]/g,' '); }
 function object(path) { try{return json(fs.readfile(path) || '{}');}catch(e){return {}; } }
+function cell_status(view,cell,sig,wanted,slot) {
+    let sim=view.modem?.sims?.[int(slot)];
+    let state=sim?.slot===int(slot)?sim.state:'unknown';
+    if(state=='absent')return 'waiting-sim';
+    if(!view.modem?.alive)return 'modem-unavailable';
+    if(state=='locked')return 'sim-locked';
+    if(cell.cfun===0 || sig.cfun===0)return 'radio-off';
+    if(view.wan.up)return 'connected';
+    if(!wanted)return 'data-disabled';
+    return state=='ready'?'dialing':'checking-sim';
+}
 function run() {
     let screen=bus.call('u30pro.panel','status',{}) || {}, req=requested;
     requested={};
     for(let name in ['wireless','unisoc_modem','network']) {config.unload(name);config.load(name);}
     let slot=config.get('unisoc_modem','main','data_sim')=='1'?'1':'0';
     let view=info(slot,bus,config), cached=status(slot,true,bus,config), cell=cached.cell || {}, sig=cached.sig || {};
-    let lte=cell.lte || {}, nr=cell.nr || {}, relay=client.status(config,bus);
+    let relay=client.status(config,bus);
     // Existing native screen data-toggle add-ons consume this public state.
     // It reflects the MU300 owner's choice; it never owns a physical channel.
     fs.mkdir('/run/u30pro-cellular',448);
     let data_iface=config.get('unisoc_modem','main','data_interface') || 'wan';
     let wanted=view.wan.autostart!==false && !fs.stat('/run/mu300-mobile-data-manual-down') &&
         config.get('network',data_iface,'disabled')!='1';
-    let public_status={state:view.wan.up?'connected':'disconnected',connected:!!view.wan.up,
-        interface:view.wan.device,address:view.wan.ip4};
+    let state=cell_status(view,cell,sig,wanted,slot), absent=state=='waiting-sim', linked=state=='connected';
+    if(absent){cell={};sig={};}
+    let lte=cell.lte || {}, nr=cell.nr || {};
+    let public_status={state,connected:linked,
+        interface:view.wan.device,address:absent?'':view.wan.ip4};
     // The published screen-data add-on checks the literal compact boolean.
     // ucode %J adds spaces, so keep this field in its native byte format.
     // wanted follows explicit user intent, not a temporary netifd teardown.
     fs.writefile('/run/u30pro-cellular/status.json.new',
         '{"desired_up":'+(wanted?'true':'false')+','+substr(sprintf('%J',public_status),1)+'\n');
     fs.rename('/run/u30pro-cellular/status.json.new','/run/u30pro-cellular/status.json');
-    let data={cell_connected:view.wan.up,cell_state:view.wan.up?'connected':'disconnected',
-        ip:view.wan.ip4,iface:view.wan.device,op:carrier_name(cell.operator),
+    let data={cell_connected:linked,cell_state:state,
+        ip:absent?'':view.wan.ip4,iface:view.wan.device,op:carrier_name(cell.operator),
         rat:nr.band!=null?'5G':lte.band!=null?'4G':'',have_sig:(nr.rsrp ?? lte.rsrp)!=null?1:0,
         kernel:view.kernel,slot:trim(fs.readfile('/run/mu300/linux-slot') || ''),
         version:trim(fs.readfile('/etc/mu300/image-version') || ''),
@@ -76,5 +90,6 @@ const panel_events=bus.listener('u30pro.panel.request',(type,msg)=>{
 const modem_events=bus.listener('mu300.modem.urc',(type,msg)=>{
     if(match(msg?.line || '',/^\+CMT/))timer.set(100);
 });
+const sim_events=bus.listener('mu300.sim-state',()=>timer.set(1));
 const terminate=uloop.signal(15,()=>uloop.end()), interrupt=uloop.signal(2,()=>uloop.end());
 uloop.run();

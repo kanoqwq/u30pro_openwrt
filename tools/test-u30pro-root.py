@@ -46,7 +46,9 @@ def main():
         'usr/libexec/rpcd/mu300dash':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/mu300dash',
         'www/luci-static/resources/view/mu300/sim.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/sim.js',
         'usr/libexec/unisoc-modem/device-usb':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/device-usb',
+        'usr/libexec/unisoc-modem/usb-link.uc':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/usb-link.uc',
         'www/luci-static/resources/mu300/common.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/common.js',
+        'www/luci-static/resources/view/mu300/home.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/home.js',
         'www/luci-static/resources/view/mu300/device.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/device.js',
         'www/luci-static/resources/mu300/nfc.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/nfc.js',
         'www/luci-static/resources/mu300/roaming.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/roaming.js',
@@ -181,6 +183,7 @@ def main():
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_bus_lifetime.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_display_handoff.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_screen_bandwidth.py')],check=True)
+    subprocess.run([sys.executable,str(TOP/'tests/u30pro_sim_status.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_power_menu.py')],check=True)
     subprocess.run([sys.executable,'-m','unittest','discover','-s',str(TOP/'tests'),
                     '-p','test_u30pro_nfc.py'],check=True)

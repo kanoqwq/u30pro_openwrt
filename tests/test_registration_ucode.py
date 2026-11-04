@@ -78,6 +78,22 @@ class RegistrationCache(unittest.TestCase):
         self.assertFalse((self.root/'sim1.json').exists())
         self.assertEqual(json.loads((self.root/'sim0.json').read_text())['state'], 'locked')
 
+    def test_confirmed_absence_survives_rf_off_but_not_card_change_or_owner_reset(self):
+        self.run_cache('''for (let slot in [0,1]) {
+            c.reply('AT+SPACTCARD='+slot+';+SFUN=2','OK');
+            c.reply('AT+SPACTCARD='+slot+';+CPIN?', '+CME ERROR: 10');
+            c.reply('AT+SPACTCARD='+slot+';+SFUN=5','OK');
+            c.reply('AT+SPACTCARD='+slot+';+CPIN?', '+CME ERROR: 10');
+        }''')
+        for slot in (0,1):
+            self.assertEqual(json.loads((self.root/f'sim{slot}.json').read_text())['state'],'absent')
+            self.assertFalse((self.root/f'sim-power{slot}').exists())
+        self.run_cache("c.event(1,'+ECIND: 3,0,0,1')")
+        self.assertFalse((self.root/'sim1.json').exists())
+        self.assertTrue((self.root/'sim0.json').exists())
+        self.run_cache('c.reset(0)')
+        self.assertFalse((self.root/'sim0.json').exists())
+
     def test_unscoped_or_incomplete_reply_does_not_change_state(self):
         events = self.run_cache('''c.reply('AT+CPIN?', '+CPIN: READY\\nOK');
             c.reply('AT+SPACTCARD=0;+CPIN?', '+CPIN: READY');

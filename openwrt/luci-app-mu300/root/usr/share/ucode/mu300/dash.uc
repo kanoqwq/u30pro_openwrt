@@ -24,7 +24,10 @@ export function sim_state(slot) {
     let row=obj('/run/mu300-registration/sim'+slot+'.json');
     // The AT owner records absence only after the SIM was known to be powered.
     // An empty ICCID or CFUN=0 alone is never proof of removal.
-    if(type(row)!='object' || row.slot!==int(slot) || !exists('/run/mu300-registration/sim-power'+slot) ||
+    // A confirmed empty slot stays empty when RF is subsequently disabled.
+    // Card-change events and AT-owner replacement invalidate that snapshot.
+    if(type(row)!='object' || row.slot!==int(slot) ||
+       (row.state!='absent' && !exists('/run/mu300-registration/sim-power'+slot)) ||
        !(row.state in ['ready','locked','absent']))return 'unknown';
     return row.state;
 };

@@ -25,6 +25,9 @@ EOF
         *) return 0 ;;
     esac
     case "$cause" in *[!0-9]*) return 0 ;; esac
+    # Invalidate the previous card snapshot; the hint is not absence evidence.
+    local root=${MU300_REGISTRATION_DIR:-/run/mu300-registration}
+    rm -f "$root/sim$slot.json"
     ( ubus -t 1 send mu300.sim-change "{\"slot\":$slot}" ) \
         3<&- 4<&- </dev/null >/dev/null 2>&1 &
 }
@@ -54,7 +57,7 @@ mu300_sim_reply() {
         'AT+SPACTCARD=1;'*) slot=1; command=${command#*;} ;;
         *) return 0 ;;
     esac
-    case "$command" in +CPIN\?|+SFUN=2|+SFUN=3|+SFUN=4|+CFUN=0|+CFUN\?) ;; *) return 0 ;; esac
+    case "$command" in +CPIN\?|+SFUN=2|+SFUN=3|+SFUN=4|+SFUN=5|+CFUN=0|+CFUN\?) ;; *) return 0 ;; esac
     while IFS= read -r line; do
         line=${line%"$(printf '\r')"}
         case "$line" in
@@ -71,8 +74,9 @@ mu300_sim_reply() {
                 case "$command:$state" in
                     +SFUN=2:*|+SFUN=4:*|+CFUN\?:powered)
                         mkdir -p "$root" && : > "$root/sim-power$slot" ;;
-                    +SFUN=3:*|+CFUN=0:*)
-                        rm -f "$root/sim-power$slot" "$root/sim$slot.json" ;;
+                    +SFUN=3:*|+SFUN=5:*|+CFUN=0:*)
+                        rm -f "$root/sim-power$slot"
+                        mu300_sim_is "$slot" absent || rm -f "$root/sim$slot.json" ;;
                     +CPIN\?:ready|+CPIN\?:locked|+CPIN\?:absent)
                         [ "$state" != absent ] || [ -f "$root/sim-power$slot" ] || return 0
                         mkdir -p "$root" && : > "$root/sim-power$slot"

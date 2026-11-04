@@ -530,6 +530,11 @@ static const char *cell_text(char *buf, size_t cap)
 {
 	if (D.cell_connected) { snprintf(buf, cap, "%s", D.op[0] ? D.op : "已连接"); return buf; }
 	if (!strcmp(D.cell_state, "waiting-sim")) return "无SIM卡";
+	if (!strcmp(D.cell_state, "checking-sim")) return "正在识别SIM卡";
+	if (!strcmp(D.cell_state, "sim-locked")) return "SIM卡已锁定";
+	if (!strcmp(D.cell_state, "radio-off")) return "无线电已关";
+	if (!strcmp(D.cell_state, "data-disabled")) return "数据已关闭";
+	if (!strcmp(D.cell_state, "modem-unavailable")) return "基带无应答";
 	if (!strcmp(D.cell_state, "data-unavailable")) return "无数据";
 	if (!D.feed_ok) return "启动中";
 	return "拨号中…";

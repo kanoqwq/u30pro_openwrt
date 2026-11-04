@@ -88,6 +88,24 @@ wait
             self.assertEqual(r.returncode, 0, r.stderr)
             for file in cache.iterdir(): file.unlink()
 
+    def test_confirmed_absence_survives_rf_off_until_a_card_change_hint(self):
+        for shell in self.each_shell():
+            cache=self.tmp/'absence'
+            source='. '+shlex.quote(str(self.library))+'''
+mu300_sim_reply 'AT+SPACTCARD=0;+SFUN=2' 'OK'
+mu300_sim_reply 'AT+SPACTCARD=0;+CPIN?' '+CME ERROR: 10'
+mu300_sim_reply 'AT+SPACTCARD=0;+SFUN=5' 'OK'
+mu300_sim_is 0 absent || exit 90
+mu300_sim_absent 0 && exit 91
+mu300_sim_reply 'AT+SPACTCARD=0;+CPIN?' '+CME ERROR: 10'
+mu300_sim_is 0 absent || exit 92
+mu300_sim_changed 0 '+ECIND: 3,0,0,1'
+mu300_sim_is 0 absent && exit 93
+wait
+'''
+            result=self.sh(shell,source,MU300_REGISTRATION_DIR=cache)
+            self.assertEqual(result.returncode,0,result.stderr)
+
     def test_known_absence_ends_registration_without_queries_or_sleep(self):
         text = (TOP/'rootfs/overlay/opt/mu300/bin/mobile-data').read_text()
         function = text[text.index('wait_registered() {'):text.index('\n# The modem needs')]

@@ -14,6 +14,18 @@ class NativeSnapshot(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.snap=Snapshot(self.root)
 
+    def test_confirmed_empty_sim_is_visible_after_rf_off_without_inventing_presence(self):
+        s=self.snap
+        s.write('run/mu300-registration/sim0.json','{"slot":0,"state":"absent"}\n')
+        self.assertEqual(s.run('sim_state','0'),'absent')
+        s.write('run/mu300-registration/sim0.json','{"slot":0,"state":"ready"}\n')
+        self.assertEqual(s.run('sim_state','0'),'unknown')
+        s.write('run/mu300-registration/sim-power0','')
+        self.assertEqual(s.run('sim_state','0'),'ready')
+        s.write('run/mu300-registration/sim0.json','{"slot":1,"state":"absent"}\n')
+        self.assertEqual(s.run('sim_state','0'),'unknown')
+        self.assertEqual(s.run('sim_state','1'),'unknown')
+
     def test_active_data_slot_is_not_the_view_or_saved_preference(self):
         self.snap.write('run/mu300-data-sim-actual','1')
         self.snap.responses['network.interface.wan.status']['up']=False

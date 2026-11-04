@@ -33,21 +33,24 @@ present0=1; present1=1
 prepared0=0; prepared1=0
 for card in 0 1; do
     pin=$(query "$card" 'AT+CPIN?')
-    # The previous U30 preflight powered the SIM before deciding absence: an
-    # inserted, unpowered U30 SIM also returns CME 10. Only repair this cold
-    # ambiguity, never cycle a live/initialized stack or infer it on F50/V50.
+    # U30 Air and U30 Pro use this existing SIM-power step before deciding
+    # absence: an inserted, unpowered SIM can also return CME 10. Only repair
+    # cold ambiguity; never cycle a live stack or infer it on F50/V50.
     # Reuse this SFUN=2 in the later cold plan; no duplicate power command,
     # extra polling or radio reset is added. Busy/failed replies end the round.
-    if [ "$model" = u30air ] && [ ! -e "$root/mu300-dual-radio-ready" ] && absent_pin "$pin"; then
+    if { [ "$model" = u30air ] || [ "$model" = u30pro ]; } &&
+       [ ! -e "$root/mu300-dual-radio-ready" ] && absent_pin "$pin"; then
         state=$(cfun "$card")
         case "$state" in
             0|2)
                 ok "$card" 'AT+SFUN=2' 10 || fail "SIM $card presence power-on rejected"
-                if [ "$card" = 0 ]; then prepared0=1; else prepared1=1; fi
-                pin=$(query "$card" 'AT+CPIN?') ;;
+                if [ "$card" = 0 ]; then prepared0=1; else prepared1=1; fi ;;
             1) ;; # A live stack has already powered its SIM.
             *) fail "SIM $card power state unavailable for presence check" ;;
         esac
+        # CFUN=1 also establishes the passive owner's SIM-power evidence.
+        # Confirm CPIN after that evidence, even when no power command was needed.
+        pin=$(query "$card" 'AT+CPIN?')
     fi
     if absent_pin "$pin"; then
         [ "$card" != 0 ] && present1=0 || present0=0

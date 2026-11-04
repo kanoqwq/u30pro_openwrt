@@ -11,6 +11,7 @@ python3 "$top/tests/u30pro_port.py"
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_package_state.py
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_public_build.py
 python3 "$top/tests/u30pro_navigation.py"
+python3 "$top/tests/u30pro_sim_status.py"
 python3 "$top/tests/u30pro_power_events.py"
 python3 "$top/tests/u30pro_uninstall_storage.py"
 test_busybox=$(python3 -c 'import runpy,sys; print(runpy.run_path(sys.argv[1])["settings"]()[2]["busybox"])' "$top/tools/build-settings.py")
@@ -18,6 +19,7 @@ OPENWRT_TEST_BUSYBOX="$test_busybox" python3 -m unittest discover -s "$top/insta
 python3 "$top/tests/u30pro_battery_history.py"
 python3 "$top/tests/u30pro_charge_sources.py"
 python3 "$top/tests/u30pro_usb_roles.py"
+python3 "$top/tests/test_usb_link.py"
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_nfc.py
 python3 -m unittest discover -s "$top/tests" -p test_nfc_dashboard.py
 python3 -m unittest discover -s "$top/tests" -p test_v50_sim.py

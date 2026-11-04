@@ -58,7 +58,7 @@ int main(void) {
 ];
 const fs={readfile:()=>''}, config={get:()=>''},carrier_name=x=>x;
 for(let c in cases){
- let lte=c.lte,nr=c.nr,relay={},cell={},slot='0';
+ let lte=c.lte,nr=c.nr,relay={},cell={},slot='0',linked=false,state='disconnected',absent=false;
  let view={wan:{},wifi:{},net:{},kernel:'test'};
  BODY
  if(data.lte_bw!==c.want || data.nr_bw!==c.nr_bw || data.bw_idx!==-1)die(sprintf('%J',data));

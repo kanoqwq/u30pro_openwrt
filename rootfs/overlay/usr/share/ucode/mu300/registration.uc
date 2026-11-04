@@ -30,6 +30,9 @@ function cache(root, notify) {
         for (let v in fields) if (length(v) > 10 || +v > 4294967295) return false;
         let t = +fields[0], v = +fields[1], c = fields[2] != null ? +fields[2] : null;
         if (t != 3 || (v == 1 ? index([1, 2, 7, 25, 34], c) < 0 : index([0, 2, 4, 100], v) < 0)) return false;
+        // A card-change hint invalidates a previous snapshot, but does not
+        // itself prove insertion/removal. The existing recovery owner rechecks.
+        if (unlink(root+'/sim'+slot+'.json')) notify('mu300.sim-state', {slot});
         notify('mu300.sim-change', {slot});
         return true;
     }
@@ -79,7 +82,11 @@ function cache(root, notify) {
             else if (line == 'OK') {
                 if (cmd == '+SFUN=2' || cmd == '+SFUN=4' || (cmd == '+CFUN?' && state == 'powered')) put('sim-power' + slot, '');
                 else if (cmd == '+SFUN=3' || cmd == '+SFUN=5' || cmd == '+CFUN=0') {
-                    unlink(power); unlink(root + '/sim' + slot + '.json');
+                    unlink(power);
+                    // Preserve a powered CPIN confirmation of physical absence
+                    // across RF-off. Ready/locked snapshots must be revalidated.
+                    if (readfile(root+'/sim'+slot+'.json') != sprintf('{"slot":%d,"state":"absent"}\n',slot))
+                        unlink(root+'/sim'+slot+'.json');
                     unlink(root+'/slot'+slot+'.json'); unlink(root+'/slot'+slot+'-nr.json');
                 }
                 else if (cmd == '+CPIN?' && index(['ready', 'locked', 'absent'], state) >= 0) {

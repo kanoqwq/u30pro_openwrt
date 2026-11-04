@@ -106,8 +106,8 @@
   },
   "tools/ui/pages.h": {
     "source_sha256": "7400d3e1955815170014f86748ea75ab2fc9b6d7f202fe910d050dec9081cb4f",
-    "sha256": "b0dd6e33507e5ca00884db7b60abfa5a19b383b0a34b1ab286e72df7c6559ba2",
-    "reason": "Render LTE CA bandwidth text on the existing serving-cell row with the native index ABI retained. Add rounded themed power choices/confirmation within the round panel; align refresh arrowhead with the actual clockwise arc tangent."
+    "sha256": "f73cf2a6175b780337097d61a69c5637062b0c7a9eeca5dccaad37170c2e2408",
+    "reason": "Render LTE CA bandwidth text on the existing serving-cell row with the native index ABI retained. Add rounded themed power choices/confirmation within the round panel; align refresh arrowhead with the actual clockwise arc tangent. Distinguish confirmed no-SIM, unknown SIM, locked SIM, disabled data, RF off and unavailable modem in the native screen; use the shared AT owner state via the U30 Pro feeder."
   },
   "tools/ui/menu.h": {
     "source_sha256": "682fc834c362e9353ef4a0015e8c790798270e51635e28b77aed3fef3a10141e",

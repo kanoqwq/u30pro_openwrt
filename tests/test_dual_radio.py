@@ -10,7 +10,7 @@ class DualRadio(ShellTest):
         self.stub('mu300-device', 'echo "${TEST_DEVICE:-f50}"')
         self.stub('uci', 'case "$3" in *.dual_standby) echo "${TEST_DSDS:-1}";; *.data_sim) echo "${TEST_DATA_SIM:-0}";; esac')
         self.run=self.tmp/'run'
-        for directory,n in [('mu300-at',0),('mu300-at4',3)]:
+        for directory,n in [('mu300-at',0),('mu300-at4',3),('mu300-at2',0),('mu300-at5',3)]:
             p=self.run/directory/'urc';p.mkdir(parents=True)
             (p/f'stty_nr{n}.ready').write_text(str(os.getpid()))
         client=self.tmp/'client'
@@ -103,6 +103,48 @@ f.write_text(json.dumps(s));print('OK')
                 start=commands.index(power)
                 self.assertEqual(commands[start+1],f'AT+SPACTCARD={slot};+CPIN?')
             self.assertTrue((self.run/'mu300-dual-radio-ready').exists())
+
+    def test_u30pro_cold_presence_empty_single_and_both_cards(self):
+        for shell in self.each_shell():
+            for present in ([], [0], [1], [0,1]):
+                self.reset([0,0])
+                (self.tmp/'radio.json').write_text(json.dumps(dict(cfun=[0,0],data=0,sim_power=[0,0],present=present)))
+                result=self.script(shell,SCRIPT,**dict(self.extra,TEST_DEVICE='u30pro'))
+                self.assertEqual(result.returncode,0,result.stderr)
+                commands=(self.tmp/'commands').read_text().splitlines()
+                for slot in (0,1):
+                    power=f'AT+SPACTCARD={slot};+SFUN=2'
+                    self.assertEqual(commands.count(power),1)
+                    self.assertEqual(commands[commands.index(power)+1],f'AT+SPACTCARD={slot};+CPIN?')
+                    if slot not in present:
+                        self.assertNotIn(f'AT+SPACTCARD={slot};+SFUN=4',commands)
+                self.assertTrue((self.run/'mu300-dual-radio-ready').exists())
+
+    def test_u30pro_warm_or_disabled_rf_is_not_reenabled_for_presence(self):
+        for shell in self.each_shell():
+            (self.tmp/'sim-radio-policy').write_text('1 1\n')
+            self.reset([1,0])
+            (self.tmp/'radio.json').write_text(json.dumps(dict(cfun=[1,0],data=0,sim_power=[1,0],present=[0])))
+            (self.run/'mu300-dual-radio-ready').touch()
+            result=self.script(shell,SCRIPT,**dict(self.extra,TEST_DEVICE='u30pro',MU300_SIM_SLOT='0'))
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertNotIn('SFUN=',(self.tmp/'commands').read_text())
+            self.reset([0,0])
+            (self.tmp/'radio.json').write_text(json.dumps(dict(cfun=[0,0],data=0,sim_power=[0,0])))
+            (self.tmp/'sim-radio-policy').write_text('0 0\n')
+            result=self.script(shell,SCRIPT,**dict(self.extra,TEST_DEVICE='u30pro'))
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertNotIn('SFUN=4',(self.tmp/'commands').read_text())
+
+    def test_u30pro_busy_probe_remains_unknown_and_does_not_enable_rf(self):
+        for shell in self.each_shell():
+            for flag in ('FAIL_SIM_POWER','SIM_BUSY'):
+                self.reset([0,0])
+                (self.tmp/'radio.json').write_text(json.dumps(dict(cfun=[0,0],data=0,sim_power=[0,0])))
+                result=self.script(shell,SCRIPT,**dict(self.extra,TEST_DEVICE='u30pro',**{flag:'1'}))
+                self.assertNotEqual(result.returncode,0)
+                self.assertFalse((self.run/'mu300-dual-radio-ready').exists())
+                self.assertNotIn('SFUN=4',(self.tmp/'commands').read_text())
 
     def test_u30_powered_probe_still_skips_a_real_empty_slot(self):
         for shell in self.each_shell():
