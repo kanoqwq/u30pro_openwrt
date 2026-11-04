@@ -83,3 +83,24 @@ userdata/misc，随后直接进入卸载 worker，不调用安装、格式化或
 测试覆盖两种 A/B 方向、eMMC/UFS 节点、OpenWrt 分区存在/已移除、缺配置的
 负对照、启动内容变化拒绝重试及写入异常传播。均为离线文件/模拟节点验证，
 不代表本轮已在实机完成卸载。
+
+### 同日复查：规范载荷漏带早期存储依赖
+
+第一次修正版仍停在 Logo。无线 ADB 读回确认 Android B 正常，Linux A 的
+boot/vendor_boot/init_boot 摘要与这次卸载写入记录一致；主备 GPT 均与卸载前
+备份逐摘要一致，尚未执行空间归还。pstore 没有留下上次启动日志。
+
+对实际 boot-uninstall.img 解包后发现：虽然 prepare 配置已补齐，完整 init
+仍在卸载 hook 之前 source /etc/mu300-desktop-storage.sh，但规范载荷没有该文件。
+此前测试只直接调用等待函数，并自行提供拓扑函数，遗漏了整个 init 的依赖。
+
+现将早期只读发现改为 source /etc/mu300-storage.sh，并由 canonical_boot 正式
+收入同一份共享拓扑库。安装/挂载策略的 source 移至 storage-ready hook 之后，
+卸载镜像在该边界截断，既不缺发现依赖，也不进入安装、格式化或根挂载路径。
+不改内核、AT、NV 或其他机型的维护入口。
+
+完整 init 离线回归运行于私有 chroot，使用真实共享拓扑解析与合成 sysfs/block
+节点；仅把宿主挂载、USB 配置和卸载 worker 换为无写入桩。覆盖双向 A/B、
+eMMC/UFS、根分区存在/不存在，以及缺必需库时禁止到达 worker 的负对照。
+正式组包另从实际规范载荷生成两槽维护镜像，检查其早期 source 依赖齐全。
+这些验证不是实机卸载验收；本轮只读核查没有改设备分区、数据或 NV。

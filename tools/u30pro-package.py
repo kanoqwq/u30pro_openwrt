@@ -471,6 +471,7 @@ def canonical_boot():
     for name, path in {
         'init':TOP/'devices/u30pro/init', 'bin/busybox':Path(LAYOUT['busybox']),
         'etc/u30pro-boot-wait.sh':TOP/'devices/u30pro/boot-wait.sh',
+        'etc/mu300-storage.sh':TOP/'rootfs/overlay/opt/mu300/lib/storage.sh',
         'usr/sbin/u30pro-nodes':RUNTIME/'u30pro-nodes',
         'usr/sbin/u30pro-usb':NATIVE/'ui/native-control/overlay/usr/sbin/u30pro-usb'}.items():
         files[name] = (path.read_bytes().replace(b'\r\n',b'\n') if name != 'bin/busybox' and path.read_bytes().startswith(b'#!') else path.read_bytes(), stat.S_IFREG|0o755)
@@ -496,6 +497,19 @@ def boot_smoke(package_root):
     native=load('native_package_containers',package_root/'desktop/native_u30pro.py')
     parser=load('native_package_metadata',TOP/'installer/runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/boot.py')
     base=(package_root/'payload/boot-linux.img').read_bytes()
+    # Maintenance starts from the canonical payload, not the installation-bound
+    # boot. Prove its early init dependencies are present before releasing it.
+    from backend.uninstall_boot import build as uninstall_boot
+    for slot in ('a','b'):
+        request=uninstall_boot(base,'mu300',{},android_slot=slot)
+        early=parser.metadata(request,'mu300',lambda n:n in (
+            'init','etc/mu300-storage.sh','etc/u30pro-boot-wait.sh','etc/mu300-desktop-root-mode'))
+        assert early['etc/mu300-storage.sh'][0] == (TOP/'rootfs/overlay/opt/mu300/lib/storage.sh').read_bytes().replace(b'\r\n',b'\n')
+        assert b'. /etc/mu300-storage.sh' in early['init'][0]
+        assert b'. /etc/mu300-desktop-storage.sh' not in early['init'][0]
+        assert b'exec /bin/busybox sh /openwrt-uninstall/worker.sh' in early['init'][0]
+        assert early['etc/mu300-desktop-root-mode'][0] == b'prepare\n'
+    print('Canonical uninstall init dependencies: both slots verified',flush=True)
     stock=Path(LAYOUT['boot_templates'])
     templates={name:(stock/(name+'.img')).read_bytes() for name in ('boot','vendor_boot','init_boot')}
     proof=[]

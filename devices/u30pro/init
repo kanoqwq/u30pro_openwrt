@@ -46,15 +46,16 @@ rescue() {
     fi
     exec sh </dev/console >/dev/console 2>&1
 }
-# The platform adapter carries no partition algorithm. These are the very same
-# sources that implement TF/container/image installation on maintained MU300.
-. /etc/mu300-desktop-storage.sh
+# Storage discovery is read-only and self-contained in the canonical payload.
+# Installation/mount policy is loaded only after the maintenance hook boundary.
+. /etc/mu300-storage.sh
 . /etc/u30pro-boot-wait.sh
 log 'stage=wait-storage'
 u30pro_wait_storage || rescue 'storage discovery timeout'
 misc=$(readlink -f /dev/block/by-name/misc)
 [ -b "$misc" ] || rescue 'misc alias unavailable'
 log 'stage=storage-ready'
+. /etc/mu300-desktop-storage.sh
 mkdir -p /disk /newroot
 case $(cat /etc/mu300-desktop-root-mode) in prepare|install-part) setup_usb_gadget || exec sh ;; esac
 desktop_storage_start || rescue 'offline installation failed'
