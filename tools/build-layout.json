@@ -13,7 +13,7 @@
   "at_transport": "{workspace}/artifacts/u30pro-tools/mu300-atd-io",
   "maintenance": "{workspace}/package-work/u30pro-release/root",
   "theme": "{workspace}/cache/u30pro-inputs/theme/luci-theme-aurora-1.4.0-r20260920.apk",
-  "installer_artifacts": "{workspace}/artifacts/u30pro-installers/88172cc",
+  "installer_artifacts": "{workspace}/artifacts/u30pro-installers/cd971d0",
   "installer_artifacts_kind": "published",
   "headers": "{workspace}/artifacts/u30pro-dev/include",
   "rootfs_image": "u30pro-rootfs:25.12.5",

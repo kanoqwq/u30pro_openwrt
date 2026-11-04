@@ -44,7 +44,7 @@ with sync_playwright() as p:
                             },100));
                         }};
                         const request={post:(url,data)=>{uploads.push(data.get('filename'));return new Promise(resolve=>setTimeout(()=>resolve({ok:!failUpload,json:()=>failUpload?{failure:true,message:'test failure'}:{},statusText:'test'}),50));}};
-                        const ui={addNotification:(title,node,type)=>{window.notification={text:node.textContent,type};}};
+                        const ui={addNotification:()=>{throw new Error('Persistent notifications must not be used for wallpaper actions');}};
                         const M=new Function('rpc','baseclass','L',common)(rpc,{extend:o=>o},L);
                         window.view=new Function('view','rpc','request','ui','M',source)({extend:o=>o},rpc,request,ui,M);
                         document.body.append(view.render([state,{}]));
@@ -63,6 +63,23 @@ with sync_playwright() as p:
                     assert buttons.nth(0).is_disabled() and buttons.nth(2).is_disabled()
                     page.wait_for_function("document.querySelector('[role=status]').getAttribute('aria-busy')==='false'")
                     assert page.evaluate("calls.find(x=>x[0]==='set')[1]")==[30,50,50,0,2]
+                    assert page.locator('.mud-toast.success').count()==1
+                    if theme=='aurora' and not dark and lang=='en' and width==1280:
+                        # Repeated saves reuse one notice and restart its expiry.
+                        for _ in range(10):
+                            buttons.nth(3).click()
+                            page.wait_for_function("document.querySelector('[role=status]').getAttribute('aria-busy')==='false'")
+                            assert page.locator('.mud-toast').count()==1
+                        page.wait_for_timeout(2000)
+                        buttons.nth(3).click()
+                        page.wait_for_function("document.querySelector('[role=status]').getAttribute('aria-busy')==='false'")
+                        page.wait_for_timeout(1900)
+                        assert page.locator('.mud-toast').count()==1
+                        page.locator('.mud-toast').wait_for(state='detached',timeout=2500)
+                        # A later save creates a live notice after expiry.
+                        buttons.nth(3).click()
+                        page.wait_for_function("document.querySelector('[role=status]').getAttribute('aria-busy')==='false'")
+                        assert page.locator('.mud-toast.success').count()==1
                     # Themed confirmation: Escape cancels; explicit approval removes.
                     buttons.nth(2).click();page.locator('.mud-dlg').wait_for()
                     page.keyboard.press('Escape');assert not page.evaluate("calls.some(x=>x[0]==='remove')")
@@ -74,15 +91,18 @@ with sync_playwright() as p:
                     page.locator('input[type=file]').set_input_files({'name':'test.png','mimeType':'image/png','buffer':base64.b64decode(payload)})
                     page.wait_for_function("!document.querySelectorAll('.mud-wallpaper button')[1].disabled")
                     page.evaluate('failUpload=true');buttons.nth(1).click()
-                    page.wait_for_function("window.notification && notification.type==='error' && document.querySelector('[role=status]').getAttribute('aria-busy')==='false'")
+                    page.wait_for_function("document.querySelector('.mud-toast.error') && document.querySelector('[role=status]').getAttribute('aria-busy')==='false'")
+                    assert page.locator('.mud-toast').count()==1
                     assert buttons.nth(1).is_enabled()
                     page.evaluate('failUpload=false');buttons.nth(1).click()
                     page.wait_for_function("calls.some(x=>x[0]==='install') && document.querySelector('[role=status]').getAttribute('aria-busy')==='false'")
                     assert page.evaluate('uploads.slice(-2)')==['/tmp/u30pro-wallpaper.jpg','/tmp/u30pro-wallpaper.web.jpg']
                     assert buttons.nth(1).is_disabled() and buttons.nth(2).is_enabled()
+                    assert page.locator('.mud-toast.success').count()==1
+                    assert page.locator('.mud-toast').count()==1
                     assert not errors,errors
                     if theme=='aurora' and lang=='zh-cn':
                         page.screenshot(path=str(TOP/f'work/u30pro-runtime/wallpaper-{width}-{dark}.png'),full_page=True)
                     page.close()
     browser.close()
-print('PASS 24 wallpaper layouts and save/cancel/remove/image-convert/upload-failure/retry flows: zh/en/tr, official/Aurora light/dark, mobile/desktop; mocked RPC only')
+print('PASS 48 wallpaper layouts; repeated saves reuse one expiring toast, errors recover, save/cancel/remove/image-convert/upload flows: zh/en/tr, official/Aurora light/dark, mobile/desktop; mocked RPC only')

@@ -46,8 +46,8 @@
   },
   "ui/native-control/overlay/www/luci-static/resources/view/system/u30pro-wallpaper.js": {
     "source_sha256": "04341b79cf71b57dbe96c8828ecbe5458506b6cafd75618241cec8f0994b2037",
-    "sha256": "86e461d86df85af214ece3ee99dbf8e0fe9540aa9135ad5a0670fcfc3960a649",
-    "reason": "Retain native wallpaper RPC and file format, persistent MU300 root path; use shared LuCI theme tokens, responsive controls, zh/en/tr translations and themed confirmation. Guard concurrent operations and release browser video resources."
+    "sha256": "d9e283c7a610e859a93f05a4b597a546b629af490181c309e25a2a3532cdc426",
+    "reason": "Retain native wallpaper RPC and file format, persistent MU300 root path; use shared LuCI theme tokens, responsive controls, zh/en/tr translations and themed confirmation. Guard concurrent operations and release browser video resources. Reuse one themed transient toast for save/upload errors and success, restarting its expiry instead of accumulating persistent LuCI notifications."
   },
   "modem-native-re/src/main.c": {
     "source_sha256": "12aa835da93bf58638286f363190f82c71107cabe4b059b068eda8634f079f75",

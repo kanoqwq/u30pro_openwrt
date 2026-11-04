@@ -2,7 +2,6 @@
 'require view';
 'require rpc';
 'require request';
-'require ui';
 'require mu300.common as M';
 
 /* System > Screen > Wallpaper: a picture or a short video as the wallpaper of the screen, and the look of the glass over it
@@ -299,6 +298,15 @@ return view.extend({
 		M.injectCss();
 		Array.prototype.forEach.call(document.querySelectorAll('a[href*="/system/u30pro-wallpaper"]'), function(a) { a.textContent = T('Screen wallpaper'); });
 		var self = this, info = data[0] || {}, img = data[1] || {};
+		var notice = null, noticeTimer = null;
+		function notify(message, type) {
+			if (noticeTimer) clearTimeout(noticeTimer);
+			if (notice) notice.update(T(message), type);
+			else notice = M.toast(T(message), { type: type, timeout: 0 });
+			noticeTimer = setTimeout(function() {
+				notice.close(); notice = null; noticeTimer = null;
+			}, type === 'error' ? 6000 : 3500);
+		}
 		var canvas = E('canvas', { 'width': WEB, 'height': WEB, 'class': 'u30-wp-canvas' });
 		var ctx = canvas.getContext('2d');
 		var status = E('div', { 'class': 'u30-wp-status', 'role': 'status', 'aria-live': 'polite' });
@@ -409,10 +417,10 @@ return view.extend({
 			}).then(function() { return callInstall(); }).then(check).then(function(r) {
 				pending = null;
 				self.info = r.wallpaper || {};
-				ui.addNotification(null, E('p', T('The wallpaper is on the screen.')), 'info');
+				notify('The wallpaper is on the screen.', 'success');
 				return L.resolveDefault(callImage(), null).then(function(im) { if(im) self.img=im; });
 			}).catch(function(e) {
-				ui.addNotification(null, E('p', T(e.message)), 'error');
+				notify(e.message, 'error');
 				apply.disabled = false;
 			}).finally(function() {
 				setBusy(false);
@@ -430,7 +438,7 @@ return view.extend({
                 return callRemove().then(check).then(function(r) {
                     self.info = r.wallpaper || {}; self.img = null; pending = null;
                     showStored(null);
-                }).catch(function(e) { ui.addNotification(null, E('p', T(e.message)), 'error'); }).finally(function() {
+                }).catch(function(e) { notify(e.message, 'error'); }).finally(function() {
                     setBusy(false); describe();
                 });
             });
@@ -453,8 +461,8 @@ return view.extend({
 			if (working) return;
 			setBusy(true, T('Saving…'));
 			return callSet(+dim.input.value, +glass.input.value, +blur.input.value, +tint.value, +live.value).then(check).then(function() {
-				ui.addNotification(null, E('p', T('Saved; the screen shows it now.')), 'info');
-			}).catch(function(e) { ui.addNotification(null, E('p', T(e.message)), 'error'); }).finally(function() { setBusy(false); describe(); });
+				notify('Saved; the screen shows it now.', 'success');
+			}).catch(function(e) { notify(e.message, 'error'); }).finally(function() { setBusy(false); describe(); });
 		} }, T('Save'));
 
 		function row(title, field, descr) {
