@@ -82,7 +82,7 @@ class AndroidFiles:
         self.commands_dir=commands
 
     def shell(self,command):
-        if command.startswith('for f in /proc/'): return ''
+        if 'pgrep -f -x ' in command:return 'NATIVE_IDLE\n'
         if command.startswith('chmod '): return ''
         part=command.split('/dev/block/by-name/')[1].split()[0]
         path=self.parts/part
@@ -106,6 +106,7 @@ class AndroidFiles:
         result=subprocess.run(['sh','-c',command],env=dict(os.environ,P=str(self.payload),T=str(self.tx),
             BB=shutil.which('busybox') or '/bin/busybox',PATH=str(commands)+':'+os.environ['PATH']),capture_output=True,text=True)
         if result.returncode:raise RuntimeError(result.stdout+result.stderr)
+        return result.stdout
 
 
 class NativeBoot(unittest.TestCase):
@@ -114,6 +115,41 @@ class NativeBoot(unittest.TestCase):
         (self.root/'desktop').mkdir()
         shutil.copyfile(TOP/'installer/runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/boot.py',self.root/'desktop/boot-runtime.py')
     def tearDown(self):self.temp.cleanup()
+
+    @unittest.skipUnless(os.name=='posix' and shutil.which('busybox'),'POSIX regular-file flash fixture')
+    def test_completed_receipt_never_scans_the_previous_worker(self):
+        android=AndroidFiles(self.root)
+        canonical=boot(b'NEW',b'RAM',True)
+        adapter.flash(android,canonical,bytes(32),self.root,None)
+        original=android.shell
+        def shell(command):
+            self.assertNotIn('pgrep',command)
+            self.assertNotIn('/proc/',command)
+            return original(command)
+        android.shell=shell
+        adapter.flash(android,canonical,bytes(32),self.root,None)
+
+    @unittest.skipUnless(os.name=='posix' and shutil.which('busybox'),'POSIX regular-file flash fixture')
+    def test_masked_worker_exit_without_confirmation_does_not_commit_receipt(self):
+        android=AndroidFiles(self.root);android.run=lambda command:''
+        with self.assertRaisesRegex(ValueError,'did not confirm'):
+            adapter.flash(android,boot(b'NEW',b'RAM',True),bytes(32),self.root,None)
+        record=json.loads((android.native_backup/'native-before.json').read_text())
+        self.assertTrue(record['write_started'])
+        self.assertFalse(record['committed'])
+
+    @unittest.skipUnless(os.name=='posix' and shutil.which('busybox'),'POSIX regular-file flash fixture')
+    def test_unfinished_worker_blocks_before_backups_or_writes(self):
+        android=AndroidFiles(self.root);canonical=boot(b'NEW',b'RAM',True)
+        adapter.flash(android,canonical,bytes(32),self.root,None)
+        path=android.native_backup/'native-before.json';record=json.loads(path.read_text());record['committed']=False;path.write_text(json.dumps(record))
+        def shell(command):
+            self.assertIn('pgrep -f -x',command)
+            return 'NATIVE_BUSY\n'
+        android.shell=shell;before=android.commands
+        with self.assertRaisesRegex(ValueError,'still running'):
+            adapter.flash(android,canonical,bytes(32),self.root,None)
+        self.assertEqual(android.commands,before)
 
     def test_preserves_actual_device_dtb_and_bootconfig(self):
         templates={'boot':boot(),'vendor_boot':vendor(),'init_boot':boot(b'',b'ANDROID')}

@@ -8,7 +8,6 @@ import hashlib
 import importlib.util
 import json
 from pathlib import Path
-import shlex
 import struct
 
 
@@ -47,12 +46,8 @@ def flash(android, canonical, bc, root, gui, *, dry_run=False, before_write='', 
         raise ValueError('Native boot backup belongs to another device or Android slot')
     canonical_sha = hashlib.sha256(canonical).hexdigest()
     worker = record.get('worker')
-    if worker:
-        if not worker.startswith('/data/local/tmp/mu300-desktop-') or not worker.endswith('/run.sh'):
-            raise ValueError('Invalid native boot worker receipt')
-        active = android.shell('for f in /proc/[0-9]*/cmdline; do '
-            'tr "\\000" "\\n" < "$f" 2>/dev/null | grep -Fx '+shlex.quote(worker)+' && echo NATIVE_BUSY; done; true')
-        if 'NATIVE_BUSY' in active.split():
+    if worker and not record.get('committed'):
+        if codec(root).native_worker_active(android.shell,android.bb,worker):
             raise ValueError('Native boot write is still running / 原生启动写入仍在运行，请稍后重新检查')
     pending = record.get('write_started') and not record.get('committed')
     retrying = pending and (record.get('canonical_sha256') == canonical_sha or dry_run)
@@ -128,7 +123,7 @@ def flash(android, canonical, bc, root, gui, *, dry_run=False, before_write='', 
     save_record()
     # Commit misc last. A failed write restores and verifies all affected Linux
     # containers; Android slot, GPT, userdata and NV are never written here.
-    android.run('''set -e
+    result=android.run('''set -e
 [ "$(getprop ro.boot.slot_suffix)" = "_''' + android.slot + '''" ]
 cd "$P"
 sha256sum -c native-SHA256SUMS
@@ -191,6 +186,8 @@ for name in boot vendor_boot init_boot dtbo; do
 done
 rm -f "$P/native-SHA256SUMS" "$P/misc-linux.bin" "$T/misc-before.bin" "$T/misc-check.bin" "$T/bcb-before.bin" "$T/bcb-check.bin" || :
 ''')
+    if 'BOOT-VERIFIED; OpenWrt selected' not in result.splitlines():
+        raise ValueError('Native boot writer did not confirm completion; keep backups and recheck / 原生启动写入未确认完成，请保留备份并重新检查')
     record['committed'] = True
     save_record()
     try:
