@@ -1,0 +1,173 @@
+{
+  "format": 1,
+  "model": "MU3356",
+  "device": "f50pro",
+  "status": "runtime-integrated-card-pair-rf-tested-visual-and-other-hardware-pending",
+  "firmware": "F50ProV1.0.0B22 / Android 15 / 20260321.130936",
+  "observed_board_id": 4,
+  "sources": {
+    "apk": {
+      "device_path": "/system/priv-app/ZteWebServerPlus/ZteWebServerPlus.apk",
+      "sha256": "46d5a6b7e0f1cbebcb3b001d8350a86afc89c89d2f23570a0420aedb34f54efc",
+      "class": "com.zte.web.device.frameworks.mgr.device.config.BoardIdConfigEnum"
+    },
+    "framework": {
+      "device_path": "/system/framework/vendor-telephony-common.jar",
+      "sha256": "be6b8214b4419190c58f1fd41d6d850663c7a1c7dc56226293576e8d0bb5f8e7",
+      "class": "com.android.vts.VendorSubInfoUpdater",
+      "methods": [
+        "handleTwoEsimAndTwoPsimBootAction",
+        "readSelectSlot1SimForMU3356",
+        "SetSelectSlot1SimForMU3356",
+        "dealWithTwoPsimSwitch",
+        "catoStatusChangedForMU3356"
+      ]
+    },
+    "stock_mux_module": {
+      "file": "sim_gpio_ctl.ko",
+      "sha256": "ac9d520e05937e91abe56f1c36f852bc98d86777bcb7abe4663fc38e0efe4e9a"
+    },
+    "stock_external_numbering": {
+      "apk_classes": [
+        "com.zte.web.device.frameworks.mgr.device.ElfDeviceManager",
+        "com.zte.smartlife.module.sim.SimCardModule"
+      ],
+      "methods": [
+        "needReversePsimMapping",
+        "smartLifeSlotToRealSlot",
+        "realSlotToSmartLifeSlot"
+      ],
+      "scope": "MU3356 with two removable SIMs; UI numbering is reversed above the unchanged native routes",
+      "external_1": {
+        "raw_position": 4,
+        "logical_stack": 1,
+        "imei_index": 2
+      },
+      "external_2": {
+        "raw_position": 3,
+        "logical_stack": 0,
+        "imei_index": 1
+      }
+    },
+    "hash_purpose": "Evidence identity only; never a runtime firmware allowlist"
+  },
+  "stock_position_ids": {
+    "0": "builtin_cm",
+    "1": "builtin_ct",
+    "2": "builtin_cu",
+    "3": "physical_route_0_display_external_2",
+    "4": "physical_route_1_display_external_1"
+  },
+  "position_policy": "IDs identify factory wiring positions, not the operator of an installed/reworked SIM. Do not filter by current operator or ICCID.",
+  "boards": {
+    "0": {
+      "builtin": [
+        0,
+        1,
+        2
+      ],
+      "physical": []
+    },
+    "1": {
+      "builtin": [
+        0,
+        1
+      ],
+      "physical": []
+    },
+    "2": {
+      "builtin": [
+        0,
+        2
+      ],
+      "physical": []
+    },
+    "3": {
+      "builtin": [
+        0,
+        2
+      ],
+      "physical": [
+        3,
+        4
+      ]
+    },
+    "4": {
+      "builtin": [
+        0,
+        1
+      ],
+      "physical": [
+        3,
+        4
+      ]
+    },
+    "5": {
+      "builtin": [],
+      "physical": [
+        3,
+        4
+      ]
+    },
+    "1000": {
+      "builtin": [
+        0
+      ],
+      "physical": [
+        3,
+        4
+      ],
+      "test_sku": true
+    }
+  },
+  "board_3_4_stock_routing": {
+    "scope": "Stock Android module parameters, not the U30 Pro native driver's normalized attributes",
+    "0": {
+      "logical_stack": 0,
+      "parameter": "gpio_sim_ctrl_psim",
+      "value": 1
+    },
+    "1": {
+      "boards": [
+        4
+      ],
+      "logical_stack": 1,
+      "parameter": "gpio_sim_ctrl",
+      "value": 1
+    },
+    "2": {
+      "boards": [
+        3
+      ],
+      "logical_stack": 1,
+      "parameter": "gpio_sim_ctrl",
+      "value": 1
+    },
+    "3": {
+      "logical_stack": 0,
+      "parameter": "gpio_sim_ctrl_psim",
+      "value": 0
+    },
+    "4": {
+      "logical_stack": 1,
+      "parameter": "gpio_sim_ctrl",
+      "value": 0
+    }
+  },
+  "board_5_logical_stacks": {
+    "3": 0,
+    "4": 1
+  },
+  "test_sku_1000_routing": "Not verified by the stock framework branches; enum capability alone does not prove mux routing",
+  "hardware_validation": "Authorized trial-led-pair-20261105 on MU3356 board 4: sources [0,4] -> [3,4] -> [0,4] through real RPC jobs, peer-only changes preserved WAN uptime. DSDS on plus explicit enable confirmed CFUN [1,1]; DSDS off restored [0,1]; single-standby mutual exclusion [1,0], both-off [0,0] and original restore [0,1] passed. IPv4/IPv6 ping each 3/3 before and after RF tests. Actual SIM/LED web views and mobile layouts passed. PMIC white channel registration, brightness and exclusive colour readback passed, but user did not inspect real colours/boot animation. NV writeback off and storage read-only throughout. Normal return to stock Android A completed, original selected card/DSDS/mux confirmed. Two real external cards, OTG and NFC remain unaccepted; not a blanket acceptance for other boards. RF caption follow-up is source/browser tested after Android return, not deployed.",
+  "stock_initial_standby": {
+    "source": "settings system car_mode_dual_sim_switch + VendorSubInfoUpdater.handleTwoEsimAndTwoPsimBootAction",
+    "observed_value": 0,
+    "observed_selected_position": 4,
+    "observed_radio_policy": [
+      0,
+      1
+    ],
+    "import_policy": "Import actual Android card sources on a fresh install. OpenWrt dual_standby defaults off as requested; preserve existing explicit OpenWrt source/RF preferences."
+  }
+}

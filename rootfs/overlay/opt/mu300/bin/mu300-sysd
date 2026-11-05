@@ -200,7 +200,8 @@ function chain(argv) {
 
 // ------------------------------------------------------------------ the keys (mu300-buttons)
 const KEY_POWER = 116;
-const KEY_WIFI = 138;   // "Wifi Switch Key" in the U30 Air's device tree (KEY_HELP's code, as its Android maps it)
+const F50PRO_KEYS = trim(readfile(R+'/etc/mu300/model') ?? '') == 'f50pro';
+const KEY_WIFI = F50PRO_KEYS ? 102 : 138; // actual MU3356 KEY_HOME, U30 Air KEY_HELP
 const DEADLINE = num('MU300_BUTTONS_DEADLINE', 150);   // a toggle in the background (the LED sync after wifi up: 120 s)
 const PROBE_DEADLINE = num('MU300_BUTTONS_PROBE_DEADLINE', 5);
 function is_openwrt() { return exists(R + '/etc/openwrt_release'); }
@@ -273,6 +274,12 @@ press_next = function() {
     let p = shift(presses);
     if (!p) { pressing = false; idle_check(); return; }
     pressing = true;
+    if (F50PRO_KEYS) {
+        // One physical switch key; no inherited poweroff or LED wake action.
+        if (p[0] == KEY_WIFI) button_done([BIN+'/f50pro-key-action',p[1]], () => press_next());
+        else press_next();
+        return;
+    }
     spawn(['mu300-led','wake'], () => {
         if (parts.led) led_arm();
         try { press_rest(p[0],p[1]); }
@@ -351,7 +358,8 @@ function on_line(line) {
 		if (parts.led)
 			led_look();
 	}
-	else if ((f[1] == 'short' || f[1] == 'long') && (f[0] == '116' || f[0] == '138') && parts.keys)
+	else if ((f[1] == 'short' || f[1] == 'long') &&
+		(+f[0] == KEY_WIFI || (!F50PRO_KEYS && +f[0] == KEY_POWER)) && parts.keys)
 		press(+f[0], f[1]);
 }
 function helper_close() {

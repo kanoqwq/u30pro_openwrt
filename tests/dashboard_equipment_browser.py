@@ -22,11 +22,11 @@ with sync_playwright() as pw:
             page.evaluate('''([common,home,language,dark])=>{
                 window.L={env:{lang:language}};
                 const M=new Function('rpc','baseclass','L',common)(
-                    {declare:()=>()=>Promise.resolve({})},{extend:o=>o},L);
+                    {declare:()=>()=>Promise.resolve(window.simRpcInfo || {})},{extend:o=>o},L);
                 window.M=M;
                 // View SIM2 while SIM1 carries data, then reverse only the data slot.
                 sessionStorage.setItem('modem-view-slot','1');
-                sessionStorage.setItem('mu300-view-slot','1');
+                sessionStorage.setItem('mu300-view-choice','1');
                 window.app=new Function('view','uci','M','SimRadio',home)({extend:o=>o},{},M,{});
                 const root=document.querySelector('main');root.innerHTML=app.html();app._root=root;
                 document.documentElement.style.cssText=dark?'--surface:#171b24;--text:#eee;--success:#57c98a':'--surface:#fff;--text:#111;--success:#16814b';
@@ -40,6 +40,22 @@ with sync_playwright() as pw:
                    (args.resources/'view/mu300/home.js').read_text(encoding='utf-8'), language, dark])
             assert page.locator('#mud-imei1').inner_text() == '8661****408'
             assert page.locator('#mud-imei2').inner_text() == '8661****409'
+            names={'zh':('内置 SIM','外置 SIM'),'en':('Built-in SIM','External SIM'),'tr':('Dahili SIM','Harici SIM')}[language]
+            page.evaluate("async()=>{simRpcInfo={physical:{model:'v50',supported:true,ready:true,logical_cards:[3,2]}};await M.callSimGet();paint();}")
+            assert page.locator('#mud-imei-slot1').inner_text() == 'IMEI1 ('+names[1]+' 1)'
+            assert page.locator('#mud-imei-slot2').inner_text() == 'IMEI2 ('+names[0]+' 3)'
+            assert page.evaluate('document.documentElement.scrollWidth<=innerWidth'), 'physical label mobile overflow'
+            assert page.locator('#mud-imei1').inner_text() == '8661****408'
+            assert page.locator('#mud-imei2').inner_text() == '8661****409'
+            # The Pro family adds MU3356's reversed physical numbering.
+            if page.evaluate("M.slotName(1,{physical:{model:'f50pro',logical_cards:[0,4]}})").startswith(names[1]):
+                page.evaluate("async()=>{simRpcInfo={physical:{model:'f50pro',supported:true,ready:false,logical_cards:[0,4]}};await M.callSimGet();paint();}")
+                assert page.locator('#mud-imei-slot1').inner_text() == 'IMEI1 ('+names[0]+' 1)'
+                assert page.locator('#mud-imei-slot2').inner_text() == 'IMEI2 ('+names[1]+' 1)'
+                page.evaluate("async()=>{simRpcInfo.physical.logical_cards=[3,4];await M.callSimGet();paint();}")
+                assert page.locator('#mud-imei-slot1').inner_text() == 'IMEI1 ('+names[1]+' 2)'
+            page.evaluate("async()=>{simRpcInfo={};await M.callSimGet();paint();}")
+            assert page.locator('#mud-imei-slot1').inner_text() == 'IMEI1 (SIM 1)'
             assert page.locator('#mud-imei-active1').is_visible()
             assert not page.locator('#mud-imei-active2').is_visible()
             assert active in page.locator('#mud-imei-active1').inner_text()

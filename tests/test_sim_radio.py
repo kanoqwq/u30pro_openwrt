@@ -57,6 +57,25 @@ esac''')
     def call(self,shell,*args,**extra):
         return self.script(shell,self.controller,*args,**dict(self.env_extra,**extra))
 
+    def test_native_products_both_expose_default_off_standby(self):
+        root=self.tmp/'profile';(root/'etc/mu300').mkdir(parents=True)
+        marker=root/'etc/mu300/model';marker.write_text('f50pro\n')
+        self.stub('mu300-device','echo u30pro')
+        self.stub('uci','case "$3" in *.dual_standby) echo 0;; *.sim_slots) echo 2;; *.data_sim) echo 1;; esac')
+        for shell in self.each_shell():
+            (self.tmp/'sim-radio-policy').unlink(missing_ok=True)
+            marker.write_text('f50pro\n')
+            r=self.call(shell,'get',MU300_SYSROOT=root)
+            self.assertEqual(r.returncode,0,r.stderr)
+            data=json.loads(r.stdout)
+            self.assertTrue(data['dsds_supported']);self.assertFalse(data['dsds_enabled'])
+            self.assertEqual(data['enabled'],[0,1])
+            marker.write_text('u30pro\n')
+            data=json.loads(self.call(shell,'get',MU300_SYSROOT=root).stdout)
+            self.assertTrue(data['dsds_supported']);self.assertFalse(data['dsds_enabled'])
+            self.assertEqual(data['enabled'],[0,1])
+        self.assertFalse((self.tmp/'at').exists())
+
     def test_independent_radios_both_off_and_reenable_without_data_switch(self):
         for shell in self.each_shell():
             for slot,on,expected in [('1','0',[1,2]),('0','0',[2,2]),('1','1',[2,1]),('0','1',[1,1])]:
@@ -204,6 +223,16 @@ esac''')
                     code=function+'\nadapter=/missing/data-sim\nvalidate_apply data radio-'+slot+'-0\n'
                     result=self.sh(shell,code,SIM_SLOTS=slots)
                     self.assertEqual(result.returncode==0,slot=='0' or slots=='2')
+
+    def test_u30pro_web_dsds_job_reaches_the_shared_controller(self):
+        source=(TOP/'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/data-sim').read_text()
+        function=re.search(r'validate_apply\(\) \{.*?^\}',source,re.M|re.S)[0]
+        for shell in self.each_shell():
+            for model in ('u30pro','u30air','f50','v50'):
+                self.stub('mu300-device','echo '+model)
+                for state in ('0','1'):
+                    result=self.sh(shell,function+'\nvalidate_apply data dsds-'+state+'\n')
+                    self.assertEqual(result.returncode==0,model!='v50',result.stderr)
 
     def test_native_switch_lock_blocks_rf_without_changing_intent(self):
         self.stub('mu300-device','echo u30air')

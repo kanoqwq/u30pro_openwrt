@@ -11,7 +11,7 @@ import { carrier_name } from 'mu300.carrier';
 uloop.init();
 const bus=connect(null,3), config=cursor();
 if(!bus)die('Screen feed: ubus is unavailable\n');
-let requested={}, timer;
+let requested={}, timer, sms_reads={}, sms_open=null, sms_text=null;
 function clean(v) { return replace(''+(type(v)=='bool'?(v?1:0):(v ?? '')) ,/[\r\n\t]/g,' '); }
 function object(path) { try{return json(fs.readfile(path) || '{}');}catch(e){return {}; } }
 function cell_status(view,cell,sig,wanted,slot) {
@@ -25,6 +25,42 @@ function cell_status(view,cell,sig,wanted,slot) {
     if(!wanted)return 'data-disabled';
     return state=='ready'?'dialing':'checking-sim';
 }
+function screen_sms(slot,bus,ack_visible) {
+    let pending=sms_reads; sms_reads={};
+    let sms=bus.call('mu300dash','sms_list',{page:'1',slot}) || {};
+    let out={sms_slot:slot}, legacy_text={};
+    // Keep the published legacy bulk-ack event working for existing add-ons;
+    // the native reader uses the new explicit card/message request instead.
+    if(ack_visible)for(let msg in slice(sms.msgs || [],0,6)) {
+        if(lc(msg.status || '') in ['new','unread'])
+            pending[slot+':'+msg.id]={slot,id:''+msg.id};
+    }
+    for(let key in keys(pending)) {
+        let item=pending[key], body=null;
+        try {body=bus.call('mu300dash','sms_show',{id:item.id,slot:item.slot});}catch(e){}
+        if(body?.ok) {
+            if(ack_visible && item.slot==slot)legacy_text[key]=body.text;
+            if(sms_open?.key==key) {
+                let text=body.text || '', start=index(text,'\n---\n');
+                sms_text=start>=0?substr(text,start+5):text;
+            }
+        } else out.sms_error='短信读取失败，请稍后重试';
+    }
+    // Counts and unread dots must come from the backend AFTER mark-read.
+    if(length(keys(pending))) {
+        let fresh=bus.call('mu300dash','sms_list',{page:'1',slot});
+        if(type(fresh?.msgs)=='array')sms=fresh;
+    }
+    out.sms_total=sms.total || 0;out.sms_unread=sms.unread || 0;
+    for(let i=0;i<min(6,length(sms.msgs || []));i++) {
+        let msg=sms.msgs[i], text=msg.preview;
+        if(legacy_text[slot+':'+msg.id]!=null)text=legacy_text[slot+':'+msg.id];
+        if(sms_open?.slot==slot && sms_open.id==''+msg.id && sms_text!=null)text=sms_text;
+        out['sms_id.'+i]=''+msg.id;
+        out['sms.'+i]=join('\t',map([msg.peer,msg.time,lc(msg.status || '') in ['new','unread']?1:0,text],clean));
+    }
+    return out;
+}
 function run() {
     let screen=bus.call('u30pro.panel','status',{}) || {}, req=requested;
     requested={};
@@ -32,6 +68,9 @@ function run() {
     let slot=config.get('unisoc_modem','main','data_sim')=='1'?'1':'0';
     let view=info(slot,bus,config), cached=status(slot,true,bus,config), cell=cached.cell || {}, sig=cached.sig || {};
     let relay=client.status(config,bus);
+    let charge={};
+    try { charge=bus.call('mu300-charge','get',{}) || {}; } catch(e) {}
+
     // Existing native screen data-toggle add-ons consume this public state.
     // It reflects the MU300 owner's choice; it never owns a physical channel.
     fs.mkdir('/run/u30pro-cellular',448);
@@ -61,30 +100,39 @@ function run() {
         // squeeze that into the native single-carrier bandwidth index.
         lte_bw:lte.bw ? replace(lte.bw,/M/g,'')+' MHz':'',bw_idx:-1,
         nr_bw:nr.bw_mhz>0?nr.bw_mhz:0,
-        admin_wifi:1,band:lte.band,pci:lte.pci,earfcn:lte.earfcn,rsrp:lte.rsrp,rsrq:lte.rsrq,
+        admin_wifi:1,band:lte.band,pci:lte.pci,earfcn:lte.earfcn,rsrp:lte.rsrp,rsrq:lte.rsrq,sinr:lte.sinr,
         nr:nr.band!=null,nr_band:nr.band,nr_pci:nr.pci,nr_arfcn:nr.arfcn,nr_rsrp:nr.rsrp,nr_sinr:nr.sinr,
         relay_cfg:relay.cfg,relay_on:relay.enabled?1:0,relay_state:relay.state,relay_ssid:relay.ssid};
+    // Missing readings must stay absent: the native decoder treats a supplied
+    // numeric field as valid, and an empty string would become a false 0 dB.
+    for(let key in ['sinr','nr_rsrp','nr_sinr'])if(data[key]==null)delete data[key];
+    // The switch represents manual pause, never the charger's shared inhibit bit.
+    data.chg_control_ok=charge.ok && charge.available?1:0;
+    if(charge.ok) {
+        data.chg_bypass=charge.paused?1:0;
+        data.chg_limited=charge.stopped && charge.reason=='limit'?1:0;
+        data.chg_pending=charge.pending?1:0;
+    }
     for(let i=0;i<min(6,length(view.wifi.clients || []));i++) {
         let c=view.wifi.clients[i];data['cl.'+i]=join('\t',map([c.host || c.mac,c.ip,c.signal],clean));
     }
-    let sms=bus.call('mu300dash','sms_list',{page:'1',slot}) || {};
-    data.sms_total=sms.total || 0;data.sms_unread=sms.unread || 0;
-    for(let i=0;i<min(6,length(sms.msgs || []));i++) {
-        let msg=sms.msgs[i], text=msg.preview, unread=lc(msg.status || '') in ['new','unread'];
-        if(req.sms_ack && unread) {
-            let body=bus.call('mu300dash','sms_show',{id:''+msg.id,slot});
-            text=body?.text || text;
-        }
-        data['sms.'+i]=join('\t',map([msg.peer,msg.time,req.sms_ack?0:unread?1:0,text],clean));
-    }
+    let sms=screen_sms(slot,bus,req.sms_ack);
+    for(let key in keys(sms))data[key]=sms[key];
     // List fields are already sanitized individually; keep their TAB framing.
     for(let key in keys(data))if(!match(key,/^(cl|sms)\./))data[key]=clean(data[key]);
     bus.call('u30pro.panel','feed',{data});
     timer.set(screen.screen_on===false?15000:3000);
 }
 timer=uloop.timer(100,run);
-const panel_events=bus.listener('u30pro.panel.request',(type,msg)=>{
+const panel_events=bus.listener('u30pro.panel.request',(event,msg)=>{
     if(msg?.request=='sms_ack')requested.sms_ack=true;
+    if(msg?.request=='sms_read' && type(msg.id)=='string' && match(msg.id,/^[0-9]{1,20}$/) && msg.slot in ['0','1']) {
+        let key=msg.slot+':'+msg.id;
+        if(length(keys(sms_reads))>=16 && sms_reads[key]==null)delete sms_reads[keys(sms_reads)[0]];
+        sms_reads[key]={id:msg.id,slot:msg.slot};
+        sms_open={key,id:msg.id,slot:msg.slot};sms_text=null;
+    }
+    if(msg?.request=='sms_close') {sms_open=null;sms_text=null;}
     timer.set(1);
 });
 const modem_events=bus.listener('mu300.modem.urc',(type,msg)=>{

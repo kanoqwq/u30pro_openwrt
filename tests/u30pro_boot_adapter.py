@@ -10,6 +10,7 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 TOP = Path(__file__).resolve().parents[1]
 
@@ -115,6 +116,36 @@ class NativeBoot(unittest.TestCase):
         (self.root/'desktop').mkdir()
         shutil.copyfile(TOP/'installer/runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/boot.py',self.root/'desktop/boot-runtime.py')
     def tearDown(self):self.temp.cleanup()
+
+    @unittest.skipUnless(os.name=='posix','explicit Linux kernel workspace fixture')
+    def test_kernel_trial_uses_selected_workspace_and_preserves_working_ramdisk(self):
+        workspace=self.root/'workspace'
+        objects=workspace/'objects/u30pro/release'
+        image=objects/'arch/arm64/boot/Image'
+        image.parent.mkdir(parents=True)
+        image.write_bytes(b'RAW-NEW-KERNEL')
+        (objects/'.config').write_bytes(b'CONFIG_TEST=y\n')
+        digest=lambda b:hashlib.sha256(b).hexdigest()
+        report={'image_sha256':digest(image.read_bytes()),
+                'config_sha256':digest((objects/'.config').read_bytes())}
+        (objects/'u30pro-build.json').write_text(json.dumps(report))
+        wrapped=self.root/'Image.wrapped'
+        wrapped.write_bytes(b'WRAPPED-NEW-KERNEL')
+        wrapped.with_suffix('.manifest.json').write_text(json.dumps({
+            'output_sha256':digest(wrapped.read_bytes()),
+            'input_sha256':report['image_sha256'],'test_only':False}))
+        current=self.root/'current.img'
+        old=boot(b'OLD-KERNEL',b'WORKING-DEVICE-BOUND-RAMDISK',True)
+        current.write_bytes(old)
+        with mock.patch.dict(os.environ,{
+                'U30PRO_WORKSPACE':str(workspace),
+                'U30PRO_BUILD_CONFIG':str(TOP/'tools/build-layout.json')}):
+            repair.kernel_trial(current,wrapped,self.root/'trial')
+        result=(self.root/'trial/boot.img').read_bytes()
+        self.assertEqual(fw.boot(result),(wrapped.read_bytes(),fw.boot(old)[1]))
+        self.assertEqual(len(result),len(old))
+        self.assertEqual(current.read_bytes(),old)
+        self.assertEqual(result[44:1580],old[44:1580])
 
     @unittest.skipUnless(os.name=='posix' and shutil.which('busybox'),'POSIX regular-file flash fixture')
     def test_completed_receipt_never_scans_the_previous_worker(self):

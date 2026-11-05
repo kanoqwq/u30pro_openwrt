@@ -35,6 +35,35 @@ class NativeSnapshot(unittest.TestCase):
         self.snap.write('run/mu300/sim-active-unknown','1')
         self.assertIsNone(self.snap.run()['modem']['data_sim'])
 
+    def test_traffic_ledger_follows_view_and_actual_data_card(self):
+        s=self.snap
+        first={'slot':0,'today_used':0,'month_used':0,'remaining':None}
+        second={'slot':1,'today_used':12000000,'month_used':99000000,'remaining':501000000}
+        s.write('run/unisoc-modem-traffic/view.json',json.dumps(first))
+        s.write('run/unisoc-modem-traffic/sim1/view.json',json.dumps(second))
+        s.write('run/mu300-data-sim-actual','1')
+        s.responses['network.interface.wan.status'].update(up=True,l3_device='sipa_eth8')
+        self.assertEqual(s.run(slot='1')['traffic'],second)
+        self.assertEqual(s.run(slot='0')['traffic'],first)
+        self.assertEqual(s.run()['traffic'],second)
+        # Missing data must not be replaced with the other card's zero ledger.
+        (s.root/'run/unisoc-modem-traffic/sim1/view.json').unlink()
+        self.assertIsNone(s.run(slot='1')['traffic'])
+
+    def test_wifi_client_fallback_excludes_unassociated_entries_and_keeps_full_width(self):
+        s=self.snap
+        s.responses['hostapd.wlan0.get_clients']={'clients':{
+            'AA:BB:CC:DD:EE:01':{'assoc':True},
+            'aa:bb:cc:dd:ee:02':{'assoc':False},
+            'aa:bb:cc:dd:ee:03':{'auth':True},
+            'aa:bb:cc:dd:ee:04':{'assoc':1}}}
+        result=s.run()
+        self.assertEqual(result['wifi']['clients_n'],2)
+        self.assertEqual([r['mac'] for r in result['wifi']['clients']],['aa:bb:cc:dd:ee:01','aa:bb:cc:dd:ee:04'])
+        config=s.config/'wireless'
+        config.write_text(config.read_text().replace('HE80','HE160'))
+        self.assertEqual(s.run()['wifi']['width'],'160 MHz')
+
     def test_equipment_queries_are_background_and_failed_reads_are_throttled(self):
         self.snap.write('proc/sys/kernel/random/boot_id','fixture-boot')
         self.snap.write('run/mu300-at/owner/pid','100')
@@ -120,6 +149,19 @@ class NativeSnapshot(unittest.TestCase):
         s.write('etc/mu300/platform','mu300\n')
         self.assertIsNone(s.run('power')['status'],'native charger selection must stay model-specific')
 
+    def test_f50pro_ignores_stock_dummy_battery_but_keeps_usb_power(self):
+        s=self.snap;s.write('etc/mu300/platform','u30pro\n')
+        s.write('etc/mu300/model','f50pro\n')
+        for path,value in {'battery/type':'Battery','battery/present':'1',
+                           'battery/capacity':'50','battery/status':'Charging',
+                           'u30pro-charger-master/type':'USB',
+                           'u30pro-charger-master/online':'1'}.items():
+            s.write('sys/class/power_supply/'+path,value)
+        value=s.run('power')
+        self.assertEqual(value['present'],0)
+        self.assertIsNone(value['capacity'])
+        self.assertEqual(value['usb'],1)
+
     def test_status_recognizes_active_owner_arguments_after_nul(self):
         s=self.snap;s.write('tmp/unisoc-modem/collect.lck/pid','123\n')
         path=s.write('proc/123/cmdline','')
@@ -127,6 +169,15 @@ class NativeSnapshot(unittest.TestCase):
         result=s.run('status','0',True)
         self.assertEqual(result['refreshing'],1)
         self.assertFalse((self.root/'last-call.json').exists(),'a live collector must not be kicked again')
+
+    def test_mismatched_collector_card_is_not_served_as_the_viewed_card(self):
+        s=self.snap
+        for name in ('cell','sig'):
+            s.write('tmp/unisoc-modem/'+name+'.json',json.dumps({'card':1,'ts':int(time.time()),'cfun':1}))
+        value=s.run('status','0',True)
+        self.assertIsNone(value['cell']);self.assertIsNone(value['sig'])
+        self.assertEqual(value['cell_age'],-1)
+        self.assertEqual(json.loads((self.root/'last-call.json').read_text())['a'],{'slot':'0','mode':'full'})
 
     def test_live_device_counters_and_invalid_path(self):
         s=self.snap

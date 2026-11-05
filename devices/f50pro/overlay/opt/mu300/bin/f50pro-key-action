@@ -1,0 +1,22 @@
+#!/bin/sh
+# An input event only. Default is intentionally no action, per user request.
+set -eu
+export PATH="$PATH:/opt/mu300/bin:/usr/sbin:/sbin"
+BIN=${MU300_BIN:-/opt/mu300/bin}
+RUN=${MU300_RUN:-/run}
+[ "$(cat "${MU300_SYSROOT:-}/etc/mu300/model" 2>/dev/null)" = f50pro ] || exit 2
+case ${1:-} in short|long) kind=$1;; *) exit 2;; esac
+action=$(uci -q get "unisoc_modem.main.f50pro_button_$kind" 2>/dev/null || true)
+case $action in
+    ''|none) exit 0;;
+    data-switch)
+        slot=$(cat "$RUN/mu300-data-sim-actual")
+        case $slot in 0) next=1;; 1) next=0;; *) exit 1;; esac
+        state=$("$BIN/mu300-physical-sim" status)
+        card=$(printf '%s' "$state" | jsonfilter -e "@.logical_cards[$next]")
+        case $card in 0|1|2|3|4) exec "$BIN/mu300-u30pro-sim" apply "$card";; *) exit 1;; esac
+        ;;
+    wifi-band) exec "$BIN/mu300-wifi-band" toggle;;
+    nfc-toggle) exec /usr/sbin/u30pro-nfc-control toggle;;
+    *) echo invalid_button_action >&2; exit 2;;
+esac

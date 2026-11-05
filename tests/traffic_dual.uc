@@ -15,8 +15,8 @@ counter('fake0',1000000,2000000);counter('fake1',3000000,4000000);
 let seed=core.fresh(time());seed.days[core.day_key(time())]={rx:1234,tx:4321};
 fs.writefile(base+'/state.json',sprintf('%J',seed));
 function call(method,args){let r=run('ubus -t 3 call '+q(bus)+' '+q(method)+' '+q(sprintf('%J',args||{})));check(r.code==0,'call '+method);return json(r.out);}
-function start(){
-    let r=run('MU300_TRAFFIC_DIR='+q(base)+' MU300_TRAFFIC_RUN='+q(ram)+' MU300_TRAFFIC_SYS='+q(net)+' MU300_TRAFFIC_BUS='+q(bus)+' MU300_TRAFFIC_SIM_SLOTS=2 MU300_TRAFFIC_DEVICES='+q('["fake0","fake1"]')+' ucode '+q(lib+'/traffic')+' >'+q(root+'/log')+' 2>&1 & echo $!');
+function start(devices){
+    let r=run('MU300_TRAFFIC_DIR='+q(base)+' MU300_TRAFFIC_RUN='+q(ram)+' MU300_TRAFFIC_SYS='+q(net)+' MU300_TRAFFIC_BUS='+q(bus)+' MU300_TRAFFIC_SIM_SLOTS=2 MU300_TRAFFIC_DEVICES='+q(sprintf('%J',devices || ['fake0','fake1']))+' ucode '+q(lib+'/traffic')+' >'+q(root+'/log')+' 2>&1 & echo $!');
     pid=int(trim(r.out));check(pid>1,'child');
     for(let i=0;i<10;i++){if(trim(run('ubus -S list '+q(bus)).out)==bus)return; sleep(100);}
     die(fs.readfile(root+'/log'));
@@ -43,6 +43,21 @@ try{
     counter('fake0',1001100,2000020);call('flush');
     check(call('get',{slot:1}).status.today.rx==100,'duplicate mapping not double counted');
     check(call('get',{slot:2}).error=='invalid_sim','invalid card rejected');
+    cfg.device='';cfg.plan_name='External SIM1';cfg.monthly_gb=10;cfg.count_mode='rx';
+    check(call('set',{slot:1,payload:sprintf('%J',cfg)}).ok,'clear statistics override');
+    stop();
+    for (let dev in ['sipa_eth0','sipa_eth1','sipa_eth8','sipa_eth11']) {
+        fs.mkdir(net+'/'+dev,448);fs.mkdir(net+'/'+dev+'/statistics',448);counter(dev,1000,2000);
+    }
+    start(['sipa_eth0','sipa_eth8']);call('flush');
+    let zero=call('get',{slot:0}).status,one=call('get',{slot:1}).status;
+    counter('sipa_eth1',1400,2100);counter('sipa_eth11',1700,2300);call('flush');
+    let next0=call('get',{slot:0}).status,next1=call('get',{slot:1}).status;
+    check(next0.today_used-zero.today_used==500,'SIM 1 higher PDP CID is counted');
+    check(next1.today_used-one.today_used==700,'SIM 2 higher PDP CID and rx accounting are counted');
+    check(next1.plan_name=='External SIM1' && next1.monthly_limit==10000000000,'published plan identity matches the card ledger');
+    stop();start(['sipa_eth0','sipa_eth8']);call('flush');
+    check(call('get',{slot:1}).status.today_used==next1.today_used,'bank counters survive restart without duplication');
     stop();
 }catch(e){stop();die('Dual traffic: '+e+' '+root+'\n');}
 printf('PASS %d dual traffic checks: %s\n',checks,root);

@@ -46,6 +46,8 @@ static Hit hits[MAXHITS];
 static int nhits, g_reg;
 static long g_ms;
 static int theme_idx, ov, ov_arg, sms_scroll, sms_lines_n;
+static Sms sms_detail;
+static int sms_detail_slot, sms_list_scroll;
 static int power_menu, power_choice;
 #define POWER_HOLD_MS 1500
 static int sheet = SH_NONE, fn_sub = -1;
@@ -99,7 +101,8 @@ static float press_peak, press_env;
 static float sm_lv, sm_cpu, sm_mem, sm_snr;
 static long wifi_busy_until, recon_busy_until, relay_busy_until;
 static long bypass_busy_until;
-static int wifi_want, relay_want, bypass_want;	/* where a switch is going while the change is under way (busy) */
+static unsigned bypass_request;
+static int wifi_want, relay_want;	/* where a switch is going while the change is under way (busy) */
 static int sms_line_start[48], sms_line_len[48];
 /* Vertical scrolling: slot 0 is the function list, slot 1 the second-level page that is open (it starts at the top whenever another one
  * opens).  A view that scrolls draws its content shifted by scroll_pos and clipped below its title (scroll_begin/scroll_end); scroll_live is
@@ -540,6 +543,19 @@ static const char *cell_text(char *buf, size_t cap)
 	return "拨号中…";
 }
 
+static void home_date(Cv *c, const char *date)
+{
+	int w = gx_text_w(FN14, date), mail = D.sms_unread > 0;
+	int x = 120 - (w + (mail ? 18 : 0)) / 2;
+	TXT(c, FN14, x, 120, date, C_DIM);
+	if (mail) {
+		int cx = x + w + 12;
+		ic_mail(c, (float)cx, 115, 6.f, TH()->b, 255);
+		hit_add(cx - 12, 103, 24, 24, H_OPEN_SMS, 0, 0);
+		hit_fb(FB_DOT, cx, 115, 0, 0, 14);
+	}
+}
+
 static void page_home(Cv *c)
 {
 	const Theme *th = TH();
@@ -558,11 +574,11 @@ static void page_home(Cv *c)
 		snprintf(b, sizeof b, "%02d:%02d", tm.tm_hour, tm.tm_min);
 		TXTC(c, FB56, 120, 97, b, C_TXT);
 		snprintf(b, sizeof b, "%d月%d日 %s", tm.tm_mon + 1, tm.tm_mday, wday_name(tm.tm_wday));
-		TXTC(c, FN14, 120, 120, b, C_DIM);
+		home_date(c, b);
 	} else {
 		snprintf(b, sizeof b, "%ld:%02ld", D.uptime / 3600, (D.uptime % 3600) / 60);
 		TXTC(c, FB56, 120, 97, b, C_TXT);
-		TXTC(c, FN14, 120, 120, "已运行 · 等待授时", C_DIM);
+		home_date(c, "已运行 · 等待授时");
 	}
 	/* network row */
 	{
@@ -611,7 +627,6 @@ static void page_home(Cv *c)
 	ic_battery(c, 109.f, 189.f, 16.f, 10.f, D.bat_pct, D.bat_pct < 0 ? C_FAINT : (D.bat_pct <= 15 ? C_BAD : (D.bat_pct <= 30 ? C_WARN : C_OK)));
 	TXT(c, FN14, 128, 199, b, C_TXT);
 	if (D.charging) ic_bolt(c, 168, 194, 6.f, C_OK);
-	else if (D.sms_unread > 0) { ic_mail(c, 174, 194, 6.f, th->b, 255); hit_add(160, 182, 28, 24, H_OPEN_SMS, 0, 0); hit_fb(FB_DOT, 174, 194, 0, 0, 14); }
 }
 
 /* ------------------------------------------------------------------ SIGNAL */
@@ -830,7 +845,7 @@ static void page_wifi(Cv *c)
 /* The charge as a ring along the lower edge of the window (the home screen's ring turned over: 260 degrees through the bottom, filled from
  * the bottom outwards to both sides so that the page stays symmetric), the percentage and the state at the top, the charger and the battery
  * as two centred columns (voltage, current, power; every value carries its unit) and the switch of direct supply (the charger runs the
- * device, the battery is not charged: "inhibit-charge").  The charger measures no current, so its column shows the measured USB voltage and
+ * device, the battery is not charged). The switch follows manual pause; automatic charge limits have a separate status.  The charger measures no current, so its column shows the measured USB voltage and
  * what it may deliver (the input current limit, marked "≤"). */
 static void fmt_signed(char *b, size_t cap, float v, const char *unit)
 {
@@ -840,7 +855,7 @@ static void fmt_signed(char *b, size_t cap, float v, const char *unit)
 static void page_power(Cv *c)
 {
 	char b[64], est[48] = "", cv[3][16], bv[3][16];
-	int pct = D.bat_pct, bypass = g_ms < bypass_busy_until ? bypass_want : D.chg_bypass;
+	int pct = D.bat_pct, bypass = D.chg_bypass;
 	uint32_t col = pct < 0 ? C_FAINT : (pct <= 15 ? C_BAD : (pct <= 30 ? C_WARN : C_OK));
 	float span = pct > 0 ? 260.f * (float)pct / 100.f : 0.f;
 	const char *state;
@@ -886,9 +901,11 @@ static void page_power(Cv *c)
 	if (D.chg_paused) state = "温度过高 · 已暂停充电";
 	else if (!D.bat_ok) state = "无电池数据";
 	else if (D.chg_online && bypass) state = "直供电 · 电池不充电";
+	else if (D.chg_online && D.chg_pending) state = "等待恢复充电";
+	else if (D.chg_online && D.chg_limited) state = "已按上限暂停充电";
 	else if (D.full) state = "已充满";
 	else state = D.charging ? "充电中" : (D.chg_online ? "已接电源" : "电池供电");
-	snprintf(b, sizeof b, "%s%s", state, D.chg_paused || bypass ? "" : est);
+	snprintf(b, sizeof b, "%s%s", state, D.chg_paused || bypass || D.chg_limited || D.chg_pending ? "" : est);
 	TXTC(c, FN14, 120, 94, b, D.chg_paused ? C_WARN : C_DIM);
 	/* the table: row names on the left, the charger's and the battery's column right-aligned */
 	if (D.chg_online) {
@@ -910,7 +927,7 @@ static void page_power(Cv *c)
 	}
 	/* direct supply */
 	TXTR(c, FN16, 116, 199, "直供电", C_TXT);
-	toggle_sw(c, 124.f, 180.f, bypass, H_BYPASS, g_ms < bypass_busy_until);
+	toggle_sw(c, 124.f, 180.f, bypass, H_BYPASS, g_ms < bypass_busy_until || !D.chg_control_ok);
 	hit_add(60, 176, 120, 34, H_BYPASS, 0, 0);
 	hit_fb(FB_NONE, 0, 0, 0, 0, 0);
 }
@@ -1110,7 +1127,10 @@ static void page_system(Cv *c)
 /* ------------------------------------------------------------------ overlays */
 static void scrim(Cv *c, int alpha)
 {
-	for (int i = 0; i < c->w * c->h; i++) c->p[i] = gx_mix(c->p[i], 0x05080E, (unsigned)alpha);
+	for (int i = 0; i < c->w * c->h; i++) {
+		c->p[i] = gx_mix(c->p[i], 0x05080E, (unsigned)alpha);
+		if (c->g) gx_ground_cover(&c->g[i], (unsigned)alpha);
+	}
 }
 
 static void ov_qr(Cv *c)
@@ -1209,12 +1229,18 @@ static int wrap_text(const UiFont *f, const char *s, int maxw)
 
 static void ov_sms(Cv *c)
 {
-	const Sms *s = &D.sms[ov_arg < D.nsms ? ov_arg : 0];
+	/* The list can reorder when a new message arrives. Keep the opened ID,
+	 * not its old row number, and update only that same card/message.
+	 */
+	if (D.sms_slot == sms_detail_slot && sms_detail.id[0])
+		for (int i = 0; i < D.nsms; i++)
+			if (!strcmp(sms_detail.id, D.sms[i].id)) { sms_detail = D.sms[i]; break; }
+	const Sms *s = &sms_detail;
 	char fit[96], line[128];
 
 	scrim(c, 255);
-	gx_fit(FN16, s->addr, 130, fit, sizeof fit);
-	TXTC(c, FN16, 120, 40, fit, C_TXT);
+	gx_fit(FN16, s->addr, 90, fit, sizeof fit);
+	title_sub(c, fit);
 	gx_fit(FN14, s->ts, 150, fit, sizeof fit);
 	TXTC(c, FN14, 120, 58, fit, C_DIM);
 	sms_lines_n = wrap_text(FN16, s->text, 160);

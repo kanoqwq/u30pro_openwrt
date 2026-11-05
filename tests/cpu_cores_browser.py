@@ -76,7 +76,21 @@ with sync_playwright() as p:
                 assert card.locator('[data-core="2"]').is_checked()
                 assert not card.locator('[data-core-persist]').is_checked()
                 assert page.evaluate('requests[2][2]') is True
+                # CPU0 is enabled when the backend advertises hotplug support;
+                # fixed-core behavior above remains identical on other kernels.
+                page.evaluate('''() => {
+                    state.cores[0].writable=true;
+                    return Promise.all(ticks.slice(0,1).map(f=>f()));
+                }''')
+                assert not card.locator('[data-core="0"]').is_disabled()
+                card.locator('[data-core="0"]').uncheck()
+                card.locator('button.on').click()
+                page.wait_for_function('requests.length===4 && !document.querySelector(".mud-cpu-cores button").disabled')
+                assert page.evaluate('requests[3][0][0]')=={'id':0,'online':False}
+                assert not card.locator('[data-core="0"]').is_checked()
+                assert not card.locator('[data-core="0"]').is_disabled()
+                assert card.locator('[data-core="3"]').is_disabled()
                 assert not errors,errors
                 page.close()
     browser.close()
-print('PASS: both CPU pages, 3 languages, mobile/desktop layout, fixed cores, edit preservation, apply/persist/reset/error handling')
+print('PASS: both CPU pages, 3 languages, mobile/desktop layout, capability-based CPU0, fixed cores, edit preservation, apply/persist/reset/error handling')

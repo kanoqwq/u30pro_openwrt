@@ -1,0 +1,30 @@
+#!/bin/sh
+set -eu
+export PATH="$PATH:/opt/mu300/bin:/usr/sbin:/sbin"
+if [ "$(cat "${MU300_SYSROOT:-}/etc/mu300/model" 2>/dev/null)" != f50pro ]; then
+    printf '{"ok":1,"supported":false}\n'; exit 0
+fi
+valid() { case $1 in none|data-switch|wifi-band|nfc-toggle) return 0;; *) return 1;; esac; }
+error() { printf '{"ok":0,"error":"%s"}\n' "$1"; exit 0; }
+case ${1:-get} in
+    get) ;;
+    set)
+        input=$(cat)
+        short=$(printf '%s' "$input" | jsonfilter -e '@.short')
+        long=$(printf '%s' "$input" | jsonfilter -e '@.long')
+        valid "$short" && valid "$long" || error invalid_button_action
+        uci -q set "unisoc_modem.main.f50pro_button_short=$short" &&
+        uci -q set "unisoc_modem.main.f50pro_button_long=$long" &&
+        uci -q commit unisoc_modem || {
+            uci -q revert unisoc_modem.main.f50pro_button_short || true
+            uci -q revert unisoc_modem.main.f50pro_button_long || true
+            error storage_failed
+        }
+        ;;
+    *) error invalid_button_action;;
+esac
+short=$(uci -q get unisoc_modem.main.f50pro_button_short 2>/dev/null || true)
+long=$(uci -q get unisoc_modem.main.f50pro_button_long 2>/dev/null || true)
+short=${short:-none};long=${long:-none}
+valid "$short" && valid "$long" || error invalid_button_action
+printf '{"ok":1,"supported":true,"short":"%s","long":"%s"}\n' "$short" "$long"

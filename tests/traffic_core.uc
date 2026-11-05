@@ -100,4 +100,5 @@ c.update_config(again,{device:'other0'},now+110);
 check(again.last==null,'MU300 configurable interface resets baseline');
 c.advance(again,{device:'other0',rx:99999,tx:99999,boot:'A',ifindex:42},now+120);
 check(c.status(again,now+120).today_used==0,'changed interface does not import preexisting counters');
+check(c.status(again,now+120).plan_name==again.config.plan_name,'published plan label comes from the saved configuration');
 printf('traffic accounting: %d checks passed\n', checks);

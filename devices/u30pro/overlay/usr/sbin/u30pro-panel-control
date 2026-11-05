@@ -1,6 +1,18 @@
 #!/bin/sh
 # Screen actions enter the same MU300 policy owners as the dashboard.
 set -eu
+charge_action() {
+    action=$1; token=${2:-}
+    case $token in *[!0-9]*) exit 2 ;; esac
+    reply=$(/usr/libexec/unisoc-modem/charge "$action") || reply='{"ok":false,"error":"charge_failed"}'
+    ok=$(printf '%s' "$reply" | jsonfilter -e '@.ok' 2>/dev/null || true)
+    case $ok in true|false) ;; *) reply='{"ok":false,"error":"charge_failed"}'; ok=false ;; esac
+    if [ -n "$token" ]; then
+        ubus call u30pro.panel charge_result "{\"token\":\"$token\",\"result\":$reply}" >/dev/null || true
+    fi
+    printf '%s\n' "$reply"
+    [ "$ok" = true ]
+}
 case ${1:-} in
     key-short|key-long)
         press=${1#key-}
@@ -23,8 +35,8 @@ case ${1:-} in
         exec /usr/libexec/unisoc-modem/hotspot "$action" ;;
     relay-on) exec /opt/mu300/bin/wifi-client up ;;
     relay-off) exec /opt/mu300/bin/wifi-client disconnect ;;
-    charge-pause) exec /usr/libexec/unisoc-modem/charge pause ;;
-    charge-resume) exec /usr/libexec/unisoc-modem/charge resume ;;
+    charge-pause) charge_action pause "${2:-}" ;;
+    charge-resume) charge_action resume "${2:-}" ;;
     reconnect) exec /usr/sbin/u30pro-celld --ctl reconnect ;;
     reboot) exec reboot ;;
     poweroff) exec poweroff ;;

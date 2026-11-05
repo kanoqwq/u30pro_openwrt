@@ -122,6 +122,12 @@
 #define HWRST_STATUS_FACTORYTEST	0xe0
 #define HWRST_STATUS_WATCHDOG		0xf0
 
+/* UMP9650 POR monitor, verified against both MU5358 and MU3356 stock ADI.
+ * The vendor handler has priority 130, ahead of PSCI's priority 129.
+ */
+#define UMS9632_RST_STATUS		0x21d4
+#define UMS9632_RESTART_PRIORITY		130
+
 /* Use default timeout 50 ms that converts to watchdog values */
 #define WDG_LOAD_VAL			((50 * 32768) / 1000)
 #define WDG_LOAD_MASK			GENMASK(15, 0)
@@ -139,6 +145,7 @@ struct sprd_adi_wdg {
 
 struct sprd_adi_data {
 	bool write_wait;
+	bool psci_restart_prepare;
 	u32 slave_offset;
 	u32 slave_addr_size;
 	int (*read_check)(u32 val, u32 reg);
@@ -468,6 +475,89 @@ static int sprd_adi_restart_sc9860(struct sys_off_data *data)
 	return sprd_adi_restart(data->cb_data, data->mode, data->cmd, &wdg);
 }
 
+static u32 sprd_adi_ums9632_reboot_mode(const char *cmd)
+{
+	if (!cmd)
+		return HWRST_STATUS_NORMAL;
+	if (!strncmp(cmd, "recovery", 8))
+		return HWRST_STATUS_RECOVERY;
+	if (!strncmp(cmd, "bootloader", 10))
+		return HWRST_STATUS_FASTBOOT;
+	if (!strncmp(cmd, "alarm", 5))
+		return HWRST_STATUS_ALARM;
+	if (!strncmp(cmd, "fastsleep", 9))
+		return HWRST_STATUS_SLEEP;
+	if (!strncmp(cmd, "panic", 5))
+		return HWRST_STATUS_PANIC;
+	if (!strncmp(cmd, "special", 7))
+		return HWRST_STATUS_SPECIAL;
+	if (!strncmp(cmd, "cftreboot", 9))
+		return HWRST_STATUS_CFTREBOOT;
+	if (!strncmp(cmd, "autodloader", 11))
+		return HWRST_STATUS_AUTODLOADER;
+	if (!strncmp(cmd, "iqmode", 6))
+		return HWRST_STATUS_IQMODE;
+	if (!strncmp(cmd, "sprdisk", 7))
+		return HWRST_STATUS_SPRDISK;
+	if (!strncmp(cmd, "tospanic", 8))
+		return HWRST_STATUS_SECURITY;
+	if (!strncmp(cmd, "factorytest", 11))
+		return HWRST_STATUS_FACTORYTEST;
+	return HWRST_STATUS_NORMAL;
+}
+
+static int sprd_adi_prepare_psci_restart(struct sys_off_data *data)
+{
+	struct sprd_adi *sadi = data->cb_data;
+	u32 value, expected, actual;
+	int ret;
+
+	ret = sprd_adi_read(sadi, UMS9632_RST_STATUS, &value);
+	if (ret)
+		goto failed;
+	/* Stock preserves these two secure failure reasons instead of hiding them
+	 * behind a normal restart. Keep all unrelated upper-byte PMIC state.
+	 */
+	if ((value & 0xff) == 2 || (value & 0xff) == 4)
+		return NOTIFY_DONE;
+	expected = (value & ~0xffU) | sprd_adi_ums9632_reboot_mode(data->cmd);
+	ret = sprd_adi_write(sadi, UMS9632_RST_STATUS, expected);
+	if (ret)
+		goto failed;
+	ret = sprd_adi_read(sadi, UMS9632_RST_STATUS, &actual);
+	if (!ret && actual != expected)
+		ret = -EIO;
+	if (ret)
+		goto failed;
+	/* Preparation only. PSCI still owns SYSTEM_RESET; never arm a PMIC
+	 * watchdog here, call SYSTEM_OFF, or stop the remaining restart handlers.
+	 */
+	return NOTIFY_DONE;
+failed:
+	dev_emerg(sadi->dev, "cannot prepare UMP9650 restart reason: %d\n", ret);
+	return NOTIFY_DONE;
+}
+
+static int sprd_adi_register_restart(struct sprd_adi *sadi)
+{
+	u32 psci_reboot;
+
+	if (sadi->data->psci_restart_prepare) {
+		/* This path is only evidenced for the stock UMS9632 PSCI contract.
+		 * An absent/zero property must not select an unverified PMIC reset.
+		 */
+		if (of_property_read_u32(sadi->dev->of_node, "sprd,psci-reboot",
+					 &psci_reboot) || psci_reboot != 1)
+			return 0;
+		return devm_register_sys_off_handler(sadi->dev, SYS_OFF_MODE_RESTART,
+				UMS9632_RESTART_PRIORITY, sprd_adi_prepare_psci_restart,
+				sadi);
+	}
+	if (sadi->data->restart)
+		return devm_register_restart_handler(sadi->dev, sadi->data->restart, sadi);
+	return 0;
+}
+
 static void sprd_adi_hw_init(struct sprd_adi *sadi)
 {
 	struct device_node *np = sadi->dev->of_node;
@@ -589,13 +679,9 @@ static int sprd_adi_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(&pdev->dev, ret, "failed to register SPI controller\n");
 
-	if (sadi->data->restart) {
-		ret = devm_register_restart_handler(&pdev->dev,
-						    sadi->data->restart,
-						    sadi);
-		if (ret)
-			return dev_err_probe(&pdev->dev, ret, "can not register restart handler\n");
-	}
+	ret = sprd_adi_register_restart(sadi);
+	if (ret)
+		return dev_err_probe(&pdev->dev, ret, "can not register restart handler\n");
 
 	return 0;
 }
@@ -625,6 +711,7 @@ static struct sprd_adi_data ums9632_data = {
  .slave_offset = ADI_15BIT_SLAVE_OFFSET,
  .slave_addr_size = ADI_15BIT_SLAVE_ADDR_SIZE,
  .write_wait = true,
+ .psci_restart_prepare = true,
 };
 
 static const struct of_device_id sprd_adi_of_match[] = {

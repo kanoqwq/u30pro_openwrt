@@ -27,6 +27,24 @@ if [ "${MU300_PLATFORM:-$(cat "$R/etc/mu300/platform" 2>/dev/null)}" = u30pro ];
         break
     done
     [ "$found" = 1 ] || { echo 'Missing this device AIC8800 firmware' >&2; exit 1; }
+    # MU3356's stock physical-card selection is distinct from its logical SIM
+    # index. Import once into the NEW root, never send AT or touch Android NV.
+    # Later upgrades keep an explicit OpenWrt choice instead of reimporting it.
+    if [ "$(cat "$R/etc/mu300/model" 2>/dev/null)" = f50pro ] &&
+       [ "$(getprop ro.product.model)" = MU3356 ]; then
+        . "$R/opt/mu300/lib/f50pro-card.sh"
+        board=$(f50pro_board_id) || board=
+        card=$(settings get system zte_webserver_sim_slot_id 2>/dev/null || true)
+        dsds=$(settings get system car_mode_dual_sim_switch 2>/dev/null || true)
+        case $dsds in 0|1) ;; *) dsds=;; esac
+        chip=$(cat /sys/module/sim_gpio_ctl/parameters/gpio_sim_ctrl 2>/dev/null || true)
+        # Stock getter prints detect level followed by the chip selector.
+        case $chip in [01][01]) chip=${chip#?};; esac
+        psim=$(cat /sys/module/sim_gpio_ctl/parameters/gpio_sim_ctrl_psim 2>/dev/null || true)
+        if f50pro_card_map "$board" "$card" >/dev/null; then
+            f50pro_import_card "$R" "$board" "$card" "$dsds" "$chip" "$psim"
+        fi
+    fi
     exit 0
 fi
 case $OS in openwrt) F=$R/lib/firmware ;; ubuntu) F=$R/usr/lib/firmware ;; *) exit 2 ;; esac

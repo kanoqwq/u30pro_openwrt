@@ -73,6 +73,28 @@ class NFCDevice(unittest.TestCase):
             r = self.call('encode', ssid, 'wpa2' if key else 'open', *([key] if key else []))
             self.assertNotEqual(r.returncode, 0)
 
+    def test_capability_probe_does_not_write_tag_memory(self):
+        before=self.image.read_bytes()
+        result=self.call('probe')
+        self.assertEqual(result.returncode,0,result.stderr)
+        self.assertIn(b'872 data bytes',result.stdout)
+        self.assertEqual(self.image.read_bytes(),before)
+        self.assertEqual(self.writes(),[])
+
+    def test_f50pro_reset_returns_high_after_read_success_and_failure(self):
+        model=Path(self.tmp.name)/'model';model.write_text('f50pro\n')
+        reset=Path(self.tmp.name)/'reset';reset.write_text('1\n')
+        before=self.image.read_bytes()
+        env=dict(NFC_TEST_MODEL_FILE=str(model),NFC_TEST_RESET_FILE=str(reset))
+        r=self.call('probe',**env)
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertEqual(reset.read_text(),'1\n')
+        self.assertEqual(self.image.read_bytes(),before)
+        self.patch(12,b'\0')
+        self.assertNotEqual(self.call('probe',**env).returncode,0)
+        self.assertEqual(reset.read_text(),'1\n')
+        self.assertEqual(self.writes(),[])
+
     def test_write_readback_and_no_repeated_eeprom_writes(self):
         r = self.call('wifi', 'My AP', 'wpa2', key=b'test key 123')
         self.assertEqual(r.returncode, 0, r.stderr)

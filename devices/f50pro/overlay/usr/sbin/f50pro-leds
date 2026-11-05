@@ -1,0 +1,102 @@
+#!/usr/bin/ucode
+// No AT queries or normal-state polling. The timer only animates early boot;
+// the boot-complete event cancels it and normal operation is event-driven.
+import * as fs from 'fs';
+import * as uci from 'uci';
+import * as ubus from 'ubus';
+import * as uloop from 'uloop';
+import * as rtnl from 'rtnl';
+import { colours,output,boot_colours } from 'mu300.f50pro-led';
+
+if(trim(fs.readfile('/etc/mu300/model') || '')!='f50pro')exit(0);
+uloop.init();
+const bus=ubus.connect();
+if(!bus)die('F50 Pro LEDs: ubus unavailable\n');
+const cfg=uci.cursor();
+let last={};
+let booting=!fs.stat('/run/f50pro-led-ready'),step=0;
+let animation=null;
+function readjson(path) { try { return json(fs.readfile(path)||'null'); } catch(e) { return null; } }
+function lamp(bank,colour) {
+    let values=output(bank,colour,cfg.get('system','mu300_leds',bank=='net'?'signal_brightness':'wifi_brightness'),
+                      cfg.get('system','mu300_leds',bank=='net'?'signal':'wifi'));
+    let key=sprintf('%J',values),ok=true;
+    if(last[bank]===key)return;
+    // Match the stock HAL's break-before-make sequence: clear every channel
+    // before enabling the selected emitter, including a white -> red change.
+    for(let value in values) {
+        let base='/sys/class/leds/'+value.node;
+        if(!fs.stat(base+'/brightness')) { ok=false;continue; }
+        fs.writefile(base+'/trigger','none\n');
+        if(fs.writefile(base+'/brightness','0\n')!=2)ok=false;
+    }
+    if(ok)for(let value in values)if(value.brightness) {
+        let text=value.brightness+'\n';
+        if(fs.writefile('/sys/class/leds/'+value.node+'/brightness',text)!=length(text))ok=false;
+    }
+    if(ok)last[bank]=key;
+}
+function render() {
+    cfg.unload('system');
+    if(booting && cfg.get('system','mu300_leds','boot_animation')=='0') {
+        booting=false;
+        if(animation)animation.cancel();
+    }
+    if(booting) {
+        let value=boot_colours(step++);
+        lamp('net',value.net);lamp('wifi',value.wifi);
+        return;
+    }
+    cfg.unload('unisoc_modem');
+    let selected=trim(fs.readfile('/run/mu300-data-sim-actual') ||
+                      cfg.get('unisoc_modem','main','data_sim') || '');
+    let slot=selected=='0'?0:selected=='1'?1:null;
+    let registered=false,nr=false;
+    if(slot!=null)for(let suffix in ['','-nr']) {
+        let value=readjson('/run/mu300-registration/slot'+slot+suffix+'.json');
+        if(value?.slot===slot && value.stat in [1,5,9,10]) {
+            registered=true;
+            if(suffix=='-nr' || value.rat in [11,12,13,15])nr=true;
+        }
+    }
+    // Link-ready arrives before netifd necessarily publishes radio.up.
+    // Ask the actual AP, never infer a running band from the saved config.
+    let device=cfg.get('unisoc_modem','main','wifi_device') || 'wlan0';
+    let ap=match(device,/^[a-zA-Z0-9_.:-]{1,15}$/)?bus.call('hostapd.'+device,'get_status',{}):null;
+    let band=ap?.status=='ENABLED'?(ap.freq>=4900?'5g':ap.freq>=2400 && ap.freq<2500?'2g':null):null;
+    let settings={};
+    for(let name in ['signal_4g','signal_5g','signal_offline','wifi_2g','wifi_5g'])
+        settings[name]=cfg.get('system','mu300_leds',name);
+    let value=colours(registered,nr,band,settings);
+    lamp('net',value.net);lamp('wifi',value.wifi);
+}
+const listeners=[];
+for(let name in ['mu300.registration','mu300.sim-state','network.interface',
+                 'f50pro.led','f50pro.config']) {
+    let listener=bus.listener(name,()=>render());
+    if(!listener)die('F50 Pro LEDs: event subscription failed\n');
+    push(listeners,listener);
+}
+const linkEvents=rtnl.listener((event)=>{
+    let device=cfg.get('unisoc_modem','main','wifi_device') || 'wlan0';
+    if(event.msg?.dev==device)render();
+},[rtnl.const.RTM_NEWLINK,rtnl.const.RTM_DELLINK],[rtnl.const.RTNLGRP_LINK]);
+if(!linkEvents)die('F50 Pro LEDs: link event subscription failed\n');
+let ready=bus.listener('f50pro.boot',()=>{
+    booting=false;
+    if(animation)animation.cancel();
+    render();
+});
+if(!ready)die('F50 Pro LEDs: boot event subscription failed\n');
+push(listeners,ready);
+// Close the startup race: S99 may have touched the marker while subscribing.
+if(fs.stat('/run/f50pro-led-ready'))booting=false;
+if(booting)animation=uloop.timer(250,()=>{
+    render();
+    if(booting)animation.set(250);
+});
+const term=uloop.signal(15,()=>uloop.end());
+const intr=uloop.signal(2,()=>uloop.end());
+render();
+uloop.run();
+if(animation)animation.cancel();

@@ -115,8 +115,8 @@ def kernel_trial(current_boot, wrapped_kernel, output):
     """
     current_boot, wrapped_kernel, output = map(Path, (current_boot, wrapped_kernel, output))
     proof = json.loads(wrapped_kernel.with_suffix('.manifest.json').read_text())
-    layout = json.loads((TOP/'tools/build-layout.json').read_text())
-    objects = Path(layout['kernel_objects'].replace('{workspace}', layout['workspace']))
+    _, _, layout = load('kernel_trial_settings', TOP/'tools/build-settings.py').settings()
+    objects = Path(layout['kernel_objects'])
     report = json.loads((objects/'u30pro-build.json').read_text())
     new_kernel = wrapped_kernel.read_bytes()
     if (digest(new_kernel) != proof['output_sha256'] or

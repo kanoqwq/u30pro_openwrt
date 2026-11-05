@@ -4,7 +4,12 @@
 set -eu
 export PATH="$PATH:/opt/mu300/bin:/opt/mu300/busybox-bin:/usr/sbin:/sbin"
 policy=${UNISOC_RADIO_POLICY:-/etc/mu300/sim-radio}
-supports_dsds() { case "$(mu300-device)" in f50|u30air) return 0;; *) return 1;; esac; }
+supports_dsds() {
+    case "$(mu300-device)" in
+        f50|u30air|u30pro) return 0;;
+        *) return 1;;
+    esac
+}
 read_policy() {
     flags=$("${MU300_RADIO_ALLOWED:-/opt/mu300/bin/mu300-radio-allowed}" --flags) || {
         echo 'Invalid saved SIM radio policy' >&2; exit 1;

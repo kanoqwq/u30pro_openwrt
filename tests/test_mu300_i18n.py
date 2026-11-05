@@ -38,8 +38,10 @@ class DashboardI18n(unittest.TestCase):
         titles = {item['title'] for item in menu.values()}
         for lang in ('en', 'tr'):
             po = (PACKAGE / f'po/{lang}/mu300.po').read_text(encoding='utf-8')
-            translated = dict(re.findall(r'msgid "([^"]+)"\s+msgstr "([^"]+)"', po))
-            self.assertEqual(set(translated), titles)
+            pairs = re.findall(r'msgid "([^"]+)"\s+msgstr "([^"]+)"', po)
+            translated = dict(pairs)
+            self.assertEqual(len(pairs),len(translated),'Duplicate catalog keys')
+            self.assertTrue(titles <= set(translated),'Missing global menu translations')
             self.assertTrue(all(translated.values()))
             self.assertTrue((PACKAGE / f'lmo/mu300.{lang}.lmo').is_file())
 
@@ -77,6 +79,9 @@ for (const [locale, expected] of [['en','No SIM card'],['tr','SIM kart takılı 
     if (M.translate('无线电已关')==='无线电已关') throw Error('RF translation: '+locale);
 }
 """)
+
+    def test_view_slot_follows_actual_data_until_explicit_manual_selection(self):
+        subprocess.run(['node',str(TOP/'tests/dashboard_sim_follow.js')],check=True)
 
     def test_battery_current_preserves_real_sign_zero_and_unavailable_values(self):
         self.run_js("""

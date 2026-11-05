@@ -11,7 +11,12 @@ PLATFORM=${U30PRO_NFC_PLATFORM:-/etc/mu300/platform}
 desired() { [ "$(uci -q get u30pro_native_control.nfc.enabled 2>/dev/null || true)" = 0 ] && echo 0 || echo 1; }
 case ${1:-sync} in
     state) desired; exit;;
-    supported) [ -x "$NFC" ]; exit;;
+    supported)
+        [ -x "$NFC" ] || exit 1
+        if [ "$(cat /etc/mu300/model 2>/dev/null)" = f50pro ]; then
+            [ -e /sys/kernel/f50pro_nfc/reset ] && [ -c /dev/i2c-4 ] || exit 1
+        fi
+        exit 0;;
     sync|toggle|on|off) action=${1:-sync};;
     --locked) action=${2:-sync};;
     *) exit 2;;

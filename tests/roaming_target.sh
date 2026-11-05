@@ -4,6 +4,7 @@
 set -eu
 ucode /src/tests/roaming.uc
 ucode /src/tests/network_recovery.uc
+ucode /src/tests/dashboard_sim_presence.uc
 ucode /src/tests/signal_queue.uc
 ucode /src/tests/u30pro_channels.uc
 ucode -e "import * as checked from '/usr/share/ucode/mu300/registration.uc';"

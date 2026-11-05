@@ -7,15 +7,30 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct { int w, h; uint32_t *p; } Cv;
+/* What of the wallpaper a pixel shows, for the canvases that track it (cv_track): kw/255 of the plain ground (wk 1 the wallpaper, 2 the frosted
+ * one) at the pixel itself and kg/255 of a glass backdrop (gk 1 glass, 2 thin glass) sampled at sx, sy.  Every drawing over the pixel covers
+ * those shares by its alpha.  Once the frame is drawn, rest is the pixel without them (wp_ground_rest in wall.h); a live wallpaper's next frame
+ * then puts the page onto the new ground (wp_reground) instead of drawing it again. */
+typedef struct { uint8_t wk, kw, gk, kg, sx, sy; int16_t rest[3]; } GxGround;
+typedef struct { int w, h; uint32_t *p; GxGround *g; } Cv;
 
 #define GX_PI 3.14159265f
 
 static Cv cv_new(int w, int h)
 {
-	Cv c = { w, h, calloc((size_t)w * (size_t)h, 4) };
+	Cv c = { w, h, calloc((size_t)w * (size_t)h, 4), NULL };
 
 	return c;
+}
+
+static void cv_track(Cv *c) { c->g = calloc((size_t)c->w * (size_t)c->h, sizeof *c->g); }
+
+/* a drawing of alpha a (0..255) over a pixel leaves 1 - a of what showed through before */
+static inline void gx_ground_cover(GxGround *g, unsigned a)
+{
+	if (a >= 255) { g->kw = g->kg = 0; return; }
+	g->kw = (uint8_t)((g->kw * (255 - a) + 127) / 255);
+	g->kg = (uint8_t)((g->kg * (255 - a) + 127) / 255);
 }
 
 static inline float gx_clamp(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -52,11 +67,11 @@ static GxClip gx_clip(int x0, int y0, int x1, int y1, int fade)
 
 static void gx_unclip(GxClip old) { gx_cl = old; }
 
-/* a: 0..255 coverage already multiplied by the caller's alpha */
-static inline void gx_put(Cv *c, int x, int y, uint32_t col, int a)
+/* a: 0..255 coverage already multiplied by the caller's alpha; returns the alpha it drew with (0: nothing, outside or clipped) */
+static inline int gx_put_a(Cv *c, int x, int y, uint32_t col, int a)
 {
-	if (a <= 0 || x < 0 || y < 0 || x >= c->w || y >= c->h) return;
-	if (x < gx_cl.x0 || y < gx_cl.y0 || x >= gx_cl.x1 || y >= gx_cl.y1) return;
+	if (a <= 0 || x < 0 || y < 0 || x >= c->w || y >= c->h) return 0;
+	if (x < gx_cl.x0 || y < gx_cl.y0 || x >= gx_cl.x1 || y >= gx_cl.y1) return 0;
 	if (gx_cl.fade) {
 		int d = x - gx_cl.x0, e;
 
@@ -64,12 +79,17 @@ static inline void gx_put(Cv *c, int x, int y, uint32_t col, int a)
 		if ((e = y - gx_cl.y0) < d) d = e;
 		if ((e = gx_cl.y1 - 1 - y) < d) d = e;
 		if (d < gx_cl.fade) a = a * (d + 1) / (gx_cl.fade + 1);
-		if (a <= 0) return;
+		if (a <= 0) return 0;
 	}
+	if (a > 255) a = 255;
 	uint32_t *d = &c->p[y * c->w + x];
 
-	*d = gx_mix(*d, col, (unsigned)(a > 255 ? 255 : a));
+	*d = gx_mix(*d, col, (unsigned)a);
+	if (c->g) gx_ground_cover(&c->g[y * c->w + x], (unsigned)a);
+	return a;
 }
+
+static inline void gx_put(Cv *c, int x, int y, uint32_t col, int a) { (void)gx_put_a(c, x, y, col, a); }
 
 static inline void gx_cov(Cv *c, int x, int y, uint32_t col, float cov, int alpha)
 {
@@ -80,6 +100,7 @@ static inline void gx_cov(Cv *c, int x, int y, uint32_t col, float cov, int alph
 static void gx_fill(Cv *c, uint32_t col)
 {
 	for (int i = 0; i < c->w * c->h; i++) c->p[i] = col;
+	if (c->g) memset(c->g, 0, (size_t)c->w * (size_t)c->h * sizeof *c->g);
 }
 
 static void gx_rect(Cv *c, int x, int y, int w, int h, uint32_t col, int alpha)
@@ -96,6 +117,7 @@ static void gx_rect(Cv *c, int x, int y, int w, int h, uint32_t col, int alpha)
 			uint32_t *d = &c->p[j * c->w + i];
 
 			*d = gx_mix(*d, col, (unsigned)alpha);
+			if (c->g) gx_ground_cover(&c->g[j * c->w + i], (unsigned)alpha);
 		}
 }
 

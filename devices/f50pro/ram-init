@@ -1,0 +1,75 @@
+#!/bin/busybox sh
+# Authorized investigation only: full production root in RAM, no installation.
+/bin/busybox mkdir -p /bin /sbin /proc /sys /dev /run /tmp /newroot
+/bin/busybox --install -s /bin
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin HOME=/root TERM=vt100
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts
+mount -t devpts devpts /dev/pts
+mount -t tmpfs tmpfs /run
+mount -t tmpfs tmpfs /tmp
+mount -t debugfs debugfs /sys/kernel/debug
+usb() {
+    /usr/sbin/u30pro-usb start ncm || return 1
+    ip link set usb0 up
+    ip addr add 192.168.77.1/24 dev usb0 2>/dev/null || :
+}
+rescue() {
+    echo "<3>F50PRO-TRIAL: $*" >/dev/kmsg
+    usb || :
+    if [ -c /dev/ttyGS0 ]; then exec setsid cttyhack sh </dev/ttyGS0 >/dev/ttyGS0 2>&1; fi
+    exec sh </dev/console >/dev/console 2>&1
+}
+i=0
+while [ "$i" -lt 100 ]; do
+    /usr/sbin/u30pro-nodes --populate-nodes || rescue nodes
+    [ ! -b /dev/block/by-name/misc ] || break
+    i=$((i+1));sleep 0.1
+done
+[ -b /dev/block/by-name/misc ] || rescue misc
+dd if=/etc/trial-android-bc.bin of=/dev/block/by-name/misc bs=1 seek=2048 conv=notrunc,fsync || rescue restore
+dd if=/dev/block/by-name/misc of=/run/trial-bc-check.bin bs=1 skip=2048 count=32 2>/dev/null
+cmp -s /etc/trial-android-bc.bin /run/trial-bc-check.bin || rescue restore-readback
+echo 1 >/sys/module/sdhci_sprd/parameters/write_protect || rescue write-protect
+[ "$(cat /sys/module/sdhci_sprd/parameters/write_protect)" = Y ] || rescue write-protect-readback
+for node in /sys/class/block/mmcblk*; do
+    [ ! -b /dev/${node##*/} ] || blockdev --setro /dev/${node##*/} || rescue block-readonly
+done
+(sleep 600;sync;reboot -f) &
+mount -t tmpfs -o size=400m,mode=0755 tmpfs /newroot || rescue ram-root
+tar -xzf /trial-root.tar.gz -C /newroot || rescue root-unpack
+rm /trial-root.tar.gz
+[ "$(cat /newroot/etc/mu300/model)" = f50pro ] || rescue product-mismatch
+for name in u30pro-nfc mu300-post unisoc-ota; do
+    rm -f /newroot/etc/rc.d/S[0-9][0-9]"$name"
+done
+printf 'android\n' >/newroot/etc/mu300/default-boot
+cp /etc/trial-release.json /newroot/etc/mu300/release.json
+cat >>/newroot/etc/config/u30pro_native_control <<'EOF'
+
+config nvsync 'nvsync'
+    option writeback 'off'
+EOF
+. /newroot/opt/mu300/lib/f50pro-card.sh
+board=$(cat /etc/trial-board)
+card=$(cat /etc/trial-card)
+dsds=$(cat /etc/trial-dsds)
+chip=$(cat /etc/trial-chip)
+psim=$(cat /etc/trial-psim)
+f50pro_import_card /newroot "$board" "$card" "$dsds" "$chip" "$psim" || rescue stock-card
+mkdir -p /run/mu300
+cp /etc/trial-android-bc.bin /run/mu300/misc-bc-android.bin
+cp /etc/trial-linux-bc.bin /run/mu300/misc-bc-linux-trial.bin
+cat /etc/trial-android-slot >/run/mu300/android-slot
+case $(cat /etc/trial-android-slot) in a) echo b;; b) echo a;; *) rescue slot;; esac >/run/mu300/linux-slot
+readlink -f /dev/block/by-name/misc >/run/mu300/misc-dev
+echo u30pro >/run/mu300/device
+echo RAM-TRIAL >/run/mu300/disk-dev
+touch /run/stay /run/f50pro-ram-root
+for path in dev proc sys run; do
+    mkdir -p /newroot/$path
+    mount --move /$path /newroot/$path || rescue move
+done
+exec switch_root /newroot /sbin/init

@@ -1,0 +1,3 @@
+leds-gpio
+f50pro-led-handoff enabled=1
+f50pro-nfc-gpio enabled=1

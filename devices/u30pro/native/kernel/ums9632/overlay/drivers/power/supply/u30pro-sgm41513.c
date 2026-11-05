@@ -29,6 +29,10 @@
 #define SGM_OTG BIT(5)
 #define SGM_WD_RESET BIT(6)
 
+static bool battery_present = true;
+module_param(battery_present, bool, 0444);
+MODULE_PARM_DESC(battery_present, "Physical battery fitted; preserve USB/OTG without battery policy when false");
+
 struct sgm_jeita {
  int t_up, t_rec;	/* 0.1 degC (stock value minus the 1000 offset) */
  u32 ichg, cv;		/* uA, uV */
@@ -569,7 +573,7 @@ static int sgm_probe(struct i2c_client *client)
  ret = sgm_read(s, 0x04);
  if (ret < 0) return ret;
  s->boot_vreg = ret;		/* the firmware's charge voltage is the ceiling */
- sgm_load_tables(s);
+ if (battery_present) sgm_load_tables(s);
  psy_cfg.drv_data = s;psy_cfg.of_node = dev->of_node;
  s->psy = devm_power_supply_register(dev, &s->psy_desc, &psy_cfg);
  if (IS_ERR(s->psy)) return dev_err_probe(dev, PTR_ERR(s->psy), "power_supply registration failed\n");

@@ -6,16 +6,20 @@
 
 /* System > Screen > Wallpaper: a picture or a short video as the wallpaper of the screen, and the look of the glass over it
  * (u30pro-wallpaper, /usr/share/u30pro/wallpaper.uc; the screen side is tools/ui/wall.h).  The browser does the work: it cuts the picture
- * or every frame of the video to the 240x240 screen (centred, cover) and encodes JPEGs; a video becomes a "U3LW" clip of up to 20 seconds.
+ * or every frame of the video to the 240x240 screen (centred, cover) and encodes pictures or lossless tile deltas; a video becomes a "U3LW" clip of up to 20 seconds.
  * The same is made at 480x480 for the web pages (the overview's picture of the screen is sharp with it on a high-density display).  The
  * files go up through cgi-upload and the router only checks and stores them. */
 var callGet = rpc.declare({ object: 'u30pro-wallpaper', method: 'get' });
 var callImage = rpc.declare({ object: 'u30pro-wallpaper', method: 'image' });
-var callSet = rpc.declare({ object: 'u30pro-wallpaper', method: 'set', params: [ 'dim', 'glass', 'blur', 'tint', 'live' ] });
+var callSet = rpc.declare({ object: 'u30pro-wallpaper', method: 'set', params: [ 'dim', 'glass', 'blur', 'tint', 'pages', 'fast_panel' ] });
 var callInstall = rpc.declare({ object: 'u30pro-wallpaper', method: 'install' });
 var callRemove = rpc.declare({ object: 'u30pro-wallpaper', method: 'remove' });
 
 var TEXT = {
+  "High refresh": ["高刷新", "Yüksek yenileme"],
+  "Use 96 MHz during swipes and high frame rate wallpapers, returning to the stock 48 MHz when idle. Up to about 53 fps; off by default. This exceeds the panel's stock clock. Turn it off if you see specks, shifted lines or wrong colours.": ["翻页和高帧率动态壁纸播放时使用 96 MHz，空闲后恢复原厂 48 MHz，最高约 53 帧/秒，默认关闭。此模式超出屏幕原厂时钟；若出现花点、错位或颜色异常，请关闭。", "Kaydırma ve yüksek kare hızlı duvar kâğıtlarında 96 MHz kullanır, boşta stok 48 MHz'e döner. Yaklaşık 53 kare/sn; varsayılan olarak kapalıdır. Panelin stok saatini aşar. Noktalar, kaymış çizgiler veya yanlış renkler görürseniz kapatın."],
+  "%d fps (needs high refresh)": ["%d 帧/秒（需开启高刷新）", "%d kare/sn (yüksek yenileme gerekir)"],
+  "It was converted in the older way (JPEG frames): set it again for a sharper picture and less work for the screen.": ["这段动态壁纸采用旧版 JPEG 帧格式；重新选择原视频设置，可提升清晰度并减少屏幕处理开销。", "Bu canlı duvar kâğıdı eski JPEG kareleriyle dönüştürülmüş; daha net görüntü ve daha az ekran işlemi için videoyu yeniden seçin."],
   "Screen wallpaper": [
     "屏幕壁纸",
     "Ekran duvar kâğıdı"
@@ -211,7 +215,17 @@ var TEXT = {
   "Cannot prepare wallpaper storage": [
     "无法准备壁纸存储目录",
     "Duvar kâğıdı depolama alanı hazırlanamadı"
-  ]
+  ],
+  "Everywhere": ["全部界面", "Her yerde"],
+  "Home page": ["主页", "Ana sayfa"],
+  "Signal page": ["信号页", "Sinyal sayfası"],
+  "Traffic page": ["流量页", "Trafik sayfası"],
+  "Functions": ["功能列表", "İşlevler"],
+  "Pages under Functions": ["功能里的各页", "İşlevlerin alt sayfaları"],
+  "Control centre and SMS list": ["控制中心和短信列表", "Kontrol merkezi ve SMS listesi"],
+  "PIN pad": ["密码盘", "PIN tuş takımı"],
+  "Pop-ups (QR code, SMS, power menu)": ["弹窗（二维码、短信、电源菜单）", "Açılır pencereler (QR kodu, SMS, güç menüsü)"],
+  "It plays on selected scenes while the screen is still and pauses on a touch, swipe or scrolling list. Playback uses additional CPU and battery; unselected scenes keep a still frame.": ["在勾选的界面静止时播放，触摸、翻页或列表滚动时暂停。播放会增加 CPU 与电量消耗；未勾选的界面保持静态画面。", "Seçili ekranlar hareketsizken oynatılır; dokunma, kaydırma veya liste kaydırmada duraklar. Oynatma CPU ve pil tüketimini artırır; seçilmeyen ekranlar sabit kareyi gösterir."]
 };
 function T(text) {
     var lang = M.uiLanguage(), entry = TEXT[text];
@@ -227,39 +241,61 @@ function card(title, body, help) {
 
 var SIZE = 240, WEB = 480;
 var TINTS = [ [ 0, T('Night blue') ], [ 1, T('Graphite') ], [ 2, T('White fog') ], [ 3, T('Theme colour') ] ];
-var LIVE = [ [ 0, T('Off (still frame)') ], [ 1, T('Lock screen') ], [ 2, T('Lock screen and home page') ] ];
-var LENGTHS = [ 5, 10, 15, 20 ], RATES = [ 15, 24, 30 ];
+/* The wp_live_pages mask is shared with wallpaper.uc and native tools/ui/wall.h. */
+var SCENES = [ [ 1, T('Lock screen') ], [ 2, T('Home page') ], [ 4, T('Signal page') ], [ 8, T('Traffic page') ], [ 16, T('Functions') ],
+    [ 32, T('Pages under Functions') ], [ 64, T('Control centre and SMS list') ], [ 128, T('PIN pad') ], [ 256, T('Pop-ups (QR code, SMS, power menu)') ] ];
+var ALL_SCENES = 511;
+var LENGTHS = [ 5, 10, 15, 20 ], RATES = [ 15, 24, 30, 50 ];
 
 function check(r) {
 	if (r && r.error) throw new Error(T(r.error));
 	return r;
 }
 
+/* draw the square s x s at (sx, sy) of src onto the whole of ctx's square canvas.  Browsers scale a drawImage bilinearly from a few source
+ * pixels, so one large reduction aliases (a 4K video came out soft and shimmering, 9 dB further from an exact average than the stepwise
+ * result); halving step by step averages every source pixel, and only the last step is less than 2:1 */
+var steps = {};
+function shrink(ctx, src, sx, sy, s) {
+	var size = ctx.canvas.width;
+	for (var n = Math.round(s / 2); n > size; n = Math.round(n / 2)) {
+		var c = steps[n] || (steps[n] = E('canvas', { 'width': n, 'height': n })), x = c.getContext('2d');
+		x.imageSmoothingQuality = 'high';
+		x.clearRect(0, 0, n, n);
+		x.drawImage(src, sx, sy, s, s, 0, 0, n, n);
+		src = c; sx = sy = 0; s = n;
+	}
+	ctx.imageSmoothingQuality = 'high';
+	ctx.clearRect(0, 0, size, size);
+	ctx.drawImage(src, sx, sy, s, s, 0, 0, size, size);
+}
+
 /* draw a picture or a video frame centred and cut to a square on the WEB-sized canvas */
 function cover(ctx, src, w, h) {
 	var s = Math.min(w, h);
-	ctx.imageSmoothingQuality = 'high';
-	ctx.drawImage(src, (w - s) / 2, (h - s) / 2, s, s, 0, 0, WEB, WEB);
+	shrink(ctx, src, (w - s) / 2, (h - s) / 2, s);
 }
 
 /* the screen's size from the web-sized canvas: a 2:1 reduction */
 var small = null;
 function screenSize(canvas) {
-	if (!small) { small = document.createElement('canvas'); small.width = small.height = SIZE; }
-	var c = small.getContext('2d');
-	c.imageSmoothingQuality = 'high';
-	c.drawImage(canvas, 0, 0, SIZE, SIZE);
+	if (!small) small = E('canvas', { 'width': SIZE, 'height': SIZE });
+	shrink(small.getContext('2d'), canvas, 0, 0, WEB);
 	return small;
 }
 
-/* JPEG frames packed into a "U3LW" clip: a 16-byte header (magic, version 1, fps, width, height, frame count), then length + JPEG */
-function pack(frames, fps, size) {
+/* frames packed into a "U3LW" clip: a 16-byte header (magic, version, fps, width, height, tile side or 0, frame count), then length + frame.
+ * Version 1: JPEG frames (the 480x480 web copy, and the screen's clip when the browser has no CompressionStream); version 2: the screen's
+ * clip as zlib frames of 16x16 tile deltas (tools/ui/wall.h): lossless, and the screen only inflates and adds the tiles that changed */
+var TILE = 16, TX = SIZE / TILE, TMAP = Math.ceil(TX * TX / 8);
+function pack(frames, fps, size, version) {
 	var head = new DataView(new ArrayBuffer(16)), parts = [ head.buffer ];
 	[ 85, 51, 76, 87 ].forEach(function(c, i) { head.setUint8(i, c); });
-	head.setUint8(4, 1);
+	head.setUint8(4, version || 1);
 	head.setUint8(5, fps);
 	head.setUint16(6, size, true);
 	head.setUint16(8, size, true);
+	head.setUint16(10, version == 2 ? TILE : 0, true);
 	head.setUint32(12, frames.length, true);
 	frames.forEach(function(b) {
 		var l = new DataView(new ArrayBuffer(4));
@@ -267,6 +303,44 @@ function pack(frames, fps, size) {
 		parts.push(l.buffer, b);
 	});
 	return new Blob(parts, { type: 'application/octet-stream' });
+}
+
+/* the SIZE x SIZE canvas as R G B bytes */
+function rgbOf(canvas) {
+	var d = canvas.getContext('2d').getImageData(0, 0, SIZE, SIZE).data, o = new Uint8Array(SIZE * SIZE * 3);
+
+	for (var i = 0, j = 0; i < d.length; i += 4) { o[j++] = d[i]; o[j++] = d[i + 1]; o[j++] = d[i + 2]; }
+	return o;
+}
+
+/* a version 2 frame before compression: 0 and every pixel (the first), or 1, the bitmap of the tiles that differ from prev and their
+ * per-channel differences (mod 256) */
+function tileDelta(prev, cur) {
+	if (!prev) { var key = new Uint8Array(1 + cur.length); key.set(cur, 1); return key; }
+	var bits = new Uint8Array(TMAP), tiles = [];
+	for (var t = 0; t < TX * TX; t++) {
+		var x0 = (t % TX) * TILE, y0 = Math.floor(t / TX) * TILE, same = true, y, k, o;
+		for (y = 0; y < TILE && same; y++)
+			for (k = 0, o = ((y0 + y) * SIZE + x0) * 3; k < TILE * 3; k++) if (cur[o + k] !== prev[o + k]) { same = false; break; }
+		if (same) continue;
+		var d = new Uint8Array(TILE * TILE * 3), p = 0;
+		for (y = 0; y < TILE; y++)
+			for (k = 0, o = ((y0 + y) * SIZE + x0) * 3; k < TILE * 3; k++) d[p++] = (cur[o + k] - prev[o + k]) & 255;
+		bits[t >> 3] |= 1 << (t & 7);
+		tiles.push(d);
+	}
+	var out = new Uint8Array(1 + TMAP + tiles.length * TILE * TILE * 3), q = 1 + TMAP;
+	out[0] = 1;
+	out.set(bits, 1);
+	tiles.forEach(function(d) { out.set(d, q); q += d.length; });
+	return out;
+}
+
+/* zlib (CompressionStream "deflate" is the zlib format) */
+function zlib(bytes) {
+	// LuCI evaluates modules in a scope containing its XHR Response class.
+	// CompressionStream needs the browser Fetch Response, not that wrapper.
+	return new window.Response(new Blob([ bytes ]).stream().pipeThrough(new CompressionStream('deflate'))).blob();
 }
 
 function jpeg(canvas, q) {
@@ -312,12 +386,14 @@ return view.extend({
 		var status = E('div', { 'class': 'u30-wp-status', 'role': 'status', 'aria-live': 'polite' });
 		var file = E('input', { 'type': 'file', 'accept': 'image/*,video/*', 'style': 'display:none' });
 		var length = E('select', { 'class': 'cbi-input-select' }, LENGTHS.map(function(s) { return opt([ s, T('%d s').format(s) ], 10); }));
-		var rate = E('select', { 'class': 'cbi-input-select' }, RATES.map(function(f) { return opt([ f, T('%d fps').format(f) ], 24); }));
+		var rate = E('select', { 'class': 'cbi-input-select' }, RATES.map(function(f) {
+			return opt([ f, T(f > 30 ? '%d fps (needs high refresh)' : '%d fps').format(f) ], 24);
+		}));
 		var working = false;
 		function setBusy(active, message) {
 			working = active; status.classList.toggle('busy', active); status.setAttribute('aria-busy', String(active));
 			if (message) status.textContent = message;
-			[choose, remove, apply, save, length, rate, tint, live, glass.input, blur.input, dim.input].forEach(function(el) { if(el) el.disabled = active; });
+			[choose, remove, apply, save, length, rate, tint, live, fast, glass.input, blur.input, dim.input].forEach(function(el) { if(el) el.disabled = active; });
 			if (!active) { apply.disabled = !pending; remove.disabled = !self.info.picture; }
 		}
 		var pending = null;	/* {jpg, web: Blob, live, webLive: Blob|null} waiting for Apply */
@@ -331,7 +407,8 @@ return view.extend({
 			var i = self.info;
 			if (pending) return;
 			status.textContent = !i.picture ? T('No wallpaper: the screen shows its plain background.') :
-				(i.live ? T('Live wallpaper: %d frames at %d fps, %s.').format(i.frames, i.fps, '%1024mB'.format(i.live_bytes)) : T('Picture'));
+				(i.live ? T('Live wallpaper: %d frames at %d fps, %s.').format(i.frames, i.fps, '%1024mB'.format(i.live_bytes)) +
+					(i.live_version === 1 ? ' ' + T("It was converted in the older way (JPEG frames): set it again for a sharper picture and less work for the screen.") : '') : T('Picture'));
 		}
 
 		function showStored(im) {
@@ -353,8 +430,9 @@ return view.extend({
 			});
 		}
 
-		/* every 1/fps second of the first seconds of the video, as JPEG frames packed into a clip */
+		/* Screen clips use lossless tile deltas with CompressionStream, legacy JPEG otherwise. Web clips stay JPEG. */
 		function video(f) {
+			var v2 = typeof CompressionStream == 'function', prev = null;
 			var fps = +rate.value, secs = +length.value, v = E('video', { 'muted': '', 'playsinline': '', 'preload': 'auto' }), url = URL.createObjectURL(f);
 			v.muted = true;
 			return new Promise(function(resolve, reject) {
@@ -372,7 +450,10 @@ return view.extend({
 					status.textContent = T('Converting the video: frame %d of %d').format(i + 1, n);
 					return seek(i / fps).then(function() {
 						cover(ctx, v, v.videoWidth, v.videoHeight);
-						return Promise.all([ jpeg(screenSize(canvas), .8), jpeg(canvas, .8), i ? null : jpeg(screenSize(canvas), .9), i ? null : jpeg(canvas, .9) ]);
+						var small = screenSize(canvas), screen;
+						if (v2) { var rgb = rgbOf(small); screen = zlib(tileDelta(prev, rgb)); prev = rgb; }
+						else screen = jpeg(small, .8);
+						return Promise.all([ screen, jpeg(canvas, .8), i ? null : jpeg(small, .9), i ? null : jpeg(canvas, .9) ]);
 					}).then(function(b) {
 						frames.push(b[0]);
 						web.push(b[1]);
@@ -381,7 +462,7 @@ return view.extend({
 					});
 				}
 				return step(0).then(function() {
-					return seek(0).then(function() { cover(ctx, v, v.videoWidth, v.videoHeight); return { jpg: first.jpg, web: first.web, live: pack(frames, fps, SIZE), webLive: pack(web, fps, WEB), frames: frames.length, fps: fps }; });
+					return seek(0).then(function() { cover(ctx, v, v.videoWidth, v.videoHeight); return { jpg: first.jpg, web: first.web, live: pack(frames, fps, SIZE, v2 ? 2 : 1), webLive: pack(web, fps, WEB, 1), frames: frames.length, fps: fps }; });
 				});
 			}).finally(function() { URL.revokeObjectURL(url); v.removeAttribute('src'); v.load(); });
 		}
@@ -446,6 +527,8 @@ return view.extend({
 
 		/* the look */
 		var st = info.settings || {};
+		var fast = E('input', { 'type': 'checkbox', 'aria-label': T('High refresh') });
+		fast.checked = st.fast_panel === 1;
 		function range(min, max, step, value, unit) {
 			var out = E('span', { 'class': 'u30-wp-val' }), inp = E('input', { 'type': 'range', 'min': min, 'max': max, 'step': step, 'value': value });
 			var paint = function() { out.textContent = inp.value + (unit || ''); };
@@ -456,11 +539,23 @@ return view.extend({
 		var glass = range(0, 100, 5, st.glass != null ? st.glass : 50, '%'), blur = range(0, 100, 5, st.blur != null ? st.blur : 50);
 		var dim = range(0, 90, 5, st.dim != null ? st.dim : 30, '%');
 		var tint = E('select', { 'class': 'cbi-input-select' }, TINTS.map(function(t) { return opt(t, st.tint || 0); }));
-		var live = E('select', { 'class': 'cbi-input-select' }, LIVE.map(function(t) { return opt(t, st.live != null ? st.live : 2); }));
+        var pages = st.pages != null ? st.pages : (st.live === 0 ? 0 : st.live === 1 ? 1 : 3), boxes = [];
+        function scene(bit, label) {
+            var box = E('input', { 'type': 'checkbox', 'value': String(bit) });
+            box.checked = bit === ALL_SCENES ? pages === ALL_SCENES : !!(pages & bit);
+            return { box: box, el: E('label', { 'class': 'u30-wp-scene' }, [ box, E('span', {}, label) ]) };
+        }
+        var all = scene(ALL_SCENES, T('Everywhere'));
+        SCENES.forEach(function(t) { boxes.push(scene(t[0], t[1])); });
+        function mask() { return boxes.reduce(function(m, b) { return b.box.checked ? m | +b.box.value : m; }, 0); }
+        all.box.addEventListener('change', function() { boxes.forEach(function(b) { b.box.checked = all.box.checked; }); });
+        boxes.forEach(function(b) { b.box.addEventListener('change', function() { all.box.checked = mask() === ALL_SCENES; }); });
+        var live = E('fieldset', { 'class': 'u30-wp-scenes', 'aria-label': T('Play the live wallpaper on') },
+            [ all.el ].concat(boxes.map(function(b) { return b.el; })));
 		var save = E('button', { 'type': 'button', 'class': 'mud-btn on', 'click': function() {
 			if (working) return;
 			setBusy(true, T('Saving…'));
-			return callSet(+dim.input.value, +glass.input.value, +blur.input.value, +tint.value, +live.value).then(check).then(function() {
+			return callSet(+dim.input.value, +glass.input.value, +blur.input.value, +tint.value, mask(), fast.checked ? 1 : 0).then(check).then(function() {
 				notify('Saved; the screen shows it now.', 'success');
 			}).catch(function(e) { notify(e.message, 'error'); }).finally(function() { setBusy(false); describe(); });
 		} }, T('Save'));
@@ -493,6 +588,10 @@ return view.extend({
 .mud-wallpaper .u30-wp-range{display:flex;align-items:center;gap:12px;max-width:420px;min-height:40px}
 .mud-wallpaper input[type=range]{flex:1;min-width:0;width:100%;accent-color:var(--brand,var(--primary-color-high,#2f7bf6));margin:0}
 .mud-wallpaper .u30-wp-val{min-width:44px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600}
+.mud-wallpaper .u30-wp-scenes{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:10px 16px;min-width:0;margin:0;padding:0;border:0}
+.mud-wallpaper .u30-wp-scene{display:flex;align-items:flex-start;gap:8px;min-width:0;line-height:1.5;cursor:pointer;overflow-wrap:anywhere}
+.mud-wallpaper .u30-wp-scene input{flex:none;margin:4px 0 0;accent-color:var(--brand,var(--primary-color-high,#2f7bf6))}
+.mud-wallpaper .u30-wp-scenes:disabled{opacity:.65}
 .mud-wallpaper .u30-wp-status{line-height:1.6;overflow-wrap:anywhere}
 .mud-wallpaper .u30-wp-status.busy:before{content:'';display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:-2px;border:2px solid var(--hairline,#ccc);border-top-color:var(--brand,#2f7bf6);border-radius:50%;animation:u30-wp-spin .8s linear infinite}
 @keyframes u30-wp-spin{to{transform:rotate(360deg)}}
@@ -509,11 +608,12 @@ return view.extend({
 				file
 			], T('A picture or the first seconds of a video, cut to the round screen from the middle. The conversion runs in this browser.')),
 			card(T('Glass'), [
+				row(T('High refresh'), fast, T("Use 96 MHz during swipes and high frame rate wallpapers, returning to the stock 48 MHz when idle. Up to about 53 fps; off by default. This exceeds the panel's stock clock. Turn it off if you see specks, shifted lines or wrong colours.")),
 				row(T('Glass transparency'), glass.el),
 				row(T('Glass blur'), blur.el),
 				row(T('Glass colour'), tint),
 				row(T('Darken the wallpaper'), dim.el),
-				row(T('Play the live wallpaper on'), live, T('It plays while the page is still and stops on a touch; elsewhere the frame it stopped at stays the wallpaper.')),
+				row(T('Play the live wallpaper on'), live, T('It plays on selected scenes while the screen is still and pauses on a touch, swipe or scrolling list. Playback uses additional CPU and battery; unselected scenes keep a still frame.')),
 				E('div', { 'class': 'u30-wp-btns' }, save)
 			], T('The same settings are on the screen under Functions > Display once a wallpaper is set.'))
 		]);

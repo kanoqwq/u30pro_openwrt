@@ -27,6 +27,11 @@ cd u30pro_openwrt
 sudo python3 tools/build-release.py build --workspace "$HOME/openwrt-build" --jobs 4 --label public-build
 ```
 
+默认构建 U30 Pro。F50 Pro（MU3356）使用同一仓库的独立机型配置，命令增加
+`--profiles f50pro-6.12`；两款顺序构建使用 `--profiles all`。
+F50 Pro 的实机验收状态见 [F50PRO-PORTING.zh-CN.md](F50PRO-PORTING.zh-CN.md)，
+源码／构建入口接入不代表全部硬件已经验收。
+
 默认工作区为 `~/openwrt-build`。首次构建需要下载、解压及编译依赖；后续使用同一
 工作区增量构建，不再复制 Linux 源码、SDK 或根文件系统。最终 ZIP 和 SHA-256
 位于仓库 `release/`，日志位于 `out/build-logs/`，最新状态位于

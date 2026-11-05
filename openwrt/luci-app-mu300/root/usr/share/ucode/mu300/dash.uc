@@ -77,7 +77,7 @@ export function power() {
     for(let name in names) {
         if(seen[name])continue; seen[name]=true;
         let p=base+'/'+name, kind=rd(p+'/type');
-        if(model!='f50' && model!='v50' && !battery &&
+        if(model!='f50' && model!='v50' && rd('/etc/mu300/model')!='f50pro' && !battery &&
            (name=='battery' || name=='sc27xx-fgu' || kind=='Battery') &&
            rd(p+'/present')!='0') {
             let raw=rd(p+'/capacity'), cap=match(raw,/^[0-9]+$/)?+raw:null;
@@ -129,9 +129,10 @@ function clients(dev,bus,leases) {
     if(!length(rows)) {
         let associated=call(bus,'hostapd.'+dev,'get_clients').clients;
         if(associated!=null && dump==null)dump=[];
-        for(let mac in associated || {}) {
-            mac=lc(mac);
-            if(!match(mac,/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/))continue;
+        for(let original,client in type(associated)=='object'?associated:{}) {
+            let mac=lc(original);
+            if(!match(mac,/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/) ||
+               !(client?.assoc===true || client?.assoc===1))continue;
             let lease=leases[mac] || {};
             push(rows,{mac,host:lease.host,ip:lease.ip,signal:null,tx:null,rx:null,conn:null});
         }
@@ -225,6 +226,9 @@ function snapshot(slot,bus,settings) {
         else if(mobile==cfg('sim1_device','sipa_eth8'))active_slot='1';
     }
     if(exists('/run/mu300/sim-active-unknown'))active_slot='';
+    // The view selection scopes the traffic ledger too. A no-slot caller
+    // follows the actual data card, never an unconditional SIM 1 snapshot.
+    let traffic_slot=slot in ['0','1']?slot:active_slot in ['0','1']?active_slot:data_slot;
     let selection=apn.status(c,obj('/run/unisoc-apn-sim'+data_slot+'.json') || {}), selected_apn=null;
     if(selection.ok && (slot==null || ''+selection.data_sim==slot) && selection.source in ['sim','auto','network','default'] &&
        type(selection.apn)=='string' && length(selection.apn)<=100 && !match(selection.apn,/[^A-Za-z0-9.-]/))
@@ -248,14 +252,14 @@ function snapshot(slot,bus,settings) {
             ip4:wan['ipv4-address']?.[0]?.address ?? null,ip6:address(rows6,mobile,true),dns:text(join(', ',dns))},
         wifi:{available:wifi.available?1:0,enabled:wifi.enabled?1:0,pending:wifi.pending?1:0,section:text(wifi.section),radio:text(wifi.radio),
             error:text(wifi.error),up:wifi.up && hapd.status=='ENABLED' && exists('/sys/class/net/'+wd)?1:0,
-            ssid:text(wifi.ssid),channel:text(wifi.channel),band:text(wifi.band),width:ht?substr(ht,0,2)+' MHz':null,
+            ssid:text(wifi.ssid),channel:text(wifi.channel),band:text(wifi.band),width:ht?ht+' MHz':null,
             country:text(wifi.country),enc:wifi.enc || 'none',hidden:wifi.hidden ?? null,hostapd:hapd.status=='ENABLED'?1:0,
             clients:stations.rows,clients_n:stations.count},
         lan:{leases:length(leases),ip:address(rows4,lan,false),list:leases},
         modem:{data_sim:active_slot in ['0','1']?int(active_slot):null,alive:atd || (urc && now-urc.mtime<240)?1:0,atd:atd?1:0,data_paused:exists('/run/mu300-mobile-data-down')?1:0,
             imeis:equipment(atd,cfg('sim_slots','1')),sims:map(['0','1'],n=>({slot:int(n),state:atd?sim_state(n):'unknown'}))},
         boot:boot(),capabilities:{dualboot:executable('/opt/mu300/bin/mu300-next-boot')?1:0},
-        conns:conntrack(),traffic:obj('/run/unisoc-modem-traffic/view.json')};
+        conns:conntrack(),traffic:obj('/run/unisoc-modem-traffic/'+(traffic_slot=='1'?'sim1/':'')+'view.json')};
 };
 export function info(slot,bus,settings) {
     return with_bus(bus,b=>snapshot(slot,b,settings));
@@ -271,6 +275,11 @@ export function status(slot,cells,bus,settings) {
     let c=settings || cursor(CONFIG);
     if(!(slot in ['0','1']) || (slot=='1' && c.get('unisoc_modem','main','sim_slots')!='2'))return {error:'SIM 卡槽不可用'};
     let dir='/tmp/unisoc-modem'+(slot=='1'?'/sim1':''), cage=age(dir+'/cell.json'), sage=age(dir+'/sig.json');
+    let cell=obj(dir+'/cell.json'), sig=obj(dir+'/sig.json');
+    // The unscoped compatibility API can publish the active data SIM in the
+    // legacy path. A producer-supplied card ID must agree with this view.
+    if(cell?.card!=null && cell.card!=int(slot)) { cell=null; cage=-1; }
+    if(sig?.card!=null && sig.card!=int(slot)) { sig=null; sage=-1; }
     let busy=exists('/run/unisoc-modem-lock-apply') || exists('/run/unisoc-data-sim-switch') || owner(dir+'/collect.lck');
     let fast=busy || owner(dir+'/fast.lck'), failed=false;
     let mode=cage<0 || cage>=5?'full':sage<0 || sage>=1?'fast':null;
@@ -279,8 +288,8 @@ export function status(slot,cells,bus,settings) {
         failed=!r?.started && !r?.busy;
         if(mode=='full' && (r?.started || r?.busy))busy=true;
     }
-    return {info:cells?null:info(slot,bus,c),cell:failed?{error:'Unable to read cellular status'}:obj(dir+'/cell.json'),
-        sig:failed?{error:'Unable to read cellular status'}:obj(dir+'/sig.json'),cell_age:cage,sig_age:sage,refreshing:busy?1:0};
+    return {info:cells?null:info(slot,bus,c),cell:failed?{error:'Unable to read cellular status'}:cell,
+        sig:failed?{error:'Unable to read cellular status'}:sig,cell_age:cage,sig_age:sage,refreshing:busy?1:0};
 };
 
 export function sms_head(slot) {

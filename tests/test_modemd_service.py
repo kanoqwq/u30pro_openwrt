@@ -61,10 +61,11 @@ class ModemdService(ShellTest):
             p=self.sh(shell,self.code+'modemd_single_layout',DEVICE='u30pro',SLOTS='1')
             self.assertEqual(p.returncode,0,p.stderr)
             specs=[line for line in p.stdout.splitlines() if line.startswith('append:')]
-            self.assertEqual(len(specs),2,p.stdout)
+            self.assertEqual(len(specs),4,p.stdout)
             self.assertIn('dev=/dev/stty_nr2,',specs[0])
             self.assertIn('dev=/dev/stty_nr0,',specs[1])
             self.assertTrue(all('urc=,live=' in row and 'reopen=0,ready=' in row for row in specs))
+            self.assertIn('dev=/dev/stty_nr6,',specs[2]);self.assertIn('dev=/dev/stty_nr7,',specs[3])
             self.assertNotIn('set:<respawn>',p.stdout.split('instance:modemd')[0])
 
     def test_missing_native_runtime_fails_instead_of_selecting_an_old_owner(self):
@@ -78,10 +79,10 @@ class ModemdService(ShellTest):
             p=self.sh(shell,self.code+'modemd_single_layout',DEVICE='u30pro',SLOTS='2')
             self.assertEqual(p.returncode,0,p.stderr)
             specs=[line for line in p.stdout.splitlines() if line.startswith('append:')]
-            self.assertEqual(len(specs),4,p.stdout)
-            for row,n in zip(specs,[2,0,5,3]):self.assertIn(f'dev=/dev/stty_nr{n},',row)
+            self.assertEqual(len(specs),6,p.stdout)
+            for row,n in zip(specs,[2,0,5,3,6,7]):self.assertIn(f'dev=/dev/stty_nr{n},',row)
             self.assertIn('dir='+str(self.tmp/'run/mu300-at4'),specs[2])
-            self.assertIn('live='+str(self.tmp/'run/mu300-at5/urc/stty_nr3.log'),specs[2])
+            self.assertIn('live='+str(self.tmp/'run/mu300-at2/urc/stty_nr0.log'),specs[2])
 
     def test_existing_physical_owner_requires_reboot(self):
         owner=self.tmp/'run/mu300-at/owner/pid'

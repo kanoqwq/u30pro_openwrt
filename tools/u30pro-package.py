@@ -24,6 +24,7 @@ import tarfile
 
 TOP = Path(__file__).resolve().parents[1]
 NATIVE = TOP / 'devices/u30pro/native'
+MODEL = runpy.run_path(str(TOP/'tools/ums9632-profile.py'))['selected']()
 _, WORK, LAYOUT = runpy.run_path(str(TOP/'tools/build-settings.py'))['settings']()
 STAGE = WORK / 'package-work/u30pro-release'
 ROOT = STAGE / 'root'
@@ -209,6 +210,17 @@ def sources(refresh=False):
     for p in (plugin / 'lmo').glob('*.lmo'):
         shutil.copyfile(p, translations / p.name)
     copy_tree(TOP / 'devices/u30pro/overlay', ROOT)
+    copy_tree(TOP / 'devices/f50pro/overlay', ROOT)
+    # Both Pro products now use the same pre-CP entry, with separate mux maps.
+    (ROOT/'usr/sbin/f50pro-sim-preinit').unlink(missing_ok=True)
+    # Superseded by the LED owner's kernel link subscription, not a second
+    # early hotplug refresh which races AP startup.
+    (ROOT/'etc/hotplug.d/net/96-f50pro-leds').unlink(missing_ok=True)
+    (ROOT/'etc/mu300/model').write_text(MODEL['id']+'\n')
+    if not MODEL['screen']:
+        (ROOT/'usr/share/luci/menu.d/u30pro-wallpaper.json').unlink(missing_ok=True)
+    if MODEL['id']!='f50pro':
+        (ROOT/'etc/modules.d/61-f50pro-leds').unlink(missing_ok=True)
     # Native screen extensions keep their public RPC/module names. Only their
     # persistent directory and hardware actions are adapted, not the protocol.
     native_files = {
@@ -239,6 +251,8 @@ def sources(refresh=False):
     shutil.copyfile(transport, ROOT / 'opt/mu300/bin/mu300-atd-io')
     (ROOT / 'opt/mu300/bin/mu300-atd-io').chmod(0o755)
     runtime = json.loads((RUNTIME / 'runtime.json').read_text())
+    if set(runtime.get('files', {})) != set(runpy.run_path(str(TOP/'tools/u30pro-runtime.py'))['SOURCES']):
+        raise ValueError('Hardware runtime helpers incomplete; run tools/u30pro-runtime.py')
     for name, row in runtime['files'].items():
         path = RUNTIME / name
         if digest(path) != row['sha256']:
@@ -319,7 +333,7 @@ def sources(refresh=False):
     config = ROOT / 'etc/config/u30pro_native_control'
     config.write_text("config control 'settings'\n\toption home_short_action 'page-next'\n\toption home_long_action 'none'\n\toption wifi_admin '1'\n")
     (STAGE / 'state.json').write_text(json.dumps({'base': BASE_SHA, 'step': 'sources-installed'}))
-    print('MU300 root sources and U30 Pro hardware installed: ' + str(ROOT))
+    print('Shared UMS9632 sources installed for '+MODEL['label']+': ' + str(ROOT))
 
 
 def refresh_sources():
@@ -380,12 +394,15 @@ def finish():
     owned()
     if json.loads((STAGE/'state.json').read_text())['step'] != 'sources-installed':
         raise ValueError('Apply current sources before root finalization')
+    runpy.run_path(str(TOP/'tools/stage-ra-renew.py'))['stage'](ROOT)
     bb = ROOT / 'opt/mu300/bin/busybox'
     shutil.copyfile(LAYOUT['busybox'], bb); bb.chmod(0o755)
     applets = target('/target/opt/mu300/bin/busybox --list').splitlines()
     busybox_aliases(ROOT, applets)
     etc = ROOT / 'etc/mu300'; etc.mkdir(exist_ok=True)
-    (etc/'hotspot.conf').write_text('SSID=U30Pro-OpenWrt\nPSK=openwrt1234\nBAND=5\nCHANNEL=36\nCOUNTRY=CN\n')
+    if (etc/'model').read_text().strip()!=MODEL['id']:
+        raise ValueError('Prepared root product differs; run sources for the selected profile first')
+    (etc/'hotspot.conf').write_text('SSID='+MODEL['hostname']+'-OpenWrt\nPSK=openwrt1234\nBAND=5\nCHANNEL=36\nCOUNTRY=CN\n')
     (etc/'default-boot').write_text('android\n')
     (ROOT/'etc/inittab').write_text('::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\nttyGS0::askfirst:/usr/libexec/login.sh\n')
     password = subprocess.check_output(['openssl','passwd','-6','-salt','u30pro','root'], text=True).strip()
@@ -395,6 +412,7 @@ def finish():
     defaults = ROOT/'etc/uci-defaults/99-u30pro'
     defaults.write_text("#!/bin/sh\nuci set system.@system[0].hostname='U30Pro'\nuci set system.@system[0].zonename='Asia/Shanghai'\nuci set system.@system[0].timezone='CST-8'\nuci set unisoc_modem.main.at_port='/dev/stty_nr2'\nuci set unisoc_modem.main.sim_slots='2'\nuci set unisoc_modem.main.platform_defaults='u30pro'\nuci set luci.main.lang='zh_cn'\nuci commit system\nuci commit unisoc_modem\nuci commit luci\nexit 0\n")
     defaults.chmod(0o755)
+    defaults.write_text(defaults.read_text().replace("hostname='U30Pro'", "hostname='"+MODEL['hostname']+"'"))
     target("zone=$(uci -c /target/etc/config show firewall | sed -n \"s/^firewall\\.\\([^.=]*\\)\\.name='wan'$/\\1/p\"); "
            "[ -n \"$zone\" ]; uci -c /target/etc/config -q del_list firewall.$zone.network=wwan || true; "
            "uci -c /target/etc/config add_list firewall.$zone.network=wwan; uci -c /target/etc/config commit firewall")
@@ -406,8 +424,23 @@ def finish():
         'mu300-atd','mu300-smsd','mu300-network-recovery','mu300-accounts','mu300-user-packages','ttyd',
         'mu300-ndp','mu300-charge','u30pro-battlog','u30pro-panel','mu300-post','unisoc-modem-ui',
         'unisoc-cpu','unisoc-cpu-cores','unisoc-network-performance','unisoc-sms-forward',
-        'unisoc-traffic','unisoc-ttl','u30pro-nfc')
+        'unisoc-traffic','unisoc-ttl','u30pro-nfc','unisoc-ra-renew')
     rc = ROOT/'etc/rc.d'; rc.mkdir(exist_ok=True)
+    if MODEL['id']=='f50pro':
+        selected+=('f50pro-leds','f50pro-led-ready','f50pro-buttons')
+    else:
+        for name in ('f50pro-leds','f50pro-led-ready','f50pro-buttons'):
+            for link in rc.glob('[SK][0-9][0-9]'+name):
+                if link.is_symlink() and os.readlink(link)=='../init.d/'+name:link.unlink()
+    if not MODEL['screen'] or not MODEL['battery']:
+        disabled=set()
+        if not MODEL['screen']: disabled.add('u30pro-panel')
+        if not MODEL['battery']: disabled.update(('u30pro-battlog','mu300-charge'))
+        selected=tuple(name for name in selected if name not in disabled)
+        for service in disabled:
+            for link in rc.glob('[SK][0-9][0-9]'+service):
+                if link.is_symlink() and os.readlink(link)=='../init.d/'+service:
+                    link.unlink()
     for name in ('S09mu300-vendor', 'S15mu300-wifi-client'):
         old=rc/name
         if old.is_symlink() and os.readlink(old)=='../init.d/'+name[3:]:old.unlink()
@@ -427,8 +460,11 @@ def finish():
         "uci set luci.main.mediaurlbase='/luci-static/aurora'\nuci commit luci\nexit 0\n"))
     patched=STAGE/'shared-patches.json'
     applied=json.loads(patched.read_text()) if patched.is_file() else {}
-    for name, relative in (('fw4-sipa-offload.patch','usr/share/ucode/fw4.uc'),
-                           ('wifi-scripts-no-dfs.patch','usr/share/ucode/wifi/hostapd.uc')):
+    # Migrate the previous fixed-SIPA patch through the reviewed source transform.
+    runpy.run_path(str(TOP/'tools/stage-flow-offload.py'))['stage'](ROOT)
+    if applied.pop('fw4-sipa-offload.patch', None) is not None:
+        patched.write_text(json.dumps(applied,indent=2)+'\n')
+    for name, relative in (('wifi-scripts-no-dfs.patch','usr/share/ucode/wifi/hostapd.uc'),):
         source=TOP/'openwrt/patches'/name; file=ROOT/relative
         before=applied.get(name)
         if before:
@@ -446,7 +482,7 @@ def finish():
     bad = [p for p in ROOT.rglob('*') if p.is_file() and p.name in ('xray','sing-box','singbox','openvpn')]
     if bad: raise ValueError('Unexpected bundled VPN engine')
     (STAGE/'state.json').write_text(json.dumps({'base':BASE_SHA,'step':'root-ready'}))
-    print('U30 Pro root ready; MU300 services, native display/CP/USB, no reference updater')
+    print(MODEL['label']+' root ready; shared modem/USB, screen='+str(MODEL['screen'])+', battery='+str(MODEL['battery']))
 
 
 def canonical_boot():
@@ -475,6 +511,7 @@ def canonical_boot():
         'usr/sbin/u30pro-nodes':RUNTIME/'u30pro-nodes',
         'usr/sbin/u30pro-usb':NATIVE/'ui/native-control/overlay/usr/sbin/u30pro-usb'}.items():
         files[name] = (path.read_bytes().replace(b'\r\n',b'\n') if name != 'bin/busybox' and path.read_bytes().startswith(b'#!') else path.read_bytes(), stat.S_IFREG|0o755)
+    files['etc/mu300-model'] = ((MODEL['id']+'\n').encode(),stat.S_IFREG|0o644)
     ram = builder['lz4_legacy'](builder['cpio_archive']({'dev','proc','sys','run','tmp','disk','newroot'},files))
     stock = (paths['boot_templates']/'boot.img').read_bytes()
     header = bytearray(stock[:4096]); kernel = wrapped.read_bytes()
@@ -497,6 +534,7 @@ def boot_smoke(package_root):
     native=load('native_package_containers',package_root/'desktop/native_u30pro.py')
     parser=load('native_package_metadata',TOP/'installer/runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/boot.py')
     base=(package_root/'payload/boot-linux.img').read_bytes()
+    assert base[44:55]==b'loglevel=5\0'
     # Maintenance starts from the canonical payload, not the installation-bound
     # boot. Prove its early init dependencies are present before releasing it.
     from backend.uninstall_boot import build as uninstall_boot
@@ -527,10 +565,27 @@ def boot_smoke(package_root):
         assert b'U30PRO-MU300 storage bootstrap' in metadata['init'][0]
         assert metadata['etc/u30pro-boot-wait.sh'][0] == (TOP/'devices/u30pro/boot-wait.sh').read_bytes().replace(b'\r\n', b'\n')
         outputs=native.images(package_root,image,templates)
+        assert outputs['boot'][44:1580]==base[44:1580], 'Native binding lost product kernel parameters'
+        args=outputs['vendor_boot'][28:2076].split(b'\0',1)[0]
+        if MODEL['id']=='f50pro':
+            assert b'u30pro_sim_mux.layout=mu3356' in args
+            assert b'u30pro_ump965x_fgu.battery_present=0' in args
+            assert b'f50pro_external_power_only=1' in args
+        else:
+            assert b'layout=mu3356' not in args
         proof.append({'android_slot':slot,'linux_slot':'b' if slot=='a' else 'a','mode':mode,
             'images':{name:hashlib.sha256(data).hexdigest() for name,data in outputs.items()}})
         print('Packaged boot/stock-DTB/slot smoke: '+slot+' -> '+mode,flush=True)
     (package_root/'docs/BOOT-SMOKE.json').write_text(json.dumps({'device_writes':False,'cases':proof},indent=2)+'\n')
+
+
+def root_archive_member(member):
+    # A retained build root may have been used for isolated chroot tests.
+    # Runtime state belongs to the next boot, never to a distributable image.
+    parts = PurePosixPath(member.name).parts
+    if len(parts) > 1 and parts[0] in ('tmp', 'run'):
+        return None
+    return member
 
 
 def package():
@@ -555,18 +610,21 @@ def package():
     runpy.run_path(str(TOP/'installer/package_android.py'))['artifact'](selected['OPENWRT_GUI_ANDROID_ARTIFACT'])
     canonical_boot()
     report = json.loads((KERNEL/'u30pro-build.json').read_text())
-    release = runpy.run_path(str(TOP/'tools/release-identity.py'))['identify'](TOP,'u30pro',report['version'])
+    if (ROOT/'etc/mu300/model').read_text().strip()!=MODEL['id']:
+        raise ValueError('Prepared root product differs from requested release')
+    release = runpy.run_path(str(TOP/'tools/release-identity.py'))['identify'](TOP,MODEL['id'],report['version'])
+    release['android_models']=MODEL['android_models']
     release['distribution'] = 'full-installer'
     release['storage_layout'] = 'mu300root-container'
     release['hardware_reference'] = json.loads((TOP/'devices/u30pro/profile.json').read_text())['hardware_reference']['commit']
     (ROOT/'etc/mu300/release.json').write_text(json.dumps(release,indent=2)+'\n')
     (ROOT/'etc/mu300/image-version').write_text(release['image_version']+'\n')
-    (ROOT/'etc/unisoc-ota/current.json').write_text(json.dumps({'family':'mu300','profile':'u30pro',
+    (ROOT/'etc/unisoc-ota/current.json').write_text(json.dumps({'family':'mu300','profile':MODEL['id'],
         'version':release['image_version'],'kernel_release':report['version']})+'\n')
     package_root.mkdir()
     # Only one root archive and one canonical boot in the distribution.
     with tarfile.open(package_root/'mu300-openwrt.tar.gz','w:gz',compresslevel=3,dereference=False) as archive:
-        for path in sorted(ROOT.iterdir()): archive.add(path,arcname=path.name)
+        for path in sorted(ROOT.iterdir()): archive.add(path,arcname=path.name,filter=root_archive_member)
     shutil.copyfile(STAGE/'boot-linux.img',package_root/'boot-linux.img')
     shutil.copyfile(LAYOUT['busybox'],package_root/'busybox')
     files = {
@@ -579,14 +637,14 @@ def package():
         files[name]=TOP/'tools'/name
     for name,path in files.items(): shutil.copyfile(path,package_root/name)
     shutil.copyfile(ROOT/'opt/mu300/vendor/u30pro/modem/map.tsv',package_root/'u30pro-map.tsv')
-    (package_root/'module.prop').write_text('id=u30pro_openwrt\nname=U30 Pro OpenWrt (desktop installer)\nversion='+release['image_version']+'\nversionCode='+str(release['build_epoch'])+'\nauthor=minikano\ndescription=Extract and use OpenWrt Installer; native boot containers generated per device\n')
+    (package_root/'module.prop').write_text('id='+MODEL['id']+'_openwrt\nname='+MODEL['label']+' OpenWrt (desktop installer)\nversion='+release['image_version']+'\nversionCode='+str(release['build_epoch'])+'\nauthor=minikano\ndescription=Extract and use OpenWrt Installer; native boot containers generated per device\n')
     # A Magisk shell cannot construct U30 Pro's three boot containers. Do not
     # let the legacy MU300 single-boot worker flash an incomplete chain.
-    (package_root/'customize.sh').write_text("#!/system/bin/sh\nabort 'U30 Pro: extract ZIP and use OpenWrt Installer; direct Magisk flashing is not supported.'\n")
+    (package_root/'customize.sh').write_text("#!/system/bin/sh\nabort '"+MODEL['label']+": extract ZIP and use OpenWrt Installer; direct Magisk flashing is not supported.'\n")
     runpy.run_path(str(TOP/'tools/tf-payload-manifest.py'))['manifest'](package_root)
     runpy.run_path(str(TOP/'desktop/package.py'))['assemble'](package_root,Path(LAYOUT['maintenance']),report['version'])
     (package_root/'desktop/release.json').write_text(json.dumps(release,indent=2)+'\n')
-    (package_root/'START-HERE.md').write_text((TOP/'devices/u30pro/START-HERE.md').read_text(),encoding='utf-8')
+    (package_root/'START-HERE.md').write_text((TOP/'devices'/MODEL['id']/'START-HERE.md').read_text(),encoding='utf-8')
     shutil.copyfile(TOP/'docs/U30PRO-INSTALLER-20261102.zh-CN.md',
                     package_root/'docs/U30PRO-INSTALLER-20261102.zh-CN.md')
     shutil.copyfile(TOP/'docs/U30PRO-NFC-20261103.zh-CN.md',
@@ -599,6 +657,8 @@ def package():
     boot_smoke(package_root)
     manifest_path=package_root/'desktop/manifest.json'
     manifest=json.loads(manifest_path.read_text())
+    manifest['product']=MODEL['id']
+    manifest['android_models']=MODEL['android_models']
     for path in package_root.rglob('*'):
         if path.is_file() and path!=manifest_path:
             name=path.relative_to(package_root).as_posix()

@@ -20,6 +20,18 @@ struct u30pro_mux {
 	struct delayed_work changed;
 };
 
+/* Product identity is selected by the release's boot command line, not by a
+ * board number shared across MU5358 and MU3356. Existing images retain MU5358. */
+static char layout[8] = "mu5358";
+module_param_string(layout, layout, sizeof(layout), 0444);
+MODULE_PARM_DESC(layout, "Stock SIM wiring family: mu5358 or mu3356");
+
+static ssize_t layout_show(struct device *dev, struct device_attribute *a, char *buf)
+{
+	return sysfs_emit(buf, "%s\n", layout);
+}
+static DEVICE_ATTR_RO(layout);
+
 /* Parse complete tokens, never a substring or a fixed firmware fingerprint. */
 static int boot_value(const char *args, const char *key, int fallback)
 {
@@ -90,6 +102,7 @@ static DEVICE_ATTR_RW(chip_select);
 static DEVICE_ATTR_RW(psim_select);
 static DEVICE_ATTR_RO(physical_present);
 static struct attribute *mux_attrs[] = {
+	&dev_attr_layout.attr,
 	&dev_attr_chip_select.attr, &dev_attr_psim_select.attr,
 	&dev_attr_physical_present.attr, NULL
 };
@@ -126,6 +139,10 @@ static int mux_probe(struct platform_device *pdev)
 	struct u30pro_mux *m;
 	const char *args = NULL;
 	int board, chip, psim, irq, ret;
+	bool f50pro = !strcmp(layout, "mu3356");
+
+	if (!f50pro && strcmp(layout, "mu5358"))
+		return dev_err_probe(dev, -EINVAL, "Unknown product SIM wiring\n");
 
 	chosen = of_find_node_by_path("/chosen");
 	if (chosen)
@@ -136,6 +153,13 @@ static int mux_probe(struct platform_device *pdev)
 	board = boot_value(args, "androidboot.zte_boardid=", board);
 	chip = boot_value(args, "androidboot.simswitch=", board == 6);
 	psim = boot_value(args, "androidboot.psimswitch=", board == 5 ? 0 : 1);
+	if (f50pro) {
+		/* Actual MU3356 B22 gpio_ctrl_probe/esim_switch_status: simswitch=1
+		 * starts chip LOW; psimswitch=0 starts physical LOW, absent means HIGH.
+		 * These are raw selector levels, not the MU5358 position meanings. */
+		chip = !boot_value(args, "androidboot.simswitch=", 0);
+		psim = boot_value(args, "androidboot.psimswitch=", 1);
+	}
 	of_node_put(chosen);
 	if ((chip != 0 && chip != 1) || (psim != 0 && psim != 1))
 		return dev_err_probe(dev, -EINVAL, "Invalid SIM boot selector\n");
@@ -150,7 +174,8 @@ static int mux_probe(struct platform_device *pdev)
 	m->chip = devm_gpiod_get(dev, "esim2-esim3-switch", chip ? GPIOD_OUT_HIGH : GPIOD_OUT_LOW);
 	if (IS_ERR(m->chip))
 		return dev_err_probe(dev, PTR_ERR(m->chip), "SIM chip selector\n");
-	m->psim = devm_gpiod_get(dev, "soft-psim-switch", psim ? GPIOD_OUT_LOW : GPIOD_OUT_HIGH);
+	m->psim = devm_gpiod_get(dev, "soft-psim-switch",
+		(f50pro ? psim : !psim) ? GPIOD_OUT_HIGH : GPIOD_OUT_LOW);
 	if (IS_ERR(m->psim))
 		return dev_err_probe(dev, PTR_ERR(m->psim), "SIM physical selector\n");
 	platform_set_drvdata(pdev, m);

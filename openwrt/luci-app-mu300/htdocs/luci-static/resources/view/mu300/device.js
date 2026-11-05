@@ -3,6 +3,7 @@
 'require mu300.common as M';
 'require mu300.network-performance as NetworkPerformance';
 'require mu300.nfc as NFC';
+'require mu300.buttons as Buttons';
 
 return view.extend({
 	load: function() { return L.resolveDefault(M.callUsbGet(), {}); },
@@ -74,12 +75,14 @@ return view.extend({
 		this.refreshAdapters();
 		this._networkPerformance = NetworkPerformance.mount(root);
 		this._nfc = NFC.mount(root);
+		this._buttons = Buttons.mount(root);
 		return root;
 	},
 	q: function(id) { return this.root.querySelector('#mud-usb-' + id); },
 	unload: function() {
 		if (this._networkPerformance) this._networkPerformance.dispose();
 		if (this._nfc) this._nfc.dispose();
+		if (this._buttons) this._buttons.dispose();
 		this._disposed = true; this._epoch++;
 		this._timers.forEach(clearTimeout); this._timers.clear();
 		if (this._toast) this._toast.close();
@@ -115,6 +118,7 @@ return view.extend({
 		this.q('link-speed').textContent = link.state === 'connected' && rates.length ? rates.join(' · ') : M.translate(link.state === 'disconnected' ? '链路未连接' : '未能确认');
 		this.q('link-speed').title = M.translate('当前协商的 USB 数据链路速率，不代表实时传输速度；接入扩展坞时显示与扩展坞的链路。');
 		this.q('role').querySelector('option[value="host"]').disabled = s.host_supported === 0;
+		this.q('role').querySelector('option[value="host"]').textContent=M.translate(s.external_power_only?'主机模式（外部供电）':'主机模式');
 		if (fill !== false) {
 		this.q('role').value = native && /^(auto|host|device)$/.test(s.role_policy || '') ? s.role_policy : s.role === 'host' || s.role_auto ? 'host' : 'device';
 		this.q('role-auto').checked = native ? !!s.role_persist : !!s.role_auto;
@@ -147,6 +151,7 @@ return view.extend({
 		this.q('role-apply').addEventListener('click', function() {
 			var role = self.q('role').value, auto = self.q('role-auto').checked ? '1' : '0';
 			var warning = self.state.role_native ? (role === 'auto' ? '按连接的充电器、控制设备或 OTG 外设自动选择 USB 角色，管理连接可能短暂中断。' : role === 'host' ? '切换主机模式会断开 USB 网络和串口。请使用 Wi-Fi 管理，接入 OTG 外设后会由 Type-C 控制器供电。' : '切回设备模式后 USB 网络和串口会重新枚举。') : role === 'host' ? '切换主机模式会立即断开 USB 管理连接。F50 没有电池，外设可能需要自供电；请确认有其他管理途径。' : '切回设备模式后 USB 网络和串口会重新枚举。';
+			if(self.state.external_power_only && role==='host')warning='F50 Pro 主机模式需要带外部供电的扩展坞，设备不会向外设供电。USB 网络和串口会断开，请使用 Wi-Fi 管理。';
 			self.confirm('确认切换 USB 角色？', warning, { danger: role === 'host', okText: '应用' }, function() {
 				return self.perform('role', self.q('role-apply'), function() { return M.callUsbSet('role', role, '', auto); }, function(r, msg) {
 					if (!r || r.ok !== 1) { msg.update(r && r.ok === 0 ? '切换失败：' + (r.error || '未知错误') : '管理连接已中断；请重新连接后确认 USB 角色。', r && r.ok === 0 ? 'error' : 'info'); return; }

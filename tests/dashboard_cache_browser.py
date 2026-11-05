@@ -13,7 +13,8 @@ with sync_playwright() as pw:
     browser=pw.chromium.launch(executable_path='C:/Program Files/Google/Chrome/Application/chrome.exe')
     page=browser.new_page(viewport={'width':390,'height':844})
     errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-    page.set_content('<main></main>')
+    page.route('http://sim-cache.test/**', lambda route: route.fulfill(content_type='text/html', body='<main></main>'))
+    page.goto('http://sim-cache.test/')
     page.evaluate('''([source,sharedSource])=>{
         window.neighborPaints=0;
         const shared=new Function('rpc','baseclass','L',sharedSource)(
@@ -111,7 +112,18 @@ with sync_playwright() as pw:
         show({info:simInfo('absent'),cell:{...full,ts:223,cfun:0,ident:{imei:'cold-imei',model:'cold-model',fw:'cold-fw'}},sig:null});
         check(text('imei1')==='cold-imei' && text('fw')==='cold-fw','a fresh no-SIM page must render newly read equipment identity');
         check(document.querySelector('#mud-rat').firstChild.nodeValue==='未插卡','equipment identity must not fabricate registration');
-        return {recovery:true,partial_recovery:true,older_signal_rejected:true,
+        const traffic={slot:1,clock_ok:true,updated_at:100,today_used:12000000,month_used:99000000,remaining:501000000,plan_name:'External SIM1'};
+        show({info:{ts:101,modem:{alive:1,atd:1},traffic},cell:{...full,card:1},sig:null});
+        check(text('tr-day')!=='0 B' && text('tr-month')!=='0 B','selected ledger paints nonzero daily and monthly traffic');
+        check(text('tr-plan')==='套餐剩余 · External SIM1','plan label follows the same ledger');
+        show({info:{ts:102,modem:{alive:1,atd:1},traffic:{...traffic,plan_name:'Renamed <plan>',remaining:null}},cell:{...full,card:1},sig:null});
+        check(text('tr-left')==='不限量' && text('tr-plan')==='套餐剩余 · Renamed <plan>','plan name is separate from unlimited allowance');
+        check(!document.querySelector('#mud-tr-plan plan'),'plan name must be plain text');
+        show({info:{ts:102,modem:{alive:1,atd:1},traffic:{...traffic,plan_name:'X'.repeat(128)}},cell:{...full,card:1},sig:null});
+        check(document.querySelector('#mud-tr-plan').scrollWidth<=document.querySelector('#mud-tr-plan').clientWidth,'a long plan name must wrap inside its card');
+        show({info:{ts:200,modem:{alive:1,atd:1},traffic},cell:{...full,card:1},sig:null});
+        check(text('tr-day')==='--' && text('tr-month')==='--' && text('tr-plan')==='套餐剩余','stale ledger is not retained');
+        return {traffic_and_plan:true,recovery:true,partial_recovery:true,older_signal_rejected:true,
             same_sim_details_preserved:true,sim_isolation:true,real_failures_visible:true,input_immutable:true};
     }''')
     assert not errors,errors

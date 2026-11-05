@@ -14,6 +14,8 @@ mount -t debugfs debugfs /sys/kernel/debug
 log() { echo "<3>MU300-LINUX: $*" > /dev/kmsg; echo "$*" >> /run/stages; }
 NET=192.168.77
 log 'stage=init platform=u30pro'
+model=$(cat /etc/mu300-model 2>/dev/null)
+case $model in ''|u30pro) model=u30pro ;; f50pro) ;; *) log 'unknown product profile'; exec sh ;; esac
 android_slot=$(cat /etc/mu300-android-slot 2>/dev/null)
 case $android_slot in a) linux_slot=b ;; b) linux_slot=a ;; *) log 'unconfirmed Android slot'; exec sh </dev/console >/dev/console 2>&1 ;; esac
 misc=
@@ -62,6 +64,8 @@ desktop_storage_start || rescue 'offline installation failed'
 log 'stage=mount-root'
 desktop_mount_root || rescue 'root filesystem unavailable'
 [ -x /disk/openwrt/sbin/init ] || rescue 'OpenWrt init missing'
+root_model=$(cat /disk/openwrt/etc/mu300/model 2>/dev/null)
+case $model:$root_model in u30pro:|u30pro:u30pro|f50pro:f50pro) ;; *) rescue 'boot/root product mismatch';; esac
 mount --bind /disk/openwrt /newroot || exec sh
 mkdir -p /newroot/mnt/mu300-disk
 mount --move /disk /newroot/mnt/mu300-disk

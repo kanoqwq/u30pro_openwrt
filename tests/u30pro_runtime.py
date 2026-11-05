@@ -49,13 +49,15 @@ class Runtime(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root=Path(folder)
             for name in ('sdio_mode','sdio_max_hz'):(root/name).touch()
-            for mode,hz,want in (('', '',True),('1','100000000',True),('9','208000000',False),('2','bad',False)):
+            for mode,hz,want in (('', '',True),('1','100000000',True),('2','204800000',True),
+                                ('2','208000000',True),('9','208000000',False),
+                                ('2','208000001',False),('2','bad',False)):
                 script='uci() { case "$*" in *sdio_mode) echo "'+mode+'";; *) echo "'+hz+'";; esac; }\n'+text
                 result=subprocess.run(['sh','-c',script],env=dict(os.environ,U30PRO_SDIO_PARAMS=str(root)),capture_output=True,text=True)
                 self.assertEqual(result.returncode==0,want,result.stderr)
                 if want:
                     self.assertEqual((root/'sdio_mode').read_text().strip(),mode or '2')
-                    self.assertEqual((root/'sdio_max_hz').read_text().strip(),hz or '208000000')
+                    self.assertEqual((root/'sdio_max_hz').read_text().strip(),str(min(int(hz or '204800000'),204800000)))
         factory=(OVERLAY/'etc/init.d/u30pro-factory').read_text()
         self.assertIn('START=08\n',factory, 'rc.common must generate S08, not late-sorted S8')
         self.assertLess(factory.index('u30pro-wifi-sdio'),factory.index('u30pro-factory-wifi'))

@@ -26,7 +26,7 @@ static const Theme themes[] = {
 
 /* ------------------------------------------------------------------ data model */
 typedef struct { char name[32]; char ip[24]; int rssi; } Client;
-typedef struct { char addr[28]; char ts[28]; int unread; char text[420]; } Sms;
+typedef struct { char addr[28]; char ts[28]; int unread; char text[420]; char id[24]; } Sms;
 
 typedef struct {
 	time_t now;
@@ -36,8 +36,8 @@ typedef struct {
 	char bat_status[20];
 	float bat_v, bat_a, bat_temp, bat_full_mah, bat_now_mah;
 	float bat_i;		/* battery current with its sign: + charging, - discharging (A) */
-	/* charger: online, direct supply (charging inhibited), charging paused by the temperature protection, USB voltage, input current limit */
-	int chg_online, chg_bypass, chg_paused;
+	/* Manual pause follows MU300 policy, never the shared hardware inhibit bit. */
+	int chg_online, chg_bypass, chg_paused, chg_control_ok, chg_limited, chg_pending;
 	float chg_vbus, chg_ilim;
 	/* cellular */
 	char cell_state[24], op[32], rat[8], ip[48], iface[16];
@@ -61,7 +61,7 @@ typedef struct {
 	int usb_up, admin_wifi, endc;
 	/* sms */
 	Sms sms[6];
-	int nsms, sms_unread, sms_total;
+	int nsms, sms_unread, sms_total, sms_slot;
 	/* system */
 	float cpu_pct, mem_pct, load1, temp_c;
 	long uptime;

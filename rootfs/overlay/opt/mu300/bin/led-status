@@ -22,6 +22,18 @@ export PATH="$PATH:/opt/mu300/bin:/opt/mu300/busybox-bin:/usr/sbin:/sbin"
 LED_ROOT=${MU300_LED_SYSFS_ROOT:-/sys/class/leds}
 RUN_DIR=${MU300_LED_RUN_DIR:-/run}
 
+# MU3356 has its own event-driven owner and independent PMIC white emitters.
+# Never let the legacy F50 writer address these identically named PMIC nodes.
+if [ "$(cat "${MU300_SYSROOT:-}/etc/mu300/model" 2>/dev/null)" = f50pro ]; then
+    case ${1:-} in
+        refresh|online-4g|online-5g|offline|modem|registering|wifi-on|wifi-off|thermal)
+            ubus send f50pro.led '{}' ;;
+        boot|current) : ;;
+        *) exit 0 ;;
+    esac
+    exit 0
+fi
+
 # The V50 has three independently wired red/white/blue indicators.
 if [ -d "$LED_ROOT/v50:net1:white" ]; then
     exec "${MU300_LED_BACKEND:-/opt/mu300/bin/v50-led-status}" "$@"

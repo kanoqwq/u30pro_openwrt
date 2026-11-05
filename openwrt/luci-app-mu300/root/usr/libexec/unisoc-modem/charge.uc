@@ -35,7 +35,10 @@ function store(values) {
 function previous() {
     try { return json(fs.readfile(STATE)) || {}; } catch (e) { return {}; }
 }
-function supported() { return BOARD in ['u30air','u30pro']; }
+function supported() {
+    let model=getenv('MU300_CHARGE_MODEL') || trim(fs.readfile('/etc/mu300/model') || '');
+    return model!='f50pro' && BOARD in ['u30air','u30pro'];
+}
 function available() {
     return supported() && read(BAT + '/present') == '1' &&
         !!match(read(BAT + '/capacity'), /^(100|[0-9]{1,2})$/) &&

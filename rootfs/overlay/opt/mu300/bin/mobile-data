@@ -526,7 +526,8 @@ wait_registered() {
     local deadline=$((SECONDS + ${MU300_REGISTER_WAIT:-60}))
     local next_query=$SECONDS
 
-    # The selected card's URC stream reports registration changes. Watch bytes
+    # NR0 reports changes for both cards. Use each new batch as a hint for
+    # a scoped query, never as proof that this SIM registered. Watch bytes
     # after this point so an old registered URC cannot be mistaken for the
     # current state. A low-rate query is the fallback for a carrier that emits
     # no URC; this replaces the old 0.3 s AT+CEREG? flood.
@@ -540,7 +541,7 @@ wait_registered() {
         # is an unchanged log, not truncation (which would replay old URCs).
         [ "$((size + 1))" -lt "$start" ] && start=1
         if [ -f "$urclog" ] && tail -c +"$start" "$urclog" 2>/dev/null | is_registered urc; then
-            return 0
+            next_query=$SECONDS
         fi
         start=$((size + 1))
         if [ "$SECONDS" -ge "$next_query" ]; then
@@ -1058,7 +1059,10 @@ status() {
 
 case "${1:-status}" in
     radio-dsds)
-        case "$DEVICE" in f50|u30air) ;; *) exit 2;; esac
+        case "$DEVICE" in
+            f50|u30air|u30pro) ;;
+            *) exit 2;;
+        esac
         case ${2:-} in 0|1) ;; *) exit 2;; esac
         radio_locked /opt/mu300/bin/mu300-sim-radio --dsds-locked "$2"
         ;;
@@ -1071,6 +1075,12 @@ case "${1:-status}" in
         case "$DEVICE" in v50|u30pro)
             case "$*" in
                 "/opt/mu300/bin/mu300-$DEVICE-sim --route "[0-3]) radio_locked "$@" ;;
+                '/opt/mu300/bin/mu300-u30pro-sim --route 4')
+                    [ "$DEVICE" = u30pro ] && [ "$(cat /etc/mu300/model 2>/dev/null)" = f50pro ] || exit 2
+                    radio_locked "$@" ;;
+                '/opt/mu300/bin/mu300-u30pro-sim --pair-route '[0-4])
+                    [ "$DEVICE" = u30pro ] && [ "$(cat /etc/mu300/model 2>/dev/null)" = f50pro ] || exit 2
+                    radio_locked "$@" ;;
                 *) exit 2;;
             esac
             exit $?

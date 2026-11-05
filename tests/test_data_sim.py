@@ -128,6 +128,12 @@ printf '%s\\n' "$flags" > "$UNISOC_RADIO_POLICY"
         self.test_u30_failed_switch_restores_original_or_both_off_permissions()
         self.test_u30_manual_data_off_stays_off_and_missing_sim_does_not_change_rf()
 
+    def test_u30pro_single_standby_switch_failure_and_data_off_follow_same_policy(self):
+        self.single_model='u30pro'
+        self.test_u30_single_standby_switch_and_reverse_are_explicit_rf_opt_ins()
+        self.test_u30_failed_switch_restores_original_or_both_off_permissions()
+        self.test_u30_manual_data_off_stays_off_and_missing_sim_does_not_change_rf()
+
     def test_first_switch_to_sim2_remembers_rf_opt_in(self):
         for shell in self.each_shell():
             (self.tmp/'sim-radio-policy').unlink(missing_ok=True)

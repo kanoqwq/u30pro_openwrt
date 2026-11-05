@@ -32,6 +32,9 @@ REQUIRED = (
     'CONFIG_CPUSETS=y', 'CONFIG_POSIX_MQUEUE=y',
     'CONFIG_USB=y', 'CONFIG_USB_GADGET=y', 'CONFIG_UNISOC_USB_MUSB_DUAL_ROLE=y',
     'CONFIG_U30PRO_SIM_MUX=y',
+    'CONFIG_NEW_LEDS=y', 'CONFIG_LEDS_CLASS=y', 'CONFIG_LEDS_GPIO=m',
+    'CONFIG_F50PRO_LED_HANDOFF=m',
+    'CONFIG_F50PRO_NFC_GPIO=m',
 )
 
 
@@ -151,8 +154,14 @@ def kernel_command(paths, jobs, configure_only=False):
 
 
 def dispatch_release(args, command, workspace, profiles, *, workspace_lock, task_type):
-    if profiles != ['u30pro-6.12']:
-        raise ValueError('This independent repository builds U30 Pro only')
+    if not profiles or any(p not in ('u30pro-6.12','f50pro-6.12') for p in profiles):
+        raise ValueError('Select an explicitly supported UMS9632 product profile')
+    if len(profiles)>1:
+        if args.action=='run':
+            raise ValueError('A custom command must select exactly one product profile')
+        for profile in profiles:
+            dispatch_release(args,command,workspace,[profile],workspace_lock=workspace_lock,task_type=task_type)
+        return
     _, paths = load_layout(args.config, workspace)
     if args.action == 'status':
         status = TOP / 'out/build-state/latest.json'
@@ -187,6 +196,7 @@ def dispatch_release(args, command, workspace, profiles, *, workspace_lock, task
             _, _, layout = runpy.run_path(str(TOP/'tools/build-settings.py'))['settings'](args.config, workspace)
             task.run('command', command, {'U30PRO_BUILD_LOCKED': '1',
                 'U30PRO_BUILD_CONFIG': str(args.config.resolve()), 'U30PRO_WORKSPACE': str(workspace),
+                'UMS9632_MODEL': profiles[0].removesuffix('-6.12'),
                 'U30PRO_ROOTFS_IMAGE': layout['rootfs_image']})
             task.save(state='complete', profile=profiles[0])
         except BaseException as error:

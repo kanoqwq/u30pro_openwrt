@@ -89,6 +89,19 @@ f.write_text(json.dumps(s));print('OK')
             self.assertEqual(json.loads((self.tmp/'radio.json').read_text())['cfun'],[1,2])
             self.assertNotIn('AT+SPACTCARD=1;+SFUN=4',(self.tmp/'commands').read_text())
 
+    def test_u30pro_single_standby_boot_and_modem_restart_keep_selected_rf_only(self):
+        for shell in self.each_shell():
+            for selected in ('0','1'):
+                for state in ([0,0],[1,1]):
+                    self.reset(state)
+                    (self.tmp/'sim-radio-policy').write_text('1 1\n')
+                    result=self.script(shell,SCRIPT,**dict(self.extra,TEST_DEVICE='u30pro',
+                        TEST_DSDS='0',TEST_DATA_SIM=selected,MU300_SIM_SLOT=selected))
+                    self.assertEqual(result.returncode,0,result.stderr)
+                    cfun=json.loads((self.tmp/'radio.json').read_text())['cfun']
+                    self.assertEqual(cfun[int(selected)],1)
+                    self.assertIn(cfun[1-int(selected)],(0,2))
+
     def test_u30_unpowered_inserted_sims_are_not_absent(self):
         for shell in self.each_shell():
             self.reset([0,0])

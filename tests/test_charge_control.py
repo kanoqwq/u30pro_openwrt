@@ -166,6 +166,31 @@ class ChargeControl(unittest.TestCase):
         self.assertIsNone(self.call()['capacity'])
         self.assertEqual(self.call('pause')['error'],'charge_unavailable')
 
+    def test_native_screen_resume_preserves_limit_and_otg_guard(self):
+        self.charger.rename(self.sys/'u30pro-charger-master')
+        self.battery.rename(self.sys/'u30pro-battery')
+        self.charger=self.sys/'u30pro-charger-master';self.battery=self.sys/'u30pro-battery'
+        self.write(self.charger/'charge_behaviour','auto')
+        self.write(self.battery/'capacity',90)
+        r=self.call('configure',dict(enabled='1',start='70',stop='80'),board='u30pro')
+        self.assertFalse(r['paused']);self.assertEqual(r['reason'],'limit')
+        self.assertEqual((self.charger/'charge_behaviour').read_text(),'inhibit-charge')
+        self.assertTrue(self.call('pause',board='u30pro')['paused'])
+        r=self.call('resume',board='u30pro')
+        self.assertFalse(r['paused']);self.assertTrue(r['enabled']);self.assertTrue(r['stopped'])
+        self.assertEqual(r['reason'],'limit')
+        self.assertEqual((self.charger/'charge_behaviour').read_text(),'inhibit-charge')
+        self.assertFalse(self.call(board='u30pro')['paused'])
+        self.write(self.battery/'capacity',70)
+        self.call('pause',board='u30pro')
+        self.write(self.charger/'usb_type','SDP [ACA]')
+        r=self.call('resume',board='u30pro')
+        self.assertFalse(r['paused']);self.assertTrue(r['pending'])
+        self.assertEqual((self.charger/'charge_behaviour').read_text(),'inhibit-charge')
+        self.write(self.charger/'usb_type','[SDP] ACA')
+        self.assertFalse(self.call('apply',board='u30pro')['stopped'])
+        self.assertEqual((self.charger/'charge_behaviour').read_text(),'auto')
+
     def test_real_watch_receives_events_and_checks_soc_without_events(self):
         docker=['docker','exec',self.container]
         # The base image has not run procd, which normally creates /run.

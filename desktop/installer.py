@@ -169,7 +169,10 @@ def encrypted(properties, source, raw_magic):
 
 def android_profile(model,platform=''):
     names=[s.strip().upper() for s in model.splitlines()]
-    if 'MU5358' in names or 'U30PRO' in names or 'U30 PRO' in names:
+    if 'MU3356' in names or 'F50PRO' in names or 'F50 PRO' in names:
+        if platform.strip()!='ums9632':raise ValueError('F50 Pro requires the UMS9632 platform')
+        return 'f50pro'
+    if any(n in ('MU5358','MU5358D','MU5358E') for n in names) or 'U30PRO' in names or 'U30 PRO' in names:
         return 'u30pro'
     if 'MU3351' in names or 'V50' in names:
         if 'MU3351' not in names or 'V50' not in names or platform.strip()!='ums9620':
@@ -383,7 +386,8 @@ class Android:
         items={'misc-head.bin':'dd if=/dev/block/by-name/misc bs=4096 count=1',
                'gpt-first.bin':f'dd if={disk} bs=512 count={front}',
                'gpt-last.bin':f'dd if={disk} bs=512 skip={tail} count={s["DISK_SIZE"]-tail}'}
-        for n in ('boot','uboot','sml','teecfg','trustos','vbmeta'):
+        bsp=('boot','uboot','sml','teecfg','trustos','vbmeta')
+        for n in bsp:
             for slot in ('a','b'):items[f'{n}_{slot}.img']=f'cat /dev/block/by-name/{n}_{slot}'
         for n,cmd in items.items():
             print('Backing up / 备份:',n)

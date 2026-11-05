@@ -1,4 +1,7 @@
 obj-$(CONFIG_U30PRO_BSP) += usb/phy/ usb/musb/ usbpinmux/
+obj-$(CONFIG_U30PRO_BSP) += ums9632-product.o
+obj-$(CONFIG_F50PRO_LED_HANDOFF) += f50pro-led-handoff.o
+obj-$(CONFIG_F50PRO_NFC_GPIO) += f50pro-nfc-gpio.o
 obj-$(CONFIG_UNISOC_USB_SC27XX_TYPEC) += usb/typec/
 obj-$(CONFIG_U30PRO_BSP) += sprd_charger/
 obj-$(CONFIG_UNISOC_MODEM) += modem/

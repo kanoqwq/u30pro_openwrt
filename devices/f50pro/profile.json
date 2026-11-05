@@ -1,0 +1,15 @@
+{
+  "format": 1,
+  "id": "f50pro",
+  "platform": "u30pro",
+  "label": "F50 Pro",
+  "hostname": "F50Pro",
+  "android_models": ["MU3356"],
+  "sim_layout": "mu3356",
+  "screen": false,
+  "battery": false,
+  "kernel_profile": "u30pro-6.12",
+  "boot_images": ["boot", "vendor_boot", "init_boot"],
+  "storage_layout": "mu300root-container",
+  "release_ready": false
+}

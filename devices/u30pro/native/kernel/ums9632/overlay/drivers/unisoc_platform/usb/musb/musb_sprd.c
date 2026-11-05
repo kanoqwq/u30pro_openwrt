@@ -28,6 +28,7 @@
 #include <linux/soc/sprd/sprd_usbpinmux.h>
 #include <linux/usb.h>
 #include <linux/usb/role.h>
+#include <linux/sprd_ums9632_product.h>
 #include <linux/usb/phy.h>
 #include <linux/reset.h>
 #include <linux/usb/usb_phy_generic.h>
@@ -43,6 +44,11 @@
 #endif
 #include "musb_core.h"
 #include "sprd_musbhsdma.h"
+
+/* MU3356 has no battery. A powered hub supplies VBUS while MUSB is host;
+ * never depend on or enable the battery product's boost regulator. This is
+ * explicit product boot policy, not inferred from a missing I2C device. */
+
 
 #define DRIVER_DESC "Inventra Dual-Role USB Controller Driver"
 #define MUSB_VERSION "6.0"
@@ -157,6 +163,9 @@ struct sprd_glue {
 
 	u32				ip_version;
 	bool				vbus_active;
+
+	unsigned int external_data_policy; /* 0 automatic, 1 host, 2 device */
+	struct mutex external_role_lock;
 	bool				is_audio_dev;
 	bool				charging_mode;
 	bool				enable_pm_suspend_in_host;
@@ -205,6 +214,21 @@ struct sprd_glue {
 	#endif
 };
 
+static void musb_sprd_ext_event_notify(struct sprd_glue *glue);
+
+static bool external_host_requested(unsigned int policy, bool grounded, bool vbus)
+{
+	return vbus && (policy == 1 || (policy == 0 && grounded));
+}
+
+static bool data_host_requested(struct sprd_glue *glue)
+{
+	if (sprd_ums9632_external_power_only())
+		return external_host_requested(READ_ONCE(glue->external_data_policy),
+			glue->id_state == MUSB_ID_GROUND, READ_ONCE(glue->vbus_active));
+	return glue->id_state == MUSB_ID_GROUND;
+}
+
 #if IS_ENABLED(CONFIG_UNISOC_USBM) && IS_ENABLED(CONFIG_UNISOC_USB_DWC3)
 static const bool is_slave = true;
 #else
@@ -228,7 +252,7 @@ static void sprd_musb_enable(struct musb *musb)
 	u8 devctl = musb_readb(musb->mregs, MUSB_DEVCTL);
 
 	/* soft connect */
-	if (glue->id_state == MUSB_ID_GROUND && glue->dr_mode == USB_DR_MODE_HOST) {
+	if (data_host_requested(glue) && glue->dr_mode == USB_DR_MODE_HOST) {
 		musb->is_active = 1;
 
 		devctl |= MUSB_DEVCTL_SESSION;
@@ -858,17 +882,17 @@ static int musb_sprd_vbus_notifier(struct notifier_block *nb,
 		return NOTIFY_DONE;
 	}
 	#ifndef CONFIG_P720M01_USB_FEATURE
-	if (glue->id_state == MUSB_ID_GROUND) {
+	if (!sprd_ums9632_external_power_only() && glue->id_state == MUSB_ID_GROUND) {
 		dev_info(glue->dev, "ignore vbus state in id ground mode\n");
 		return NOTIFY_DONE;
 	}
 
-	if (glue->dr_mode == USB_DR_MODE_HOST && !glue->use_pdhub_c2c) {
+	if (!sprd_ums9632_external_power_only() && glue->dr_mode == USB_DR_MODE_HOST && !glue->use_pdhub_c2c) {
 		dev_info(glue->dev, "ignore vbus state in dr mode host\n");
 		return NOTIFY_DONE;
 	}
 
-	if (glue->drd_state == DRD_STATE_HOST_IDLE && !glue->use_pdhub_c2c) {
+	if (!sprd_ums9632_external_power_only() && glue->drd_state == DRD_STATE_HOST_IDLE && !glue->use_pdhub_c2c) {
 		dev_info(glue->dev, "ignore vbus state in host idle\n");
 		return NOTIFY_DONE;
 	}
@@ -1419,6 +1443,52 @@ static ssize_t dual_role_capable_show(struct device *dev,
 }
 static DEVICE_ATTR_RO(dual_role_capable);
 
+static ssize_t external_power_only_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	return sysfs_emit(buf, "%u\n", sprd_ums9632_external_power_only());
+}
+static DEVICE_ATTR_RO(external_power_only);
+
+static ssize_t external_data_role_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct sprd_glue *glue = dev_get_drvdata(dev);
+	unsigned int policy = READ_ONCE(glue->external_data_policy);
+	if (!sprd_ums9632_external_power_only())
+		return -EOPNOTSUPP;
+	return sysfs_emit(buf, "%s\n", policy == 1 ? "host" : policy == 2 ? "device" : "auto");
+}
+
+static ssize_t external_data_role_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct sprd_glue *glue = dev_get_drvdata(dev);
+	unsigned int policy;
+	if (!sprd_ums9632_external_power_only() || !IS_ENABLED(CONFIG_UNISOC_USB_MUSB_DUAL_ROLE))
+		return -EOPNOTSUPP;
+	if (sysfs_streq(buf, "auto")) policy = 0;
+	else if (sysfs_streq(buf, "host")) policy = 1;
+	else if (sysfs_streq(buf, "device")) policy = 2;
+	else return -EINVAL;
+	mutex_lock(&glue->external_role_lock);
+	WRITE_ONCE(glue->external_data_policy, policy);
+	musb_sprd_ext_event_notify(glue);
+	mutex_unlock(&glue->external_role_lock);
+	return count;
+}
+static DEVICE_ATTR_RW(external_data_role);
+
+static ssize_t current_data_role_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct sprd_glue *glue = dev_get_drvdata(dev);
+	enum usb_dr_mode mode = READ_ONCE(glue->dr_mode);
+	return sysfs_emit(buf, "%s\n", mode == USB_DR_MODE_HOST ? "host" :
+		mode == USB_DR_MODE_PERIPHERAL ? "device" : "none");
+}
+static DEVICE_ATTR_RO(current_data_role);
+
 #ifdef CONFIG_P720M01_USB_FEATURE
 static ssize_t zte_usb_datarole_show(struct device *dev,
 				  struct device_attribute *attr, char *buf)
@@ -1480,6 +1550,9 @@ static struct attribute *musb_sprd_attrs[] = {
 	&dev_attr_maximum_speed.attr,
 	&dev_attr_current_speed.attr,
 	&dev_attr_dual_role_capable.attr,
+	&dev_attr_external_power_only.attr,
+	&dev_attr_external_data_role.attr,
+	&dev_attr_current_data_role.attr,
 	&dev_attr_musb_hostenable.attr,
 	#ifdef CONFIG_P720M01_USB_FEATURE
 	&dev_attr_zte_usb_datarole.attr,
@@ -1889,7 +1962,7 @@ static int musb_sprd_otg_start_host(struct sprd_glue *glue, int on)
 	struct musb_hdrc_platform_data *plat = dev_get_platdata(musb->controller);
 
 	#ifndef CONFIG_P720M01_USB_FEATURE
-	if (!glue->vbus) {
+	if (!sprd_ums9632_external_power_only() && !glue->vbus) {
 		glue->vbus = devm_regulator_get(glue->dev, "vbus");
 		if (IS_ERR(glue->vbus)) {
 			glue->vbus = NULL;
@@ -1904,9 +1977,11 @@ static int musb_sprd_otg_start_host(struct sprd_glue *glue, int on)
 		dev_info(glue->dev, "get hub vbus succeed\n");
 	#endif
 	if (on) {
+		if (sprd_ums9632_external_power_only() && !READ_ONCE(glue->vbus_active))
+			return -ENOLINK;
 		dev_info(glue->dev, "%s: turn on host\n", __func__);
 		#ifndef CONFIG_P720M01_USB_FEATURE
-		if (!glue->use_pdhub_c2c) {
+		if (!sprd_ums9632_external_power_only() && !glue->use_pdhub_c2c) {
 			if (!regulator_is_enabled(glue->vbus)) {
 				dev_info(glue->dev, "%s: regulator enable\n", __func__);
 				ret = regulator_enable(glue->vbus);
@@ -1948,7 +2023,8 @@ static int musb_sprd_otg_start_host(struct sprd_glue *glue, int on)
 			if (ret) {
 				dev_err(glue->dev, "musb_host_setup failed: %d\n", ret);
 				#ifndef CONFIG_P720M01_USB_FEATURE
-				regulator_disable(glue->vbus);
+				if (!sprd_ums9632_external_power_only())
+					regulator_disable(glue->vbus);
 				#endif
 				pm_runtime_put_sync(musb->controller);
 				return ret;
@@ -1996,7 +2072,7 @@ static int musb_sprd_otg_start_host(struct sprd_glue *glue, int on)
 		if (musb->port_mode != MUSB_HOST)
 			musb_host_cleanup(musb);
 		#ifndef CONFIG_P720M01_USB_FEATURE
-		if (!glue->use_pdhub_c2c) {
+		if (!sprd_ums9632_external_power_only() && !glue->use_pdhub_c2c) {
 			ret = regulator_disable(glue->vbus);
 			if (ret)
 				dev_err(glue->dev, "Failed to disable vbus: %d\n", ret);
@@ -2176,7 +2252,12 @@ static void musb_sprd_ext_event_notify(struct sprd_glue *glue)
 			glue->gadget_suspend, glue->host_recover,
 			glue->usb_data_enabled);
 
-	if (glue->id_state == MUSB_ID_FLOAT)
+	if (sprd_ums9632_external_power_only()) {
+		if (data_host_requested(glue))
+			clear_bit(ID, &glue->inputs);
+		else
+			set_bit(ID, &glue->inputs);
+	} else if (glue->id_state == MUSB_ID_FLOAT)
 		set_bit(ID, &glue->inputs);
 	else
 		clear_bit(ID, &glue->inputs);
@@ -2642,6 +2723,7 @@ static int musb_sprd_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	glue->dev = &pdev->dev;
+	mutex_init(&glue->external_role_lock);
 	memset(&pdata, 0, sizeof(pdata));
 	if (IS_ENABLED(CONFIG_UNISOC_USB_MUSB_GADGET))
 		pdata.mode = MUSB_PERIPHERAL;

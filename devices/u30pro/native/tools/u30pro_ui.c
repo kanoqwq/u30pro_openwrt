@@ -94,6 +94,28 @@ static int pin_hash_ok(const char *s)
 	return 1;
 }
 
+/* Completion comes from the same charge owner as LuCI; no optimistic success. */
+static void bypass_complete(unsigned token, int ok, int available, int paused,
+                            int limited, int pending, const char *error)
+{
+	if (!bypass_busy_until || token != bypass_request) return;
+	bypass_busy_until = 0;
+	if (ok) {
+		D.chg_control_ok = available;
+		D.chg_bypass = paused;
+		D.chg_limited = limited;
+		D.chg_pending = pending;
+		toast_show(paused ? "直供电已开启" : "直供电已关闭", C_OK, 3000);
+	} else {
+		const char *message = "充电设置失败，请重试";
+		if (!strcmp(error, "charge_busy")) message = "充电设置忙，请稍后重试";
+		else if (!strcmp(error, "charge_unavailable")) message = "充电控制暂不可用";
+		else if (!strcmp(error, "charge_reload_failed")) message = "设置已保存，服务应用失败";
+		toast_show(message, C_BAD, 4000);
+	}
+	dirty = 1;
+}
+
 #ifdef UI_HOST
 /* the host simulation keeps the settings in settings.kv of its directory; the device in UCI (tools/ui/bus.h) */
 static struct timespec settings_mtime;
@@ -113,7 +135,8 @@ static void settings_save(void)
 	fprintf(f, "theme=%d\noff=%d\nwake=%s\nlock=%d\npin=%s\npinlen=%d\n", theme_idx, off_idx, WAKE_KEYS[wake_idx % NWAKE], lock_on, pin_hash,
 		pin_hash[0] ? pin_digits : 0);
 	fprintf(f, "home_short=%s\nhome_long=%s\nhome_ms=%d\n", KEY_ACTIONS[key_short], KEY_ACTIONS[key_long], key_long_ms);
-	fprintf(f, "wp_dim=%d\nglass=%d\nglass_blur=%d\nglass_tint=%d\nwp_live=%d\n", wp_dim, glass_clear, glass_blur, glass_tint, wp_live);
+	fprintf(f, "wp_dim=%d\nglass=%d\nglass_blur=%d\nglass_tint=%d\nwp_live=%d\nwp_live_pages=%d\n", wp_dim, glass_clear, glass_blur, glass_tint, wp_live,
+		wp_live_pages);
 	fclose(f);
 	rename(SETTINGS_PATH ".new", SETTINGS_PATH);
 	settings_stamp();
@@ -147,6 +170,7 @@ static void settings_load(void)
 		else if (sscanf(line, "glass_blur=%d", &v) == 1 && v >= 0 && v <= 100) glass_blur = v;
 		else if (sscanf(line, "glass_tint=%d", &v) == 1 && v >= 0 && v < NTINT) glass_tint = v;
 		else if (sscanf(line, "wp_live=%d", &v) == 1 && v >= 0 && v <= 2) wp_live = v;
+		else if (sscanf(line, "wp_live_pages=%d", &v) == 1 && v >= -1 && v <= LIVE_ALL) wp_live_pages = v;
 	}
 	fclose(f);
 }
@@ -699,16 +723,34 @@ static int hit_at(int x, int y)
 	return -1;
 }
 
-/* the shown messages are read now: the feeder marks them */
+/* A view is acknowledged by stable card/message ID, never by list position. */
 static void ack_sms(void)
 {
+	if (!sms_detail.id[0] || strspn(sms_detail.id, "0123456789") != strlen(sms_detail.id)) {
+		toast_show("请刷新短信列表后重试", C_WARN, 2500);
+		return;
+	}
 #ifdef UI_HOST
 	FILE *f = fopen(UI_RUN "/sms.ack", "w");
 
-	if (f) fclose(f);
+	if (f) { fprintf(f, "%d %s\n", sms_detail_slot, sms_detail.id); fclose(f); }
 #else
-	bus_request("sms_ack");
+	bus_sms_read(sms_detail.id, sms_detail_slot);
 #endif
+}
+
+static void sms_detail_close(void)
+{
+	ov = OV_NONE;
+	sheet = SH_SMS;
+	sheet_pos = 1.f;
+	sheet_anim = 0;
+	sms_scroll = sms_list_scroll;
+	press_kill();
+#ifndef UI_HOST
+	bus_request("sms_close");
+#endif
+	dirty = 1;
 }
 
 static void do_action(int id)
@@ -734,16 +776,19 @@ static void do_action(int id)
 		run_async(relay_want ? "/usr/sbin/u30pro-panel-control relay-on"
 				     : "/usr/sbin/u30pro-panel-control relay-off");
 		break;
-	case H_BYPASS:
-		/* direct supply = the charger's "inhibit-charge"; a pause of the temperature protection is not the user's to end here */
-		if (g_ms < bypass_busy_until) break;
-		if (D.chg_paused) { toast_show("温度过高，已暂停充电", C_WARN, 2500); break; }
-		bypass_busy_until = g_ms + 2500;
-		bypass_want = !D.chg_bypass;
-		toast_show(bypass_want ? "直供电：电池停止充电" : "已恢复充电", TH()->a, 2000);
-		run_async(bypass_want ? "/usr/sbin/u30pro-panel-control charge-pause"
-				      : "/usr/sbin/u30pro-panel-control charge-resume");
+	case H_BYPASS: {
+		if (bypass_busy_until) break;
+		if (!D.chg_control_ok) { toast_show("充电控制暂不可用", C_WARN, 3000); break; }
+		if (D.chg_paused) { toast_show("温度过高，已暂停充电", C_WARN, 3000); break; }
+		char command[160];
+		bypass_busy_until = g_ms + 15000; /* failed transport timeout, never assumed success */
+		bypass_request++;
+		snprintf(command, sizeof command, "/usr/sbin/u30pro-panel-control charge-%s %u",
+		         D.chg_bypass ? "resume" : "pause", bypass_request);
+		toast_show("正在应用充电设置", C_DIM, 2000);
+		run_async(command);
 		break;
+	}
 	case H_QR:
 		if (D.ssid[0] && D.wifi_active) { ov = OV_QR; ov_arg = 0; }
 		else toast_show(D.ssid[0] ? "热点未开启" : "尚无热点配置", C_WARN, 2000);
@@ -768,7 +813,7 @@ static void do_action(int id)
 	case H_GLASS_BLUR: glass_blur = glass_blur >= 100 ? 0 : glass_blur + 25; settings_save(); wp_check(); break;
 	case H_GLASS_TINT: glass_tint = (glass_tint + 1) % NTINT; settings_save(); wp_check(); break;
 	case H_WP_DIM: wp_dim = wp_dim >= 60 ? 0 : wp_dim + 15; settings_save(); wp_check(); break;
-	case H_WP_LIVE: wp_live = (wp_live + 1) % 3; settings_save(); break;
+	case H_WP_LIVE: live_next(); settings_save(); break;
 	case H_REBOOT: power_menu_open(); break;
 	case H_POWER_OFF: if (power_menu) power_choice = 1; break;
 	case H_POWER_RESTART: if (power_menu) power_choice = 2; break;
@@ -784,8 +829,8 @@ static void do_action(int id)
 			run_async(shutdown ? "/usr/sbin/u30pro-panel-control poweroff" : "/usr/sbin/u30pro-panel-control reboot");
 		}
 		break;
-	case H_CLOSE: ov = OV_NONE; break;
-	case H_BACK: fn_sub = -1; break;
+	case H_CLOSE: if (ov == OV_SMS) sms_detail_close(); else ov = OV_NONE; break;
+	case H_BACK: if (ov == OV_SMS) sms_detail_close(); else fn_sub = -1; break;
 	case H_SIG_RAT:
 		if (D.nr || D.nr_idle) sig_lte = !sig_lte;
 		else toast_show("NR 有流量时才连接", TH()->b, 2500);
@@ -807,7 +852,11 @@ static void do_action(int id)
 			else if (id >= H_GOTO && id < H_GOTO + NPAGES) { page = id - H_GOTO; tx_off = 0; anim_on = 0; fn_sub = -1; state_write(); }
 			else if (id >= H_FN && id < H_FN + NFN_BUILTIN + MAXPLUG) fn_open(id - H_FN);
 			else if (id >= H_BH_RANGE && id < H_BH_RANGE + NBH) bh_range = id - H_BH_RANGE;
-		else if (id >= H_SMS_ROW && id < H_SMS_ROW + 6) { ov = OV_SMS; ov_arg = id - H_SMS_ROW; sms_scroll = 0; ack_sms(); }
+		else if (id >= H_SMS_ROW && id < H_SMS_ROW + D.nsms) {
+			ov = OV_SMS; ov_arg = id - H_SMS_ROW;
+			sms_detail = D.sms[ov_arg]; sms_detail_slot = D.sms_slot;
+			sms_list_scroll = sms_scroll; sms_scroll = 0; ack_sms();
+		}
 		break;
 	}
 	/* a press that opened another screen must not leave its highlight on it */
@@ -984,8 +1033,8 @@ static void ui_touch(int type, int x, int y, long ms)
 	if (tc.dir == 1) {
 		int dx = tc.x - tc.x0;
 
+		if (ov != OV_NONE) { if (abs(dx) > 40) { if (ov == OV_SMS) sms_detail_close(); else ov = OV_NONE; last_gesture = "close"; } return; }
 		if (sheet_is_open()) { if (abs(dx) > 50) { sheet_close(); last_gesture = "close-sheet"; } return; }
-		if (ov != OV_NONE) { if (abs(dx) > 40) { ov = OV_NONE; last_gesture = "close"; } return; }
 		if (fn_sub >= 0) { if (dx > 50) { fn_sub = -1; last_gesture = "back"; } return; }
 		if (dragging && (tx_off <= -60.f || tx_off >= 60.f)) {
 			int dir = tx_off < 0 ? 1 : -1;
@@ -1001,7 +1050,7 @@ static void ui_touch(int type, int x, int y, long ms)
 	if (tc.hold_fired || tc.caught) return;
 	/* a long press on empty space goes home; on a control it is just a slow tap */
 	if (now - tc.t0 >= 800 && !tc.on_hit) {
-		if (ov != OV_NONE) ov = OV_NONE; else go_home();
+		if (ov == OV_SMS) sms_detail_close(); else if (ov != OV_NONE) ov = OV_NONE; else go_home();
 		last_gesture = "hold-home";
 		gesture_count++;
 		state_write();
@@ -1037,7 +1086,7 @@ static void touch_tick(long now)
 	} else if (held >= 800 && !tc.on_hit && !tc.caught) {
 		tc.hold_fired = 1;
 		press_end(now, 0);
-		if (ov != OV_NONE) ov = OV_NONE; else go_home();
+		if (ov == OV_SMS) sms_detail_close(); else if (ov != OV_NONE) ov = OV_NONE; else go_home();
 		last_gesture = "hold-home";
 		gesture_count++;
 		dirty = 1;
@@ -1079,8 +1128,8 @@ static void ui_key(int code, long duration_ms)
 	if (pin_mode == PIN_LOCKSCR && lock_soft) { soft_unlock(); return; }  /* a key is no stray touch: it opens the soft lock */
 	if (pin_mode == PIN_UNLOCK || pin_mode == PIN_LOCKSCR) return;     /* a locked screen ignores the other keys */
 	if (pin_mode) { pin_press(PIN_CANCEL); dirty = 1; state_write(); return; }
+	if (ov != OV_NONE) { if (ov == OV_SMS) sms_detail_close(); else ov = OV_NONE; state_write(); return; }
 	if (sheet_is_open()) { sheet_close(); state_write(); return; }
-	if (ov != OV_NONE) { ov = OV_NONE; state_write(); return; }
 	if (fn_sub >= 0) { fn_sub = -1; state_write(); return; }
 	if (home && key_short != KA_PAGE) {
 		if (key_short != KA_NONE) key_run(key_short, 0);
@@ -1096,8 +1145,11 @@ static void blit(Cv *dst, const Cv *src, int dx)
 	int x0 = dx < 0 ? 0 : dx, x1 = dx + SCREEN > SCREEN ? SCREEN : dx + SCREEN;
 
 	if (x1 <= x0) return;
-	for (int y = 0; y < SCREEN; y++)
+	for (int y = 0; y < SCREEN; y++) {
 		memcpy(&dst->p[y * SCREEN + x0], &src->p[y * SCREEN + (x0 - dx)], (size_t)(x1 - x0) * 4);
+		if (dst->g && src->g) memcpy(&dst->g[y * SCREEN + x0], &src->g[y * SCREEN + (x0 - dx)], (size_t)(x1 - x0) * sizeof *dst->g);
+		else if (dst->g) memset(&dst->g[y * SCREEN + x0], 0, (size_t)(x1 - x0) * sizeof *dst->g);
+	}
 }
 
 static void blit_y(Cv *dst, const Cv *src, int dy)
@@ -1107,6 +1159,8 @@ static void blit_y(Cv *dst, const Cv *src, int dy)
 
 		if (sy < 0 || sy >= SCREEN) continue;
 		memcpy(&dst->p[y * SCREEN], &src->p[sy * SCREEN], (size_t)SCREEN * 4);
+		if (dst->g && src->g) memcpy(&dst->g[y * SCREEN], &src->g[sy * SCREEN], (size_t)SCREEN * sizeof *dst->g);
+		else if (dst->g) memset(&dst->g[y * SCREEN], 0, (size_t)SCREEN * sizeof *dst->g);
 	}
 }
 
@@ -1117,7 +1171,10 @@ static void bg_fill(Cv *dst, int dx, int dy, int frost)
 	g_bgx = dx;
 	g_bgy = dy;
 	if (wp_on) wp_paint(dst, frost ? wp_frost : wp_bg);
-	else memcpy(dst->p, bgc.p, sizeof(uint32_t) * SCREEN * SCREEN);
+	else {
+		memcpy(dst->p, bgc.p, sizeof(uint32_t) * SCREEN * SCREEN);
+		if (dst->g) memset(dst->g, 0, sizeof *dst->g * SCREEN * SCREEN);
+	}
 }
 
 /* over a wallpaper the home page and the function list show it sharp; the pages with bare text on them (signal, traffic, the second-level
@@ -1188,6 +1245,7 @@ static void compose(void)
 	press_env = press_now(g_ms);
 	smooth_tick(0);
 	lw_sync();
+	wp_shifted = 0;
 	gx_shadow = wp_on ? 136 : 0;
 	if (g_ms < splash_until && !D.feed_ok) {
 		bg_fill(&scr, 0, 0, 0);
@@ -1253,6 +1311,8 @@ static void compose(void)
 /* ------------------------------------------------------------------ events -> toasts */
 static void detect_events(void)
 {
+	if (bypass_busy_until && g_ms >= bypass_busy_until)
+		bypass_complete(bypass_request, 0, 0, 0, 0, 0, "charge_timeout");
 	static struct { int init, conn, low, clients, unread, relay; } p;
 
 	if (!D.feed_ok) return;
@@ -1288,19 +1348,32 @@ static void detect_events(void)
 	p.unread = D.sms_unread;
 }
 
-/* a live wallpaper plays on the lock screen (wp_live 1 and 2) and on the home page (2) while nothing moves or touches the screen; the
- * frame it stops at stays the wallpaper everywhere else */
+/* a live wallpaper plays on the scenes of live_mask() while nothing moves or touches the screen: a swipe, a sheet being dragged or a list
+ * still scrolling needs every frame the panel takes (16 ms), so the clip waits.  The frame it stops at stays the wallpaper elsewhere. */
 static int live_here(void)
 {
-	if (asleep || notice[0] || tc.down || wp_live < 1) return 0;
-	if (pin_mode == PIN_LOCKSCR) return 1;
-	return wp_live == 2 && !pin_mode && page == PG_HOME && ov == OV_NONE && !sheet_is_open() && tx_off > -.5f && tx_off < .5f && !anim_on &&
-	       !dragging;
+	int m = live_mask();
+
+	if (asleep || notice[0] || tc.down || !m) return 0;
+	if (pin_mode == PIN_LOCKSCR) return !!(m & LIVE_LOCK);
+	if (anim_on || dragging || sheet_anim || tc.sdrag || fling.on || scroll_moving || tx_off < -.5f || tx_off > .5f) return 0;
+	if (pin_mode) return !!(m & LIVE_PIN);
+	if (ov != OV_NONE) return !!(m & LIVE_POPUP);
+	if (sheet_is_open()) return !!(m & LIVE_SHEET);
+	switch (page) {
+	case PG_HOME: return !!(m & LIVE_HOME);
+	case PG_SIGNAL: return !!(m & LIVE_SIGNAL);
+	case PG_TRAFFIC: return !!(m & LIVE_TRAFFIC);
+	default: return !!(m & (fn_sub < 0 ? LIVE_FUNC : LIVE_FNPAGE));
+	}
 }
+
+/* a clip frame is due (wall_due): a page that was drawn still on the wallpaper (gr_ok, its ground recorded) is only regrounded onto it */
+static int wall_due, gr_ok;
 
 static void live_tick(long now)
 {
-	if (lw_tick(now, live_here())) dirty = 1;
+	if (lw_tick(now, live_here())) wall_due = 1;
 }
 
 /* a toast sliding in or out wants full frame rate */
@@ -1324,11 +1397,21 @@ static int fast_frames(void)
 static long frame_interval(void)
 {
 	if (anim_on || dragging || sheet_anim || tc.sdrag || fling.on) return 16;
-	if (lw.playing) return lw_interval();
 	if (notice[0]) return 33;
 	if (press_busy() || smooth_busy() || tile_moving || toast_moving() || hold_pct > 0 || marquee_moving) return 33;
 	return fast_frames() ? 110 : 1000;
 }
+
+#ifndef UI_HOST
+/* the high refresh clock while frames come fast (see panel_speed); 48 MHz again a second after the last of them */
+static void panel_speed_tick(long now)
+{
+	static long last_fast;
+
+	if (!asleep && (frame_interval() <= 16 || (lw.playing && lw.fps > 26))) last_fast = now;
+	panel_speed(!asleep && last_fast && now - last_fast < 1000);
+}
+#endif
 
 static void ui_init_canvases(void)
 {
@@ -1336,6 +1419,9 @@ static void ui_init_canvases(void)
 	pa = cv_new(SCREEN, SCREEN);
 	pb = cv_new(SCREEN, SCREEN);
 	shc = cv_new(SCREEN, SCREEN);
+	/* the screen and the sheets keep what of the wallpaper each pixel shows: a live wallpaper's frame regrounds a still page (wp_reground) */
+	cv_track(&scr);
+	cv_track(&shc);
 	bg_build();
 	wp_check();
 	fn_build();
@@ -1523,8 +1609,9 @@ static int host_main(const char *dir, int argc, char **argv)
 			line[strcspn(line, "\r\n")] = 0;
 			snprintf(notice, sizeof notice, "%s", line[6] ? line + 7 : "");
 		} else if (sscanf(line, "set charger %d", &a) == 1) {
-			/* charger state for the power page: 0 unplugged (discharging), 1 charging, 2 direct supply, 3 paused by the temperature protection */
-			D.chg_online = a != 0; D.chg_bypass = a == 2 || a == 3; D.chg_paused = a == 3; D.charging = a == 1;
+			/* charger state for the power page: 0 unplugged (discharging), 1 charging, 2 direct supply, 3 temperature pause, 4 automatic charge limit */
+			D.chg_online = a != 0; D.chg_bypass = a == 2; D.chg_paused = a == 3; D.charging = a == 1;
+			D.chg_control_ok = 1; D.chg_limited = a == 4; D.chg_pending = 0;
 			D.bat_i = a == 0 ? -.48f : (a == 1 ? .62f : .01f); D.bat_a = fabsf(D.bat_i);
 		} else if (!strncmp(line, "set nosinr", 10)) {
 			D.sinr_ok = 0;
@@ -1566,7 +1653,45 @@ static int host_main(const char *dir, int argc, char **argv)
 		} else if (!strncmp(line, "sleep", 5)) {
 			go_sleep();
 		} else if (!strncmp(line, "state", 5)) {
-			printf("STATE asleep=%d locked=%d pin_mode=%d lock_on=%d wake=%d fails=%d\n", asleep, locked, pin_mode, lock_on, wake_idx, pin_fails);
+			printf("STATE asleep=%d locked=%d pin_mode=%d lock_on=%d wake=%d fails=%d live=%d mask=%d preset=%s wp_live=%d\n", asleep, locked,
+                       pin_mode, lock_on, wake_idx, pin_fails, live_here(), live_mask(), LIVE_NAMES[live_preset()], wp_live);
+        } else if (sscanf(line, "live %d", &a) == 1) {
+            if (a >= -1 && a <= LIVE_ALL) wp_live_pages = a;
+        } else if (sscanf(line, "wplive %d", &a) == 1) {
+            if (a >= 0 && a <= 2) wp_live = a;
+        } else if (!strncmp(line, "livenext", 8)) {
+            live_next();
+		} else if (sscanf(line, "liveframe %d", &a) == 1) {
+			/* show frame a of the clip (from the frame shown, as playing does) and write the decoded frame to frame.rgb */
+			FILE *f;
+
+			lw.want = a;
+			lw_sync();
+			if ((f = fopen(UI_RUN "/frame.rgb", "wb"))) { fwrite(wp_rgb, 1, sizeof wp_rgb, f); fclose(f); }
+			printf("LIVEFRAME %d cur=%d\n", a, lw.cur);
+		} else if (sscanf(line, "livecheck %d", &a) == 1) {
+			/* the page drawn once and regrounded over a frames of the clip, against the same frame drawn in full */
+			static uint32_t keep[WP_N];
+			int worst = 0, over2 = 0, over8 = 0;
+
+			compose();
+			gr_ok = live_here() && wp_ground_rest(&scr);
+			for (int i = 0; i < a && gr_ok && lw.n > 1; i++) {
+				lw.want = (lw.cur + 1) % lw.n;
+				lw_sync();
+				wp_reground(&scr);
+			}
+			memcpy(keep, scr.p, sizeof keep);
+			compose();
+			for (int i = 0; i < WP_N; i++)
+				for (int k = 0; k < 24; k += 8) {
+					int d = abs((int)(keep[i] >> k & 255) - (int)(scr.p[i] >> k & 255));
+
+					if (d > worst) worst = d;
+					over2 += d > 2;
+					over8 += d > 8;
+				}
+			printf("LIVECHECK gr=%d frame=%d ver=%d worst=%d over2=%d over8=%d\n", gr_ok, lw.cur, lw.ver, worst, over2, over8);
 		} else if (sscanf(line, "shot %95s", name) == 1) {
 			compose();
 			shot_write(dir, name);
@@ -1606,10 +1731,42 @@ static void capture(void)
 static volatile sig_atomic_t running = 1;
 static void finish(int sig) { (void)sig; running = 0; }
 
-/* one UI command (ubus u30pro.panel command): "page N", "overlay K ARG", "home", "wake", "toast TEXT", "notice [TEXT]", ... -- for tests and
- * the web UI; the next frame is captured to /run/u30pro-screen.ppm */
+/* one UI command (ubus u30pro.panel command): "page N", "overlay K ARG", "home", "wake", "toast TEXT", "notice [TEXT]", "fps 0|1", ... -- for
+ * tests and the web UI; the next frame is captured to /run/u30pro-screen.ppm */
 static int force_capture;
 static long capture_after;	/* a toast is still fading in: the forced capture waits for it */
+
+/* "fps 1": a badge at the top with the panel's SPI clock, the frames handed to the display in the last second and the clip frames shown,
+ * drawn over every frame (after the ground of a still page is recorded, so regrounding does not keep it) */
+static int fps_badge, badge_mhz, badge_flips, badge_clip;
+
+static void fps_badge_tick(long now)
+{
+	static long t0;
+	static unsigned long flips0;
+	static unsigned long long clip0;
+
+	if (now - t0 < 1000) return;
+	badge_flips = (int)(stat_flips - flips0);
+	badge_clip = (int)(lw_frames - clip0);
+	badge_mhz = (int)(rd_long("/sys/module/u30pro_nv3002c/parameters/spi_hz", 0) / 1000000);
+	if (!badge_mhz) badge_mhz = 48;
+	flips0 = stat_flips;
+	clip0 = lw_frames;
+	t0 = now;
+}
+
+static void draw_fps_badge(Cv *c)
+{
+	char t[64];
+	int w;
+
+	if (!fps_badge) return;
+	snprintf(t, sizeof t, "SPI %dMHz  %d fps  clip %d", badge_mhz, badge_flips, badge_clip);
+	w = gx_text_w(FN14, t) + 20;
+	pill(c, 120.f - (float)w / 2.f, 6.f, (float)w, 24.f, 0x000000, 210);
+	gx_text(c, FN14, 120 - w / 2 + 10, 23, t, 0xFFFFFF, 255);
+}
 
 static void ui_cmd_line(const char *cmd)
 {
@@ -1632,6 +1789,11 @@ static void ui_cmd_line(const char *cmd)
 			if (notice[0] && asleep) wake();
 		}
 		else if (sscanf(line, "theme %d", &a) == 1 && a >= 0 && a < NTHEMES) { theme_idx = a; bg_build(); }
+		else if (sscanf(line, "fps %d", &a) == 1) {
+			fps_badge = a != 0;
+			badge_mhz = (int)(rd_long("/sys/module/u30pro_nv3002c/parameters/spi_hz", 0) / 1000000);
+			if (!badge_mhz) badge_mhz = 48;	/* 0: the panel table's value */
+		}
 		dirty = 1;
 		force_capture = 1;
 		capture_after = !strncmp(line, "toast ", 6) ? now_ms() + 300 : 0;
@@ -1662,6 +1824,7 @@ int main(int argc, char **argv)
 	lock_engage();
 	state_write();
 	long now = now_ms(), next_collect = 0, retry_touch = now + 2000, next_capture = 0, next_frame = 0, next_stat = 0;
+	int frame_ready = 0;	/* scr holds a frame not handed to the display yet */
 
 	g_ms = now;
 	last_act = now;
@@ -1705,19 +1868,39 @@ int main(int argc, char **argv)
 		touch_tick(now);
 		apply_idle(now);
 		live_tick(now);
-		if (!asleep && (dirty || now >= next_frame) && !flip_in_flight()) {
-			long long t0 = now_us(), t1;
+		panel_speed_tick(now);
+		/* A frame is made as soon as it is due, also while the one before is still being written to the panel (tens of ms over SPI), and
+		 * handed to the display when that write is done: a full frame when the page changed or its next frame is due; otherwise a due clip
+		 * frame only regrounds the page drawn last (wp_reground). */
+		if (asleep && frame_ready) { frame_ready = 0; present_drop(); }
+		if (!asleep && !frame_ready && (dirty || now >= next_frame || wall_due)) {
+			long long t0 = now_us();
 
-			compose();
-			t1 = now_us();
-			stat_compose_us += (unsigned long long)(t1 - t0);
-			if (present(&scr)) {
-				stat_present_us += (unsigned long long)(now_us() - t1);
+			if (dirty || now >= next_frame || !gr_ok) {
+				compose();
+				gr_ok = live_here() && wp_ground_rest(&scr);
 				dirty = 0;
 				next_frame = now + frame_interval();
+			} else {
+				lw_sync();
+				wp_reground(&scr);
+			}
+			fps_badge_tick(now);
+			draw_fps_badge(&scr);
+			wall_due = 0;
+			frame_ready = 1;
+			present_prepare(&scr);	/* into the free buffer now, while a flip may still be in flight */
+			stat_compose_us += (unsigned long long)(now_us() - t0);
+		}
+		if (frame_ready && !flip_in_flight()) {
+			long long t1 = now_us();
+
+			if (present(&scr)) {
+				stat_present_us += (unsigned long long)(now_us() - t1);
+				frame_ready = 0;
 				if (force_capture && now >= capture_after) { capture(); force_capture = 0; }
 				else if (!fast_frames() && now >= next_capture) { capture(); next_capture = now + 2000; }
-			} else next_frame = now + 20;
+			}
 		}
 		if (now >= next_stat) {
 			FILE *sf = fopen(UI_RUN "/present-stats.new", "w");
@@ -1726,6 +1909,9 @@ int main(int argc, char **argv)
 			if (sf) {
 				fprintf(sf, "frames %lu\nsame %lu\nflips %lu\nrows_dithered %lu\ncompose_ms %llu\npresent_ms %llu\n", stat_frames, stat_same, stat_flips,
 					stat_rows, stat_compose_us / 1000, stat_present_us / 1000);
+				fprintf(sf, "live_frames %llu\nlive_decode_ms %llu\nlive_derive_ms %llu\nregrounds %llu\nreground_ms %llu\n", lw_frames, lw_decode_us / 1000,
+					lw_derive_us / 1000, wp_regrounds, wp_reground_us / 1000);
+				fprintf(sf, "reground_need_ms %llu\nreground_px %llu\nreground_run_px %llu\n", wp_need_us / 1000, gr_px_total, gr_run_total);
 				fclose(sf);
 				rename(UI_RUN "/present-stats.new", UI_RUN "/present-stats");
 			}
@@ -1735,7 +1921,9 @@ int main(int argc, char **argv)
 				      { .fd = bus_fd(now), .events = POLLIN }, { .fd = powerfd, .events = POLLIN } };
 		long wait = asleep ? 200 : 30;
 
-		if (!asleep && !flip_pending && next_frame - now < wait) wait = next_frame - now < 1 ? 1 : next_frame - now;
+		/* the next frame is made while a flip is in flight too; a frame made and waiting goes out on the flip's completion (DRM fd) */
+		if (!asleep && !frame_ready && next_frame - now < wait) wait = next_frame - now < 1 ? 1 : next_frame - now;
+		if (!asleep && !frame_ready && lw.playing && lw_next(now) - now < wait) wait = lw_next(now) - now < 1 ? 1 : lw_next(now) - now;
 		if (poll(p, 5, (int)wait) > 0) {
 			if (p[3].revents & POLLIN) bus_handle();
 			if (p[4].revents & (POLLIN | POLLERR)) power_events_read();
@@ -1744,6 +1932,7 @@ int main(int argc, char **argv)
 	if (powerfd >= 0) close(powerfd);
 	if (keyfd >= 0) close(keyfd);
 	if (touchfd >= 0) close(touchfd);
+	panel_speed(0);
 	backlight_level(bright_max);
 	close(fd);
 	return 0;

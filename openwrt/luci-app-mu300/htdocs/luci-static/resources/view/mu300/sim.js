@@ -63,20 +63,32 @@ return view.extend({
             if(initial)select.value=r.saved_sim===1?'1':'0';
         }
         paint(data[1],true);
-        var physical=data[2]||{}, physicalSelect=null, physicalButton=null, physicalNote=null;
+        var physical=data[2]||{}, physicalSelect=null, physicalButton=null, physicalNote=null, pairSelects=[],pairButton=null;
+        if(physical.error)panel.append(el('p',message(physical.error),'mud-note'));
         function physicalName(n) {
-            return M.translate(n===3?'外置 SIM':'内置 SIM')+(n===3?'':' '+(n+1));
+            // MU3356's official needReversePsimMapping maps external 1 to raw
+            // card 4 (logical SIM2), external 2 to card 3 (logical SIM1).
+            if(physical.model==='f50pro' && (n===3 || n===4))return M.translate('外置 SIM')+' '+(n===4?1:2);
+            return M.translate(n===3?'外置 SIM':'内置 SIM')+' '+(n===3?1:n+1);
         }
         function paintPhysical(r,initial) {
             physical=r;
             if(!physicalButton)return;
             physicalButton.disabled=!r.ready||!!self.busy;
             physicalSelect.disabled=!r.ready||!!self.busy;
+            if(pairButton) {
+                pairButton.disabled=!r.ready||!!self.busy;
+                pairSelects.forEach(function(select,slot){
+                    select.disabled=!r.ready||!!self.busy;
+                    var source=(r.logical_cards||[])[slot];
+                    if(initial && source!=null)select.value=String(source);
+                });
+            }
             if(initial) {
                 var current=r.saved_card==null?r.active_card:r.saved_card;
                 if(current!=null)physicalSelect.value=String(current);
             }
-            var layouts=r.model==='u30pro'?{0:'3内置卡 + 1插拔卡',1:'3内置卡',2:'2内置卡',3:'2内置卡 + 1插拔卡',4:'3内置卡 + 1插拔卡',5:'1插拔卡',6:'2内置卡'}:{0:'3内置卡',1:'3内置卡 + 1插拔卡',2:'2内置卡 + 1插拔卡',3:'2内置卡'};
+            var layouts=r.model==='f50pro'?{0:'3内置卡',1:'2内置卡',2:'2内置卡',3:'2内置卡 + 2插拔卡',4:'2内置卡 + 2插拔卡',5:'2插拔卡'}:r.model==='u30pro'?{0:'3内置卡 + 1插拔卡',1:'3内置卡',2:'2内置卡',3:'2内置卡 + 1插拔卡',4:'3内置卡 + 1插拔卡',5:'1插拔卡',6:'2内置卡'}:{0:'3内置卡',1:'3内置卡 + 1插拔卡',2:'2内置卡 + 1插拔卡',3:'2内置卡'};
             physicalNote.textContent=M.translate(layouts[r.board_id]||'SIM')+' · '+M.translate('当前上网卡')+'：'+
                 (r.active_card==null?M.translate('未连接'):physicalName(r.active_card));
             if(!r.ready)physicalNote.textContent+=' · '+message('physical_mux_unavailable');
@@ -86,15 +98,52 @@ return view.extend({
             // AT/cache slot indices. eSIM3 shares SIM2; pSIM shares SIM1.
             controls.hidden=true;
             var physicalBox=el('div',null,'mud-data-sim');panel.append(physicalBox);
-            physicalBox.append(el('h3',M.translate(physical.model==='u30pro'?'U30 Pro 物理卡选择':'V50 物理卡选择')));
+            physicalBox.append(el('h3',physical.model==='f50pro'?'F50 Pro · '+M.translate('SIM 卡管理'):M.translate(physical.model==='u30pro'?'U30 Pro 物理卡选择':'V50 物理卡选择')));
             var physicalRow=el('div',null,'mud-data-sim-controls');physicalBox.append(physicalRow);
             physicalSelect=el('select');physicalSelect.id='mud-v50-card';
-            (physical.cards||[]).forEach(function(n){var o=el('option',physicalName(n));o.value=String(n);physicalSelect.append(o);});
+            var choices=(physical.cards||[]).slice();
+            if(physical.model==='f50pro') {
+                function order(n){return n===4?3:n===3?4:n;}
+                choices.sort(function(a,b){return order(a)-order(b);});
+            }
+            choices.forEach(function(n){var o=el('option',physicalName(n));o.value=String(n);physicalSelect.append(o);});
             var physicalLabel=el('label',M.translate('默认上网卡'));physicalLabel.htmlFor=physicalSelect.id;
             physicalButton=el('button',M.translate('切换上网卡'),'mud-btn');physicalButton.type='button';
             physicalRow.append(physicalLabel,physicalSelect,physicalButton);
             physicalNote=el('p',null,'mud-note');physicalBox.append(physicalNote);
-            physicalBox.append(el('p',M.translate('内置 SIM 3 与内置 SIM 2 共用逻辑卡槽 SIM2；外置 SIM 与内置 SIM 1 共用 SIM1。射频、锁定及 AT 查看仍按两个逻辑卡槽控制。'),'mud-note'));
+            if(physical.model==='f50pro') {
+                // Hardware routing comes from MU3356, not an operator match.
+                physicalBox.append(el('p',M.translate('射频、锁定及 AT 查看仍按两个逻辑卡槽控制。'),'mud-note'));
+                var pairBox=el('div',null,'mud-data-sim');physicalBox.append(pairBox);
+                pairBox.append(el('h3',M.translate('卡源组合')));
+                pairBox.append(el('p',M.translate('分别选择两个逻辑栈接入的卡源，重启后保留。卡源选择不改变默认上网卡或射频开关。'),'mud-note'));
+                [0,1].forEach(function(slot){
+                    var row=el('div',null,'mud-data-sim-controls'),label=el('label','IMEI'+(slot+1)+' · '+M.translate('卡源'));
+                    var select=el('select');select.id='mud-f50-source'+slot;label.htmlFor=select.id;
+                    choices.filter(function(id){return (id===0||id===3?0:1)===slot;}).forEach(function(id){
+                        var option=el('option',physicalName(id));option.value=String(id);select.append(option);
+                    });
+                    row.append(label,select);pairBox.append(row);pairSelects.push(select);
+                });
+                pairButton=el('button',M.translate('应用卡源组合'),'mud-btn');pairButton.type='button';pairButton.id='mud-f50-pair-apply';pairBox.append(pairButton);
+                pairButton.onclick=function(){
+                    if(self.busy)return;
+                    var first=Number(pairSelects[0].value),second=Number(pairSelects[1].value);
+                    self.busy=true;paintPhysical(physical,false);
+                    M.confirmBox('应用卡源组合？','IMEI1: '+physicalName(first)+' · IMEI2: '+physicalName(second),{danger:true}).then(function(yes){
+                        if(!yes||!root.isConnected)return;
+                        var toast=M.toast('正在应用卡源组合…',{type:'busy',timeout:0});
+                        return start('f50pro-pair-'+first+'-'+second).then(function(r){
+                            if(!r.ok||!r.id)throw new Error(r.error||'网络设置提交失败');return wait(r.id);
+                        }).then(function(){M.toast('卡源组合已保存',{type:'success'});})
+                          .catch(function(e){if(root.isConnected)M.toast(message(e.message),{type:'error'});})
+                          .finally(function(){toast.close();});
+                    }).finally(function(){
+                        self.busy=false;
+                        if(root.isConnected)getPhysical().then(function(r){if(root.isConnected)paintPhysical(r,true);}).catch(function(){paintPhysical(physical,false);});
+                    });
+                };
+            } else physicalBox.append(el('p',M.translate('内置 SIM 3 与内置 SIM 2 共用逻辑卡槽 SIM2；外置 SIM 与内置 SIM 1 共用 SIM1。射频、锁定及 AT 查看仍按两个逻辑卡槽控制。'),'mud-note'));
             paintPhysical(physical,true);
             physicalButton.onclick=function(){
                 if(self.busy)return;
@@ -103,9 +152,9 @@ return view.extend({
                     if(!yes||!root.isConnected)return;
                     physicalButton.disabled=true;physicalSelect.disabled=true;
                     var toast=M.toast('正在切换上网卡…',{type:'busy',timeout:0});
-                    return start((physical.model==='u30pro'?'u30pro':'v50')+'-card-'+target).then(function(r){
+                    return start((physical.model==='f50pro'?'f50pro':physical.model==='u30pro'?'u30pro':'v50')+'-card-'+target).then(function(r){
                         if(!r.ok||!r.id)throw new Error(r.error||'网络设置提交失败');return wait(r.id);
-                    }).then(function(){M.selectViewedSlot(target===0||target===3?'0':'1');M.toast('上网卡切换完成',{type:'success'});})
+                    }).then(function(){M.selectViewedSlot(target===0||target===3?'0':'1',true);M.toast('上网卡切换完成',{type:'success'});})
                       .catch(function(e){if(root.isConnected)M.toast(message(e.message),{type:'error'});})
                       .finally(function(){toast.close();});
                 }).finally(function(){
@@ -143,7 +192,7 @@ return view.extend({
                 return start(target).then(function(r) {
                     if(!r.ok || !r.id)throw new Error(r.error||'网络设置提交失败');
                     return wait(r.id);
-                }).then(function() { M.selectViewedSlot(target); M.toast('上网卡切换完成',{type:'success'}); })
+                }).then(function() { M.selectViewedSlot(target,true); M.toast('上网卡切换完成',{type:'success'}); })
                   .catch(function(e) { if(root.isConnected)M.toast(message(e.message),{type:'error'}); })
                   .finally(function() { toast.close(); M.busy(button,false); select.disabled=false; if(root.isConnected)return get().then(function(r){if(root.isConnected)paint(r,true);}).catch(function(){}); });
             }).finally(function(){self.busy=false; paint(last,false);});

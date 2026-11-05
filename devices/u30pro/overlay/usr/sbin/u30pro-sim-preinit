@@ -1,0 +1,74 @@
+#!/bin/sh
+# Restore the product's card sources before starting the CP, not during its
+# SIM/SMS initialization. This is not a live switching or RF-control endpoint.
+set -eu
+export PATH="$PATH:/opt/mu300/bin:/opt/mu300/busybox-bin:/usr/sbin:/sbin"
+root=${MU300_SYSROOT:-}
+model=$(cat "$root/etc/mu300/model" 2>/dev/null || true)
+run=${MU300_U30PRO_RUN:-/run}
+hw=${MU300_U30PRO_MUX:-/sys/bus/platform/devices/sim_gpio_ctl}
+cfg() { uci -q get "unisoc_modem.main.$1" 2>/dev/null || true; }
+fail() { echo "$model-sim-preinit: $*" >&2; exit 1; }
+case $model in
+    f50pro)
+        . "${MU300_F50PRO_CARD_LIB:-/opt/mu300/lib/f50pro-card.sh}"
+        first=$(cfg f50pro_route0); second=$(cfg f50pro_route1); single=$(cfg f50pro_card)
+        # MU3356 without a saved choice retains the stock bootloader wiring.
+        [ -n "$first$second$single" ] || exit 0
+        board=$(f50pro_board_id) || fail unknown_board
+        layout=mu3356
+        card_map() { f50pro_card_map "$@"; };;
+    u30pro)
+        . "${MU300_U30PRO_CARD_LIB:-/opt/mu300/lib/u30pro-card.sh}"
+        # Unknown SKUs retain stock wiring, as in the runtime controller.
+        board=$(u30pro_board_id) || exit 0
+        single=$(cfg u30pro_card)
+        [ -n "$single" ] || single=$(u30pro_default_card "$board")
+        cards=$(u30pro_boot_cards "$board" "$single") || fail invalid_saved_card
+        layout=mu5358
+        card_map() { u30pro_card_map "$@"; };;
+    *) exit 0;;
+esac
+[ "$(cat "$hw/layout" 2>/dev/null)" = "$layout" ] || fail wrong_mux_layout
+chip=; psim=
+plan() {
+    local mapping
+    mapping=$(card_map "$board" "$1") || fail invalid_saved_card
+    set -- $mapping
+    [ -z "${4:-}" ] || fail invalid_mapping
+    [ -z "${expected:-}" ] || [ "$1" = "$expected" ] || fail invalid_saved_stack
+    case "$2:$3" in
+        fixed:0) ;;
+        chip_select:0|chip_select:1) chip=$3;;
+        psim_select:0|psim_select:1) psim=$3;;
+        *) fail invalid_mapping;;
+    esac
+}
+# Validate the complete saved pair before touching either GPIO.
+if [ "$model" = u30pro ]; then
+    expected=
+    for card in $cards; do plan "$card"; done
+elif [ -n "$first$second" ]; then
+    expected=0; plan "$first"
+    expected=1; plan "$second"
+else
+    expected=; plan "$single"
+fi
+old_chip=$(cat "$hw/chip_select"); old_psim=$(cat "$hw/psim_select")
+case "$old_chip:$old_psim" in 0:0|0:1|1:0|1:1) ;; *) fail invalid_mux_readback;; esac
+chip=${chip:-$old_chip}; psim=${psim:-$old_psim}
+[ "$chip:$psim" != "$old_chip:$old_psim" ] || exit 0
+# A service restart may recheck an unchanged choice, but must never live-mux
+# an already started CP. The runtime card controller retains that ownership.
+if [ -e "$run/u30pro-cp-started" ] || [ -S "$run/mu300-modem/io.sock" ] ||
+   pidof u30-modemd >/dev/null 2>&1; then
+    fail cp_already_started
+fi
+if [ "$chip" != "$old_chip" ]; then
+    printf '%s\n' "$chip" > "$hw/chip_select" || fail chip_write_failed
+fi
+if [ "$psim" != "$old_psim" ]; then
+    printf '%s\n' "$psim" > "$hw/psim_select" || fail psim_write_failed
+fi
+[ "$(cat "$hw/chip_select"):$(cat "$hw/psim_select")" = "$chip:$psim" ] || fail mux_readback_failed
+printf '%s:%s -> %s:%s\n' "$old_chip" "$old_psim" "$chip" "$psim" > "$run/$model-sim-preinit"

@@ -69,7 +69,28 @@ function snapshot(now) {
     let tx = trim(fs.readfile(NET + '/' + name + '/statistics/tx_bytes') || '');
     let idx = trim(fs.readfile(NET + '/' + name + '/ifindex') || '');
     if (!match(rx, /^[0-9]+$/) || !match(tx, /^[0-9]+$/) || !match(idx, /^[0-9]+$/)) return null;
-    return { device: name, boot: boot, ifindex: int(idx), rx: int(rx), tx: int(tx) };
+    rx=int(rx); tx=int(tx);
+    // Default SIPA mappings identify a SIM bank, not only its first PDP CID.
+    // An explicitly configured statistics interface retains single-port scope.
+    if (!db.config.device && match(name, /^sipa_eth(0|8)$/)) {
+        let first=name=='sipa_eth8'?8:0;
+        for (let offset=1;offset<8;offset++) {
+            let path=NET+'/sipa_eth'+(first+offset);
+            if (!fs.stat(path)) continue;
+            let r=trim(fs.readfile(path+'/statistics/rx_bytes') || '');
+            let t=trim(fs.readfile(path+'/statistics/tx_bytes') || '');
+            if (!match(r,/^[0-9]+$/) || !match(t,/^[0-9]+$/)) return null;
+            rx+=int(r); tx+=int(t);
+        }
+        // Adding bank scope must not import historical traffic from other CIDs.
+        if (!db.bank_counters) {
+            if (db.last?.boot==boot && db.last?.ifindex==int(idx) && db.last?.device==name) {
+                db.last.rx=rx; db.last.tx=tx;
+            }
+            db.bank_counters=true;
+        }
+    }
+    return { device: name, boot: boot, ifindex: int(idx), rx, tx };
 }
 function view(now) {
     let s = core.status(db, now);

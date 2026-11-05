@@ -191,6 +191,9 @@ let bus = null;
 const registration = cache(env('MU300_REGISTRATION_DIR', RUN + '/mu300-registration'),
 	(name, data) => { if (bus) bus.event(name, data); });
 function urc_event(chan, line) {
+	// NR0 is the sole unsolicited ingress. A spool completion is an internal
+	// notification, carrying the existing pool owner for its one importer/ACK.
+	if (chan != 'stty_nr0' && index(['+CMT (PDU spooled)', '+CMT (not spooled)'], line) < 0) return;
 	if (bus)
 		bus.event('mu300.modem.urc', { channel: chan, line: line });
 }
@@ -500,6 +503,12 @@ function cmd_line(b, c, line) {
 		cmt_start(c, line, b.cmdlog);
 		return;
 	}
+	// Native firmware can announce either SIM's bearer on nr0, including
+	// while a command is collecting. These are unsolicited-only grammars:
+	// publish hints without changing the command response or its ordering.
+	if (trim(fs.readfile('/etc/mu300/platform') || '') == 'u30pro' &&
+	    match(line, /^(\+CGEV:|\+SPPCODATA:|NO CARRIER$)/))
+		urc_event(c.name, line);
 	if (b.phase == 'collect') {
 		if (line == '')
 			return;
@@ -866,7 +875,7 @@ function run_round(R) {
 			x.REG = cp.reg_fragment(x.CEREG); x.REG5 = cp.reg_fragment(x.C5GREG);
 			x.CESQJ = cp.cesq_fragment(x.CESQ); x.CFUNN = cp.n_or_null(x.CFUN);
 			if (full)
-				round_publish(R, SIGF, jstr({ ts: time(), partial: 1, cfun: x.CFUNN, reg: x.REG, reg5g: x.REG5, sig_src: 'cesq',
+				round_publish(R, SIGF, jstr({ ts: time(), card: int(R.slot), partial: 1, cfun: x.CFUNN, reg: x.REG, reg5g: x.REG5, sig_src: 'cesq',
 					sig: x.CESQJ, lte: null, nr: null }) + '\n');
 			let R4 = cp.reg_stat(x.CEREG), R5 = cp.reg_stat(x.C5GREG);
 			x.REGISTERED = (R4 in [ '1', '5', '10' ]) || (R5 in [ '1', '5', '10' ]);
@@ -987,7 +996,7 @@ function run_round(R) {
 			// A competing AT owner did not grant a read. It says nothing about
 			// the modem being alive. Never replace good background data with it.
 			if (R.busy) { if (R.live) R.result={busy:1,error:'busy'}; return; }
-			let err = jstr({ ts: time(), error: 'AT backend did not answer (radio off, modem restarting, or adapter unavailable)' }) + '\n';
+			let err = jstr({ ts: time(), card: int(R.slot), error: 'AT backend did not answer (radio off, modem restarting, or adapter unavailable)' }) + '\n';
 			round_publish(R, SIGF, err);
 			if (full)
 				round_publish(R, CELL, err);
@@ -997,7 +1006,7 @@ function run_round(R) {
 		let SIG = x.CESQJ, SRC = 'cesq';
 		if (NR != null) { SIG = NR; SRC = 'nr'; }
 		else if (LTE != null) { SIG = LTE; SRC = 'lte'; }
-		round_publish(R, SIGF, jstr({ ts: time(), cfun: x.CFUNN, reg: x.REG, reg5g: x.REG5, sig_src: SRC, sig: SIG, lte: LTE, nr: NR }) + '\n');
+		round_publish(R, SIGF, jstr({ ts: time(), card: int(R.slot), cfun: x.CFUNN, reg: x.REG, reg5g: x.REG5, sig_src: SRC, sig: SIG, lte: LTE, nr: NR }) + '\n');
 		if (!full || signal_only)
 			return;
 		let NEIGH = [ ...cp.nr_neighbours(x.SP_NRNB, x.SP_NRNB_SOURCE), ...cp.sp_ltenb(x.SP_LN) ];
@@ -1009,7 +1018,7 @@ function run_round(R) {
 			x.IDENT_JSON.msisdn = q(x.msisdn);
 			x.IDENT_JSON.msisdn_source = q(x.msisdn_src);
 		}
-		round_publish(R, CELL, jstr({ ts: time(), partial: partial ?? 0, neigh_pending: neigh_pending ?? 0, cfun: x.CFUNN, reg: x.REG, reg5g: x.REG5,
+		round_publish(R, CELL, jstr({ ts: time(), card: int(R.slot), partial: partial ?? 0, neigh_pending: neigh_pending ?? 0, cfun: x.CFUNN, reg: x.REG, reg5g: x.REG5,
 			operator: cp.cops_fragment(x.COPS, x.OPN[0], x.OPN[1]), sig_src: SRC, sig: SIG, lte: LTE, nr: NR,
 			qos: cp.qos_fragment(x.QOS), neigh: NEIGH, ident: x.IDENT_JSON }) + '\n');
 	};
@@ -1065,6 +1074,7 @@ function start_round(mode, requested_slot, reply) {
 	let R = { mode: mode, dir: DIR, ident: IDENT, ident_dir: ident_dir, slot: slot, held: [ LOCK ], cands: [],
 		deadline: time() + ((mode == 'fast') ? 12 : 25), live, reply };
 	let card_profile = trim(fs.readfile('/etc/mu300/platform') || '') == 'u30pro' ? 'u30pro' : 'v50';
+	if (card_profile == 'u30pro' && trim(fs.readfile('/etc/mu300/model') || '') == 'f50pro') card_profile = 'f50pro';
 	R.epoch_path = env('MU300_CARD_EPOCH_PATH', exists('/sys/bus/platform/devices/sim_gpio_ctl/chip_select') ? RUN + '/mu300/' + card_profile + '-generation' + slot : '');
 	R.epoch = R.epoch_path ? rd(R.epoch_path) : '';
 	// one of the dashboard's channels, claimed without waiting (the pool the collector program uses too)

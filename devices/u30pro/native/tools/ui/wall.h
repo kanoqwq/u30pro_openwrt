@@ -12,13 +12,21 @@
  * Without a wallpaper nothing here draws: the UI keeps its gradient and its translucent cards.
  *
  * Settings (u30pro_native_control.display): wp_dim 0..90 (percent darker, 30), glass 0..100 (transparency, 50), glass_blur 0..100 (50),
- * glass_tint 0..3 (night blue, graphite, white fog, theme colour), wp_live 0..2 (where a clip plays: nowhere, the lock screen, the lock
- * screen and the home page; 2).  A clip plays while one of those is on screen and still; anywhere else its current frame is the wallpaper.
+ * glass_tint 0..3 (night blue, graphite, white fog, theme colour), wp_live_pages (a mask of the scenes a clip plays on, LIVE_*), wp_live 0..2
+ * (the older form: nowhere, the lock screen, the lock screen and the home page; 2).  A clip plays while one of those is on screen and still;
+ * anywhere else its current frame is the wallpaper.
  *
- * wallpaper.live: a 16-byte header ("U3LW", version 1, fps 1..30, width and height 240 as u16, a u16 0, the frame count as u32; little
- * endian), then each frame as a u32 length and a baseline JPEG of 240x240.  The clip loops. */
+ * wallpaper.live: a 16-byte header ("U3LW", version, fps 1..60 (the web page makes up to 30), width and height 240 as u16, a u16, the
+ * frame count as u32; little endian), then each frame as a u32 length and its data.  The clip loops.
+ *   version 1 (the u16 is 0): each frame a baseline JPEG of 240x240.
+ *   version 2 (the u16 is the tile side, 16; as zwrt-devui's clips): each frame a zlib stream that inflates to a kind byte and then either
+ *     0 (key): every pixel, R G B, rows top down; or
+ *     1 (delta): a bitmap of the 16x16 tiles that changed (raster order, bit i % 8 of byte i / 8), then for each such tile its 16 rows of 16
+ *       pixels as per-channel differences from the frame before (mod 256).
+ *   The first frame is a key frame.  Version 2 is lossless and needs no JPEG decoding: a frame costs an inflate and the changed tiles. */
 #ifndef U30PRO_UI_WALL_H
 #define U30PRO_UI_WALL_H
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -27,6 +35,7 @@
 #define STB_IMAGE_STATIC
 #define STB_IMAGE_IMPLEMENTATION
 #define STBI_ONLY_JPEG
+#define STBI_SUPPORT_ZLIB
 #define STBI_NO_STDIO
 #define STBI_NO_LINEAR
 #define STBI_NO_HDR
@@ -55,11 +64,48 @@
 #endif
 #define WP_N (SCREEN * SCREEN)
 
-static int wp_dim = 30, glass_clear = 50, glass_blur = 50, glass_tint, wp_live = 2;
+static int wp_dim = 30, glass_clear = 50, glass_blur = 50, glass_tint, wp_live = 2, wp_live_pages = -1;
 static const char *const TINT_NAMES[] = { "夜蓝", "石墨", "白雾", "主题色" };
 static const uint32_t TINT_RGB[] = { 0x161E2C, 0x1C1C1E, 0xE1E8F0, 0 };
 #define NTINT 4
-static const char *const LIVE_NAMES[] = { "关闭", "锁屏", "锁屏和主页" };
+/* where a live wallpaper plays: wp_live_pages, a mask of these scenes (u30pro_native_control.display, the same bits in wallpaper.uc and the
+ * web page).  Without it the older wp_live counts: 0 nowhere, 1 the lock screen, 2 the lock screen and the home page; the screen and the web
+ * page keep wp_live in step (2 when the home page is in the mask, 1 for the lock screen alone), which the theme's overview page reads. */
+enum { LIVE_LOCK = 1, LIVE_HOME = 2, LIVE_SIGNAL = 4, LIVE_TRAFFIC = 8, LIVE_FUNC = 16, LIVE_FNPAGE = 32, LIVE_SHEET = 64, LIVE_PIN = 128,
+       LIVE_POPUP = 256, LIVE_ALL = 511 };
+/* the choices of the screen's own setting row, in turn; any other mask (set on the web page) shows as "custom" */
+static const int LIVE_PRESETS[] = { 0, LIVE_LOCK, LIVE_LOCK | LIVE_HOME, LIVE_ALL };
+static const char *const LIVE_NAMES[] = { "关闭", "锁屏", "锁屏和主页", "全部界面", "自定义" };
+#define NLIVE_PRESETS 4
+
+static int live_mask(void)
+{
+	if (wp_live_pages >= 0 && wp_live_pages <= LIVE_ALL) return wp_live_pages;
+	return wp_live == 2 ? LIVE_LOCK | LIVE_HOME : wp_live == 1 ? LIVE_LOCK : 0;
+}
+
+static int live_preset(void)
+{
+	for (int i = 0; i < NLIVE_PRESETS; i++) if (LIVE_PRESETS[i] == live_mask()) return i;
+	return NLIVE_PRESETS;
+}
+
+/* the next preset on the screen's row; wp_live follows for the older readers */
+static void live_next(void)
+{
+	int i = live_preset();
+
+	wp_live_pages = LIVE_PRESETS[i >= NLIVE_PRESETS - 1 ? 0 : i + 1];
+	wp_live = wp_live_pages & LIVE_HOME ? 2 : wp_live_pages & LIVE_LOCK ? 1 : 0;
+}
+
+static unsigned long long wp_clock_us(void)
+{
+	struct timespec t;
+
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return (unsigned long long)t.tv_sec * 1000000ull + (unsigned long long)t.tv_nsec / 1000ull;
+}
 
 static int wp_on;			/* a wallpaper is in use */
 static int g_bgx, g_bgy;		/* where the canvas being drawn will be shown, relative to the screen */
@@ -198,44 +244,62 @@ enum { GLASS_LUMA_MAX = 112, GLASS_THIN_LUMA_MAX = 135, GLASS_LUMA_MIN = 168, GL
 
 static int glass_is_light(void) { return wp_luma(tint_r, tint_g, tint_b) >= 128; }
 
-/* tone the blurred wallpaper so that the glass over it stays within those limits: a soft knee, so nothing clips flat */
-static void wp_tone(const uint8_t *src, uint8_t *dst, float strength, int lmax, int lmin)
+/* tone the blurred wallpaper so that the glass over it stays within those limits: a soft knee, so nothing clips flat.  The mapping is a
+ * table per luma (ToneTab, made once per look: tone_tab); a pixel then takes only lookups and shifts: luma in 8.8 fixed point, and per luma
+ * the factor that brings a channel to the mapped luma (darkening: scale; lightening: towards white).  Regrounding tones the few glass
+ * samples it needs one by one (tone_px) instead of the whole picture. */
+typedef struct { int on, light, map[256], fac[256]; } ToneTab;
+
+static void tone_tab(ToneTab *t, float strength, int lmax, int lmin)
 {
 	const float pane = (float)(100 - glass_clear) / 100.f * strength, keep = (1.f - pane) * .94f;
-	const int light = glass_is_light();
 	const float base = (float)wp_luma(tint_r, tint_g, tint_b) * pane * .94f + 255.f * .06f;
 	float lim;
-	int map[256];
 
-	memcpy(dst, src, WP_N * 3);
+	t->on = 0;
+	t->light = glass_is_light();
 	if (keep < .02f) return;
-	lim = ((float)(light ? lmin : lmax) - base) / keep;
-	if (light ? lim <= 0.f : lim >= 255.f) return;
+	lim = ((float)(t->light ? lmin : lmax) - base) / keep;
+	if (t->light ? lim <= 0.f : lim >= 255.f) return;
 	for (int l = 0; l < 256; l++) {
 		float v = (float)l;
 
-		if (!light) {
+		if (!t->light) {
 			float knee = lim * .6f;
 
-			if (v > knee) { float t = (v - knee) / (lim - knee); v = knee + (lim - knee) * t / (1.f + t); }
+			if (v > knee) { float u = (v - knee) / (lim - knee); v = knee + (lim - knee) * u / (1.f + u); }
 		} else {
 			float knee = lim + (255.f - lim) * .4f;
 
-			if (v < knee) { float t = (knee - v) / (knee - lim); v = knee - (knee - lim) * t / (1.f + t); }
+			if (v < knee) { float u = (knee - v) / (knee - lim); v = knee - (knee - lim) * u / (1.f + u); }
 		}
-		map[l] = v < 0.f ? 0 : (v > 255.f ? 255 : (int)lrintf(v));
+		t->map[l] = v < 0.f ? 0 : (v > 255.f ? 255 : (int)lrintf(v));
+		if (t->map[l] != l) t->on = 1;
+		/* darkening: channel * m / l; lightening: channel + (255 - channel) * (m - l) / (255 - l); as 16.16 factors */
+		t->fac[l] = !t->light ? (l ? (t->map[l] << 16) / l : 0) : ((t->map[l] - l) << 16) / (255 - l > 1 ? 255 - l : 1);
 	}
-	for (int i = 0; i < WP_N * 3; i += 3) {
-		uint8_t *p = &dst[i];
-		int l = wp_luma(p[0], p[1], p[2]), m = map[l];
+}
 
-		if (m == l) continue;
-		for (int c = 0; c < 3; c++) {
-			int v = !light ? (l ? p[c] * m / l : 0) : p[c] + (255 - p[c]) * (m - l) / (255 - l > 1 ? 255 - l : 1);
+static inline void tone_px(const ToneTab *t, const uint8_t *q, uint8_t *o)
+{
+	int l = (q[0] * 77 + q[1] * 150 + q[2] * 29) >> 8, f;
 
-			p[c] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
-		}
+	if (!t->on || t->map[l] == l) { o[0] = q[0]; o[1] = q[1]; o[2] = q[2]; return; }
+	f = t->fac[l];
+	for (int c = 0; c < 3; c++) {
+		int v = !t->light ? (q[c] * f) >> 16 : q[c] + (((255 - q[c]) * f) >> 16);
+
+		o[c] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
 	}
+}
+
+/* the two tones of the glass (glass, thin glass), for the look of wp_check's last call */
+static ToneTab wp_tones[2];
+
+static void wp_tone(const uint8_t *src, uint8_t *dst, const ToneTab *t)
+{
+	if (!t->on) { memcpy(dst, src, WP_N * 3); return; }
+	for (int i = 0; i < WP_N * 3; i += 3) tone_px(t, src + i, dst + i);
 }
 
 /* everything about a glass pixel that does not depend on what lies behind it: coverage, the lens offset of the backdrop sample, and the
@@ -335,15 +399,34 @@ static GlassMask *glass_mask(float x, float y, float w, float h, float r, int th
 	return m;
 }
 
-static inline uint32_t glass_px(const uint8_t *back, int px, int py, int lx, int ly, int keep, int cr, int cg, int cb)
+static inline uint32_t glass_px(const uint8_t *back, int px, int py, int lx, int ly, int keep, int cr, int cg, int cb, int *psx, int *psy)
 {
 	int sx = px + g_bgx - lx, sy = py + g_bgy - ly;
 	const uint8_t *q;
 
 	sx = sx < 0 ? 0 : (sx > SCREEN - 1 ? SCREEN - 1 : sx);
 	sy = sy < 0 ? 0 : (sy > SCREEN - 1 ? SCREEN - 1 : sy);
+	*psx = sx; *psy = sy;
 	q = &back[(sy * SCREEN + sx) * 3];
 	return gx_rgb(glass_ch(q[0], keep, cr), glass_ch(q[1], keep, cg), glass_ch(q[2], keep, cb));
+}
+
+/* a glass pixel over a tracked canvas: drawn with alpha a, it adds a * keep / 256 of the backdrop at sx, sy (the other glass under it, if any,
+ * gives way: its share joins this one) */
+static void glass_put(Cv *c, int px, int py, uint32_t col, int a, int thin, int keep, int sx, int sy)
+{
+	GxGround *g;
+
+	if (!(a = gx_put_a(c, px, py, col, a)) || !c->g) return;
+	g = &c->g[py * c->w + px];
+	{
+		int k = g->kg + a * keep / 256;
+
+		g->kg = (uint8_t)(k > 255 ? 255 : k);
+	}
+	g->gk = (uint8_t)(thin ? 2 : 1);
+	g->sx = (uint8_t)sx;
+	g->sy = (uint8_t)sy;
 }
 
 /* a glass box x, y, w, h with corner radius r (a disc: w = h = 2r); thin: the lighter glass of the home dial; lift 0..1: the pressed look
@@ -362,18 +445,26 @@ static void gx_glass(Cv *c, float x, float y, float w, float h, float r, int thi
 	if (!(m = glass_mask(x, y, w, h, r, thin, lift))) return;
 	for (int i = 0; i < m->nrows; i++) {
 		const GlassRow *row = &m->rows[i];
-		int py = m->y0 + i;
+		int py = m->y0 + i, sx, sy;
 
-		for (int px = row->a; px < row->b; px++) gx_put(c, px, py, glass_px(back, px, py, 0, 0, row->keep, row->cr, row->cg, row->cb), alpha);
+		for (int px = row->a; px < row->b; px++) {
+			uint32_t col = glass_px(back, px, py, 0, 0, row->keep, row->cr, row->cg, row->cb, &sx, &sy);
+
+			glass_put(c, px, py, col, alpha, thin, row->keep, sx, sy);
+		}
 	}
 	for (int i = 0; i < m->nedge; i++) {
 		const GlassEdge *e = &m->edge[i];
+		int sx, sy;
+		uint32_t col = glass_px(back, e->x, e->y, e->lx, e->ly, e->keep, e->cr, e->cg, e->cb, &sx, &sy);
 
-		gx_cov(c, e->x, e->y, glass_px(back, e->x, e->y, e->lx, e->ly, e->keep, e->cr, e->cg, e->cb), e->cov, alpha);
+		if (e->cov > 0.f) glass_put(c, e->x, e->y, col, (int)(e->cov * (float)alpha + 0.5f), thin, e->keep, sx, sy);
 	}
 }
 
 /* the background of a canvas: the wallpaper (wp_bg) or the frosted backdrop of a sheet (wp_frost), from where the canvas will be shown */
+static int wp_shifted;		/* a tracked canvas got the wallpaper from somewhere else than under it (a page sliding): no regrounding */
+
 static void wp_paint(Cv *dst, const uint32_t *src)
 {
 	if (src == wp_frost) wp_need(4);
@@ -387,6 +478,105 @@ static void wp_paint(Cv *dst, const uint32_t *src)
 			dst->p[y * SCREEN + x] = src[sy * SCREEN + (sx < 0 ? 0 : (sx > SCREEN - 1 ? SCREEN - 1 : sx))];
 		}
 	}
+	if (dst->g) {
+		const GxGround full = { (uint8_t)(src == wp_frost ? 2 : 1), 255, 0, 0, 0, 0, { 0, 0, 0 } };
+
+		for (int i = 0; i < WP_N; i++) dst->g[i] = full;
+		if (g_bgx || g_bgy) wp_shifted = 1;
+	}
+}
+
+/* ------------------------------------------------------------------ regrounding (the page stays, the live wallpaper moves under it) */
+/* what of the ground a pixel's record names, on the wallpaper now: the plain ground at i and the glass backdrop at the record's sample point */
+static inline void wp_ground_at(const GxGround *g, int i, int out[3])
+{
+	out[0] = out[1] = out[2] = 0;
+	if (g->kw) {
+		uint32_t w = g->wk == 2 ? wp_frost[i] : wp_bg[i];
+
+		out[0] = (int)(w >> 16 & 255) * g->kw; out[1] = (int)(w >> 8 & 255) * g->kw; out[2] = (int)(w & 255) * g->kw;
+	}
+	if (g->kg) {
+		uint8_t q[3];
+
+		tone_px(&wp_tones[g->gk == 2 ? 1 : 0], &wp_soft[((int)g->sy * SCREEN + g->sx) * 3], q);
+		out[0] += q[0] * g->kg; out[1] += q[1] * g->kg; out[2] += q[2] * g->kg;
+	}
+}
+
+/* x / 255, rounded, for x up to 2 * 255 * 255 */
+static inline int gr_div255(int x) { return ((x + 128) * 257) >> 16; }
+
+/* The plan of a regrounding, made once the frame is drawn: the pixels that show nothing but the plain ground (kw 255, no glass) as runs of a
+ * row copied straight from it, and the others that show some ground as a list, each from its rest and its shares; gr_need: the grounds named
+ * (bits as wp_need takes them).  Pixels drawn over completely are not visited at all. */
+typedef struct { int start, len, frost; } GrRun;
+static GrRun *gr_runs;
+static int *gr_px, gr_nruns, gr_npx, gr_need;
+
+/* once a frame is drawn: the plan, and what of each listed pixel is not the ground (rest = pixel - ground shares); 0 when c cannot be
+ * regrounded */
+static int wp_ground_rest(Cv *c)
+{
+	if (!c->g || !wp_on || wp_shifted) return 0;
+	if (!gr_runs) gr_runs = malloc(WP_N * sizeof *gr_runs);
+	if (!gr_px) gr_px = malloc(WP_N * sizeof *gr_px);
+	if (!gr_runs || !gr_px) return 0;
+	gr_nruns = gr_npx = gr_need = 0;
+	for (int i = 0; i < WP_N; i++) {
+		const GxGround *g = &c->g[i];
+
+		if (g->kw && g->wk == 2) gr_need |= 4;	/* the frosted ground; glass samples are toned one by one (wp_ground_at) */
+	}
+	wp_need(gr_need);
+	for (int i = 0; i < WP_N; i++) {
+		GxGround *g = &c->g[i];
+		uint32_t p = c->p[i];
+		int gr[3];
+
+		if (!g->kw && !g->kg) continue;
+		if (g->kw == 255 && !g->kg) {
+			GrRun *r = gr_nruns ? &gr_runs[gr_nruns - 1] : NULL;
+
+			if (r && r->start + r->len == i && i % SCREEN && r->frost == (g->wk == 2)) r->len++;
+			else gr_runs[gr_nruns++] = (GrRun){ i, 1, g->wk == 2 };
+			continue;
+		}
+		wp_ground_at(g, i, gr);
+		g->rest[0] = (int16_t)((int)(p >> 16 & 255) - gr_div255(gr[0]));
+		g->rest[1] = (int16_t)((int)(p >> 8 & 255) - gr_div255(gr[1]));
+		g->rest[2] = (int16_t)((int)(p & 255) - gr_div255(gr[2]));
+		gr_px[gr_npx++] = i;
+	}
+	return 1;
+}
+
+/* the page as drawn, on the wallpaper as it is now (another frame of the clip) */
+static unsigned long long wp_reground_us, wp_regrounds, wp_need_us, gr_px_total, gr_run_total;
+
+static void wp_reground(Cv *c)
+{
+	unsigned long long t0 = wp_clock_us();
+
+	wp_need(gr_need);
+	wp_need_us += wp_clock_us() - t0;
+	gr_px_total += (unsigned long long)gr_npx;
+	for (int r = 0; r < gr_nruns; r++) gr_run_total += (unsigned long long)gr_runs[r].len;
+	for (int r = 0; r < gr_nruns; r++)
+		memcpy(&c->p[gr_runs[r].start], &(gr_runs[r].frost ? wp_frost : wp_bg)[gr_runs[r].start], (size_t)gr_runs[r].len * 4);
+	for (int n = 0; n < gr_npx; n++) {
+		int i = gr_px[n], gr[3], v[3];
+		const GxGround *g = &c->g[i];
+
+		wp_ground_at(g, i, gr);
+		for (int k = 0; k < 3; k++) {
+			v[k] = g->rest[k] + gr_div255(gr[k]);
+			v[k] = v[k] < 0 ? 0 : (v[k] > 255 ? 255 : v[k]);
+		}
+		c->p[i] = gx_rgb(v[0], v[1], v[2]);
+	}
+	wp_reground_us += wp_clock_us() - t0;
+	wp_regrounds++;
 }
 
 /* ------------------------------------------------------------------ the wallpaper from wp_rgb */
@@ -397,8 +587,12 @@ static void wp_derive(void)
 	static uint8_t dimmed[WP_N * 3];
 
 	tint_r = (int)(t >> 16 & 255); tint_g = (int)(t >> 8 & 255); tint_b = (int)(t & 255);
+	tone_tab(&wp_tones[0], 1.f, GLASS_LUMA_MAX, GLASS_LUMA_MIN);
+	tone_tab(&wp_tones[1], 1.f - GLASS_THIN / 100.f, GLASS_THIN_LUMA_MAX, GLASS_LUMA_MIN);
+	const int k16 = keep * 65536 / 100;
+
 	for (int i = 0; i < WP_N; i++) {
-		int r = wp_rgb[i * 3] * keep / 100, g = wp_rgb[i * 3 + 1] * keep / 100, b = wp_rgb[i * 3 + 2] * keep / 100;
+		int r = (wp_rgb[i * 3] * k16) >> 16, g = (wp_rgb[i * 3 + 1] * k16) >> 16, b = (wp_rgb[i * 3 + 2] * k16) >> 16;
 
 		dimmed[i * 3] = (uint8_t)r; dimmed[i * 3 + 1] = (uint8_t)g; dimmed[i * 3 + 2] = (uint8_t)b;
 		wp_bg[i] = gx_rgb(r, g, b);
@@ -409,8 +603,8 @@ static void wp_derive(void)
 
 static void wp_need(int what)
 {
-	if ((what & 1) && !(wp_ready & 1)) { wp_tone(wp_soft, wp_glass[0], 1.f, GLASS_LUMA_MAX, GLASS_LUMA_MIN); wp_ready |= 1; }
-	if ((what & 2) && !(wp_ready & 2)) { wp_tone(wp_soft, wp_glass[1], 1.f - GLASS_THIN / 100.f, GLASS_THIN_LUMA_MAX, GLASS_LUMA_MIN); wp_ready |= 2; }
+	if ((what & 1) && !(wp_ready & 1)) { wp_tone(wp_soft, wp_glass[0], &wp_tones[0]); wp_ready |= 1; }
+	if ((what & 2) && !(wp_ready & 2)) { wp_tone(wp_soft, wp_glass[1], &wp_tones[1]); wp_ready |= 2; }
 	if ((what & 4) && !(wp_ready & 4)) {
 		/* a sheet's backdrop: the glass with no rim, a little darker, so the page under it falls back */
 		const float pane = (float)(100 - glass_clear) / 100.f;
@@ -461,7 +655,8 @@ static int wp_decode(const uint8_t *buf, size_t len)
 }
 
 /* ------------------------------------------------------------------ the live clip */
-static struct { uint8_t *map; size_t size; size_t *off; uint32_t *len; int n, fps, cur, want, playing; long t0; } lw;
+static struct { uint8_t *map; size_t size; size_t *off; uint32_t *len; int n, fps, cur, want, playing, ver; long t0; } lw;
+enum { LW_TILE = 16, LW_TX = SCREEN / LW_TILE, LW_TILES = LW_TX * LW_TX, LW_MAP = (LW_TILES + 7) / 8, LW_PAYLOAD = 1 + WP_N * 3 + LW_MAP };
 
 static uint32_t wp_rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 static unsigned wp_rd16(const uint8_t *p) { return (unsigned)p[0] | (unsigned)p[1] << 8; }
@@ -490,9 +685,11 @@ static int lw_open(const char *path)
 	lw.map = m;
 	lw.size = (size_t)st.st_size;
 	n = (int)wp_rd32(lw.map + 12);
-	if (memcmp(lw.map, "U3LW", 4) || lw.map[4] != 1 || lw.map[5] < 1 || lw.map[5] > 30 || wp_rd16(lw.map + 6) != SCREEN ||
-	    wp_rd16(lw.map + 8) != SCREEN || n < 1 || n > 30 * 60) { lw_close(); return -1; }
+	if (memcmp(lw.map, "U3LW", 4) || (lw.map[4] != 1 && lw.map[4] != 2) || lw.map[5] < 1 || lw.map[5] > 60 || wp_rd16(lw.map + 6) != SCREEN ||
+	    wp_rd16(lw.map + 8) != SCREEN || wp_rd16(lw.map + 10) != (lw.map[4] == 2 ? LW_TILE : 0) || n < 1 || n > 30 * 60) { lw_close(); return -1; }
+	lw.ver = lw.map[4];
 	lw.fps = lw.map[5];
+	lw.cur = -1;
 	lw.off = malloc((size_t)n * sizeof *lw.off);
 	lw.len = malloc((size_t)n * sizeof *lw.len);
 	if (!lw.off || !lw.len) { lw_close(); return -1; }
@@ -507,17 +704,84 @@ static int lw_open(const char *path)
 		lw.len[i] = len;
 		pos += len;
 	}
+	if (pos != lw.size) { lw_close(); return -1; }
 	lw.n = n;
 	return 0;
 }
 
-/* show frame i of the clip; 0 when it is on screen */
+/* time spent on clip frames (present-stats): decoding, and dimming plus blurring */
+static unsigned long long lw_decode_us, lw_derive_us, lw_frames;
+
+/* inflate a zlib stream into out (cap bytes); the length, or -1.  The image's zlib (libz.so.1 of the zlib package, opened at the first use)
+ * inflates several times faster than stb_image's; without it stb_image's does. */
+static int lw_inflate(uint8_t *out, int cap, const uint8_t *in, uint32_t len)
+{
+	typedef int (*uncompress_fn)(uint8_t *, unsigned long *, const uint8_t *, unsigned long);
+	static uncompress_fn z;
+	static int tried;
+
+	if (!tried) {
+		void *h = dlopen("libz.so.1", RTLD_NOW | RTLD_LOCAL);
+
+		tried = 1;
+		if (h) z = (uncompress_fn)dlsym(h, "uncompress");
+	}
+	if (z) {
+		unsigned long n = (unsigned long)cap;
+
+		return z(out, &n, in, len) == 0 ? (int)n : -1;
+	}
+	return stbi_zlib_decode_buffer((char *)out, cap, (const char *)in, (int)len);
+}
+
+/* version 2: bring wp_rgb from frame i - 1 (anything, for a key frame) to frame i; 0 on success */
+static int lw_apply(int i)
+{
+	static uint8_t buf[LW_PAYLOAD];
+	const uint8_t *bits = buf + 1, *d = bits + LW_MAP;
+	int got = lw_inflate(buf, (int)sizeof buf, lw.map + lw.off[i], lw.len[i]), tiles = 0;
+
+	if (got < 1) return -1;
+	if (buf[0] == 0) {
+		if (got != 1 + WP_N * 3) return -1;
+		memcpy(wp_rgb, buf + 1, WP_N * 3);
+		return 0;
+	}
+	if (i == 0 || buf[0] != 1 || got < 1 + LW_MAP || (bits[LW_MAP - 1] & 0xfe)) return -1;
+	for (int t = 0; t < LW_TILES; t++) tiles += bits[t >> 3] >> (t & 7) & 1;
+	if (got != 1 + LW_MAP + tiles * LW_TILE * LW_TILE * 3) return -1;
+	for (int t = 0; t < LW_TILES; t++) {
+		uint8_t *o;
+
+		if (!(bits[t >> 3] >> (t & 7) & 1)) continue;
+		o = wp_rgb + ((size_t)(t / LW_TX) * LW_TILE * SCREEN + (size_t)(t % LW_TX) * LW_TILE) * 3;
+		for (int y = 0; y < LW_TILE; y++, o += SCREEN * 3)
+			for (int k = 0; k < LW_TILE * 3; k++) o[k] = (uint8_t)(o[k] + *d++);
+	}
+	return 0;
+}
+
+/* show frame i of the clip; 0 when it is on screen.  Version 2 frames build on the one before: from the frame shown, every frame up to i is
+ * applied in turn (from the key frame at the start when nothing valid is shown) */
 static int lw_show(int i)
 {
+	unsigned long long t0 = wp_clock_us(), t1;
+
 	if (!lw.n || i < 0 || i >= lw.n) return -1;
-	if (wp_decode(lw.map + lw.off[i], lw.len[i])) return -1;
+	if (lw.ver == 2) {
+		int k = lw.cur >= 0 && lw.cur < lw.n ? lw.cur : -1;
+
+		while (k != i) {
+			k = k < 0 ? 0 : (k + 1) % lw.n;
+			if (lw_apply(k)) { lw.cur = -1; return -1; }
+		}
+	} else if (wp_decode(lw.map + lw.off[i], lw.len[i])) return -1;
 	lw.cur = lw.want = i;
+	t1 = wp_clock_us();
 	wp_derive();
+	lw_decode_us += t1 - t0;
+	lw_derive_us += wp_clock_us() - t1;
+	lw_frames++;
 	return 0;
 }
 
@@ -576,8 +840,8 @@ static int wp_check(void)
 	return was || wp_on;
 }
 
-/* the clip plays while `here` (a page it plays on is on screen and still); 1 when another frame is due.  The frame is decoded only when the
- * next picture is composed (lw_sync): the panel takes fewer frames a second than a clip may have, and the ones it skips are never decoded. */
+/* the clip plays while `here` (a page it plays on is on screen and still); 1 when another frame is due. Decoding is deferred until lw_sync:
+ * JPEG frames can be skipped; delta clips apply intervening tiles to reconstruct the selected frame without presenting each one. */
 static int lw_tick(long now, int here)
 {
 	int f;
@@ -599,5 +863,11 @@ static void lw_sync(void)
 	if (wp_on && lw.n > 1 && lw.want != lw.cur && lw_show(lw.want)) lw.want = lw.cur;
 }
 
-static long lw_interval(void) { return lw.playing && lw.n > 1 ? 1000L / lw.fps : 1000L; }
+/* when the clip's next frame is due (playing) */
+static long lw_next(long now)
+{
+	long k = (now - lw.t0) * lw.fps / 1000L + 1;
+
+	return lw.t0 + (k * 1000L + lw.fps - 1) / lw.fps;
+}
 #endif

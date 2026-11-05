@@ -388,6 +388,8 @@ do_list() {
 	"data_sim_set": { "target": "String" },
 	"data_sim_status": { "id": "String" },
 	"sim_radio_get": { },
+	"button_get": { },
+	"button_set": { "short": "String", "long": "String" },
 	"sim_radio_set": { "slot": "String", "enabled": false, "confirm": false },
 	"sim_dsds_set": { "enabled": false, "confirm": false },
 	"sim_radio_status": { "id": "String" },
@@ -457,7 +459,12 @@ call)
         sim_get)
             slots=$(uci -q get unisoc_modem.main.sim_slots); [ "$slots" = 2 ] || slots=1
             card=$(uci -q get unisoc_modem.main.data_sim); [ "$card" = 1 ] || card=0
-            printf '{"ok":1,"slots":%s,"saved_sim":%s}\n' "$slots" "$card"
+            actual=$(cat /run/mu300-data-sim-actual 2>/dev/null)
+            case "$actual" in 0|1) ;; *) actual=null;; esac
+            extra=
+            physical=$(/opt/mu300/bin/mu300-physical-sim status) || physical='{}'
+            extra=",\"physical\":$physical"
+            printf '{"ok":1,"slots":%s,"saved_sim":%s,"actual_sim":%s%s}\n' "$slots" "$card" "$actual" "$extra"
             ;;
         ttl_get) "$DASH/ttl" get ;;
         ttl_set) "$DASH/ttl" set "$(inp '@.value')" ;;
@@ -473,6 +480,8 @@ call)
         data_sim_set) "$DASH/data-sim" start "$(inp '@.target')" ;;
         data_sim_status) "$DASH/data-sim" status "$(inp '@.id')" ;;
         sim_radio_get) /opt/mu300/bin/mu300-sim-radio get ;;
+        button_get) "$DASH/buttons" get ;;
+        button_set) printf '%s' "$INPUT" | "$DASH/buttons" set ;;
         sim_dsds_set)
             case "$(inp '@.enabled'):$(inp '@.confirm')" in
                 true:true) "$DASH/data-sim" start dsds-1;;

@@ -4,6 +4,7 @@
 START=14
 USE_PROCD=1
 start_service() {
+    [ "$(cat /etc/mu300/model 2>/dev/null)" != f50pro ] || return 0
     /opt/u30pro/bin/u30pro-panel probe || return 1
     mkdir -p /run/u30pro-ui
     procd_open_instance display

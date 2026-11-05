@@ -4,6 +4,7 @@ START=96
 STOP=12
 USE_PROCD=1
 start_service() {
+	[ "$(cat /etc/mu300/model 2>/dev/null)" != f50pro ] || return 0
 	[ "$(cat /sys/class/power_supply/u30pro-battery/type 2>/dev/null)" = Battery ] || return 0
 	[ "$(cat /sys/class/power_supply/u30pro-battery/present 2>/dev/null)" != 0 ] || return 0
 	umask 077

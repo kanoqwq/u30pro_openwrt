@@ -3,6 +3,20 @@ config U30PRO_BSP
  depends on ARCH_SPRD
 
 if U30PRO_BSP
+config F50PRO_NFC_GPIO
+ tristate "F50 Pro NFC reset GPIO ownership"
+ depends on OF_GPIO && GPIOLIB
+ help
+   Explicitly enabled only by the F50 Pro product; GPIO comes from its DT.
+
+config F50PRO_LED_HANDOFF
+ tristate "F50 Pro stock PMIC-to-GPIO indicator handoff"
+ depends on MFD_SC27XX_PMIC && LEDS_CLASS
+ help
+   Build the MU3356-only opt-in white LED driver and boot handoff. It clears
+   inherited PMIC red/green state and exposes their stock steady PWM. Loading
+   without enabled=1 does not touch hardware; U30 Pro does not load it.
+
 source "drivers/unisoc_platform/usb/musb/Kconfig"
 source "drivers/unisoc_platform/usbpinmux/Kconfig"
 config UNISOC_USB_HSPHY

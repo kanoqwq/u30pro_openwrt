@@ -9,11 +9,11 @@ HOME=(TOP/'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/home.j
 def mount(page,lang='zh-cn',slots=2):
     page.evaluate('''([source,home,lang,slots])=>{
         window._=s=>s;window.L={env:{lang}};window.slots=slots;
-        window.rpcCalls=[];
+        window.rpcCalls=[];window.simSnapshot=null;
         const rpc={declare:options=>(...args)=>{
             rpcCalls.push([options.method,args]);
             sessionStorage.setItem('selector-rpc',JSON.stringify(rpcCalls));
-            return Promise.resolve({slots:window.slots});
+            return Promise.resolve(window.simSnapshot || {slots:window.slots,saved_sim:0,actual_sim:0});
         }};
         window.M=new Function('rpc','baseclass','L',source)(rpc,{extend:x=>x},L);
         M.injectCss();
@@ -88,9 +88,26 @@ main{margin:8px auto;max-width:1280px;padding:0 16px}.hero{height:180px;padding:
                     page.evaluate('M.simSelector(document.querySelector(".mud"))')
                     pill.wait_for();pill.locator('summary').click()
                     with page.expect_navigation():pill.locator('select').select_option('1')
-                    assert page.evaluate('sessionStorage.getItem("mu300-view-slot")')=='1'
+                    assert page.evaluate('sessionStorage.getItem("mu300-view-choice")')=='1'
                     assert page.evaluate('JSON.parse(sessionStorage.getItem("selector-rpc")).every(x=>x[0]==="sim_get")')
                     assert not errors,errors
                     page.close();count+=1
+    # Physical labels and automatic mode update together without navigation,
+    # including a legacy implicit SIM1 default in this browser session.
+    page=browser.new_page(viewport={'width':390,'height':844})
+    page.route('http://follow.test/**',lambda r:r.fulfill(content_type='text/html',body='<main><section class="mud"></section></main>'))
+    page.goto('http://follow.test/')
+    page.evaluate("sessionStorage.setItem('mu300-view-slot','0')")
+    mount(page)
+    page.locator('.mud-sim-selector').wait_for()
+    page.evaluate("async()=>{simSnapshot={slots:2,saved_sim:0,actual_sim:1,physical:{model:'f50pro',supported:true,logical_cards:[0,4]}};await M.callSimGet();}")
+    assert page.locator('.mud-sim-selector summary').inner_text()=='外置 SIM 1'
+    assert page.locator('.mud-sim-selector select').input_value()=='auto'
+    page.evaluate("async()=>{M.selectViewedSlot('0');await M.callSimGet();}")
+    assert page.locator('.mud-sim-selector summary').inner_text()=='内置 SIM 1'
+    page.evaluate("async()=>{M.selectViewedSlot('auto');await M.callSimGet();}")
+    assert page.locator('.mud-sim-selector summary').inner_text()=='外置 SIM 1'
+    assert page.evaluate("rpcCalls.every(c=>c[0]==='sim_get')")
+    page.close()
     browser.close()
 print(f'PASS {count} hero/original SIM selector layouts: themes/light/dark/mobile/desktop/zh/en/tr, hero anchoring, theme-header independence, mobile top-right, original other pages, popup bounds, Escape, cleanup and view-only selection')

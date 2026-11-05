@@ -81,7 +81,9 @@ apply)
     single=0; old_flags=
     model=$(mu300-device 2>/dev/null)
     standby_supported=0
-    case "$model" in f50|u30air) standby_supported=1;; esac
+    case "$model" in
+        f50|u30air|u30pro) standby_supported=1;;
+    esac
     if [ "$standby_supported" = 1 ] &&
        [ "$("${MU300_RADIO_ALLOWED:-/opt/mu300/bin/mu300-radio-allowed}" --dsds)" = 0 ]; then
         single=1

@@ -1,0 +1,7 @@
+#!/bin/sh /etc/rc.common
+START=99
+start() {
+    [ "$(cat /etc/mu300/model 2>/dev/null)" = f50pro ] || return 0
+    touch /run/f50pro-led-ready
+    ubus send f50pro.boot '{"ready":true}'
+}

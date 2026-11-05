@@ -29,6 +29,7 @@
           "data_sim_get",
           "data_sim_status",
           "sim_radio_get",
+          "button_get",
           "sim_radio_status",
           "v50_sim_get",
           "physical_sim_get",

@@ -353,6 +353,28 @@ class OpenWrt(ShellTest):
             self.assertIn('no 5 GHz channel without DFS in country 00', r.stderr)
             self.assertEqual(self.batch(), '')
 
+    def test_wifi_band_keeps_ax_and_restores_each_bands_selected_width(self):
+        for shell in self.each_shell():
+            cases=[
+                ('5g','HE80','2.4','', 'HE40'),
+                ('2g','HE20','5','mu300_htmode_5g=HE80', 'HE80'),
+                ('5g','HE20','2.4','mu300_htmode_2g=HE40', 'HE40'),
+                ('5g','HE80','2.4','mu300_htmode_2g=HE20', 'HE20'),
+                ('2g','HE40','5','mu300_htmode_5g=HE20', 'HE20')]
+            for band,ht,target,saved,want in cases:
+                self.state(f'wireless.radio0.band={band}\nwireless.radio0.htmode={ht}\nwireless.radio0.country=CN\n'+
+                           (f'wireless.radio0.{saved}\n' if saved else ''))
+                r=self.script(shell,BIN/'mu300-wifi-band',target,MU300_SYSROOT=self.root)
+                self.assertEqual(r.returncode,0,r.stderr)
+                b=self.batch()
+                self.assertIn(f"set wireless.radio0.htmode='{want}'\n",b)
+                self.assertIn(f"set wireless.radio0.mu300_htmode_{band}='{ht}'\n",b)
+                self.assertNotRegex(b,r'\.(ssid|key|encryption|country|txpower)=')
+            self.state('wireless.radio0.band=5g\nwireless.radio0.htmode=HE160\nwireless.radio0.country=CN\n')
+            r=self.script(shell,BIN/'mu300-wifi-band','2.4',MU300_SYSROOT=self.root)
+            self.assertNotEqual(r.returncode,0)
+            self.assertEqual(self.batch(),'','unsupported mode must not be silently rewritten to N')
+
 
 class WifiScriptsPatch(unittest.TestCase):
     def test_build_applies_it(self):

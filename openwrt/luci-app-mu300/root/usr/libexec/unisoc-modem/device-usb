@@ -255,9 +255,10 @@ case ${1:-} in
         available=1
         if [ "$role" = host ] || [ "$role_auto" = 1 ]; then available=0; fi
         host_supported=0; role_available && host_supported=1
-        role_native=0; role_persist=$role_auto; role_saved=device
+        role_native=0; role_persist=$role_auto; role_saved=device; external_power_only=0
         policy=$(role_now)
         if [ "$(device_name)" = u30pro ]; then
+            [ "$(cat "${MU300_USB_PRODUCT_FILE:-/etc/mu300/model}" 2>/dev/null)" != f50pro ] || external_power_only=1
             role_native=1; policy=$(role_policy)
             case $policy in auto|host|device) ;; *) policy=unavailable ;; esac
             role_persist=$(get native_role_persist); case $role_persist in 1) ;; *) role_persist=0 ;; esac
@@ -273,8 +274,8 @@ case ${1:-} in
         link=$("${MU300_USB_UCODE:-ucode}" "${MU300_USB_LINK_HELPER:-/usr/libexec/unisoc-modem/usb-link.uc}" \
             "$role" "$ROLE_FILE" "$GADGET_DIR" "$USB_BUS" \
             "${MU300_USB_UDC_CLASS:-/sys/class/udc}" "${MU300_USB_ROLE_CLASS:-/sys/class/usb_role}" 2>/dev/null) || link='{"state":"unavailable","links":[]}'
-        printf '{"ok":1,"role":"%s","role_auto":%s,"host_supported":%s,"role_target":"%s","role_pending":%s,"role_error":%s,"net_mode":"%s","net_scope":"%s","net_auto":%s,"net_available":%s,"net_current":"%s","net_next":"%s","net_policy_error":%s,"lan_auto":%s,"role_native":%s,"role_policy":"%s","role_persist":%s,"role_saved":"%s","usb_link":%s}\n' \
-            "$role" "$role_auto" "$host_supported" "$role_target" "$role_pending" "$role_error" "$mode" "$scope" "$net_auto" "$available" "$net_current" "$net_next" "$net_policy_error" "$lan_auto" "$role_native" "$policy" "$role_persist" "$role_saved" "$link"
+        printf '{"ok":1,"role":"%s","role_auto":%s,"host_supported":%s,"role_target":"%s","role_pending":%s,"role_error":%s,"net_mode":"%s","net_scope":"%s","net_auto":%s,"net_available":%s,"net_current":"%s","net_next":"%s","net_policy_error":%s,"lan_auto":%s,"role_native":%s,"role_policy":"%s","role_persist":%s,"role_saved":"%s","external_power_only":%s,"usb_link":%s}\n' \
+            "$role" "$role_auto" "$host_supported" "$role_target" "$role_pending" "$role_error" "$mode" "$scope" "$net_auto" "$available" "$net_current" "$net_next" "$net_policy_error" "$lan_auto" "$role_native" "$policy" "$role_persist" "$role_saved" "$external_power_only" "$link"
         ;;
     set-role)
         role=${2:-}; auto=${3:-}

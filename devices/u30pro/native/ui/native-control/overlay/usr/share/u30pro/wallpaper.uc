@@ -2,8 +2,12 @@
 /* Wallpaper of the screen (rpcd object u30pro-wallpaper; the screen side is tools/ui/wall.h).
  *   get {}        what is installed and the look settings
  *   image {}      the picture (a live clip's first frame) as base64 for the web pages: the 480x480 web copy when there is one
- *   set {dim, glass, blur, tint, live}   the look: wallpaper dimming 0-90, glass transparency 0-100, glass blur 0-100, glass colour 0-3,
- *                 where a clip plays 0-2 (u30pro_native_control.display wp_dim, glass, glass_blur, glass_tint, wp_live)
+ *   set {dim, glass, blur, tint, live, pages}   the look: wallpaper dimming 0-90, glass transparency 0-100, glass blur 0-100, glass colour
+ *                 0-3, where a clip plays: pages, a mask of scenes (1 lock screen, 2 home, 4 signal, 8 traffic, 16 functions, 32 the pages
+ *                 under functions, 64 control centre and SMS list, 128 PIN pad, 256 pop-ups; 511 all), or the older live 0-2 (nowhere, lock
+ *                 screen, lock screen and home); (u30pro_native_control.display wp_dim, glass, glass_blur, glass_tint, wp_live_pages, wp_live;
+ *                 tools/ui/wall.h).  pages also sets live (2 with the home page, 1 with the lock screen alone) for the theme's overview;
+ *                 live alone drops pages.
  *   install {}    take the files the web page uploaded (/tmp/u30pro-wallpaper.jpg, and for a clip /tmp/u30pro-wallpaper.live; besides them
  *                 the web copies /tmp/u30pro-wallpaper.web.jpg and .web.live at 480x480, which the screen does not use)
  *   remove {}     back to the plain background
@@ -23,7 +27,8 @@ const UPLOADS = [ UP_JPG, UP_LIVE, UP_WEB_JPG, UP_WEB_LIVE ];
 const MAX_JPG = 4 * 1024 * 1024, MAX_LIVE = 96 * 1024 * 1024;
 const SIZE = 240, WEB = 480;
 const KEYS = { dim: [ 'wp_dim', 0, 90, 30 ], glass: [ 'glass', 0, 100, 50 ], blur: [ 'glass_blur', 0, 100, 50 ], tint: [ 'glass_tint', 0, 3, 0 ],
-	live: [ 'wp_live', 0, 2, 2 ] };
+	live: [ 'wp_live', 0, 2, 2 ], fast_panel: [ 'fast_panel', 0, 1, 0 ] };
+const LIVE_ALL = 511;
 
 let uci = cursor();
 function out(v) { printf('%J\n', v); }
@@ -34,15 +39,17 @@ function panel_reload() { let u = connect(); if (u) { u.call('u30pro.panel', 're
 function u16(s, i) { return ord(s, i) | ord(s, i + 1) << 8; }
 function u32(s, i) { return ord(s, i) | ord(s, i + 1) << 8 | ord(s, i + 2) << 16 | ord(s, i + 3) * 16777216; }
 
-/* the header of a clip of size x size frames and its frame table, walked to the end of the file: {fps, frames} or a reason */
+/* the header of a clip of size x size frames and its frame table, walked to the end of the file: {fps, frames, version} or a reason.
+ * Version 1: JPEG frames; version 2 (tile side 16 in the header): zlib frames of 16x16 tile deltas (tools/ui/wall.h), only the screen's. */
 function live_info(path, size) {
 	let st = stat(path), f = open(path, 'r');
 	if (!st || !f) return 'cannot read the clip';
 	if (st.size > MAX_LIVE) { f.close(); return 'the clip is too large'; }
 	let h = f.read(16);
-	if (length(h) != 16 || substr(h, 0, 4) != 'U3LW' || ord(h, 4) != 1) { f.close(); return 'not a live wallpaper clip'; }
-	let fps = ord(h, 5), n = u32(h, 12);
-	if (fps < 1 || fps > 30 || u16(h, 6) != size || u16(h, 8) != size || n < 1 || n > 1800) { f.close(); return 'unsupported clip format'; }
+	if (length(h) != 16 || substr(h, 0, 4) != 'U3LW' || (ord(h, 4) != 1 && ord(h, 4) != 2)) { f.close(); return 'not a live wallpaper clip'; }
+	let ver = ord(h, 4), fps = ord(h, 5), n = u32(h, 12);
+	if (fps < 1 || fps > 60 || u16(h, 6) != size || u16(h, 8) != size || u16(h, 10) != (ver == 2 ? 16 : 0) || n < 1 || n > 1800 ||
+	    (ver == 2 && size != SIZE)) { f.close(); return 'unsupported clip format'; }
 	let pos = 16;
 	for (let i = 0; i < n; i++) {
 		f.seek(pos);
@@ -51,11 +58,16 @@ function live_info(path, size) {
 		let len = u32(l, 0);
 		if (len < 4 || pos + 4 + len > st.size) { f.close(); return 'the clip is cut short'; }
 		f.seek(pos + 4);
-		if (substr(f.read(2), 0, 2) != '\xff\xd8') { f.close(); return 'a frame of the clip is not a JPEG'; }
+		let m = f.read(2);
+		if (ver == 1 && substr(m, 0, 2) != '\xff\xd8') { f.close(); return 'a frame of the clip is not a JPEG'; }
+		/* a zlib stream: CMF deflate with a 32 KiB window or less, and the header check */
+		if (ver == 2 && ((ord(m, 0) & 15) != 8 || (ord(m, 0) >> 4) > 7 || (ord(m, 1) & 32) ||
+		    (ord(m, 0) * 256 + ord(m, 1)) % 31)) { f.close(); return 'a frame of the clip is not a zlib stream'; }
 		pos += 4 + len;
 	}
 	f.close();
-	return { fps, frames: n, bytes: st.size };
+	if (pos != st.size) return 'the clip has trailing data';
+	return { fps, frames: n, bytes: st.size, version: ver };
 }
 
 function jpeg_ok(path) {
@@ -72,6 +84,8 @@ function settings() {
 		let v = r[KEYS[k][0]];
 		s[k] = v != null && match(v, /^[0-9]+$/) && +v >= KEYS[k][1] && +v <= KEYS[k][2] ? +v : KEYS[k][3];
 	}
+	let p = r.wp_live_pages;
+	s.pages = p != null && match(p, /^[0-9]+$/) && +p <= LIVE_ALL ? +p : (s.live == 2 ? 3 : s.live);
 	return s;
 }
 
@@ -80,7 +94,7 @@ function get() {
 	if (j) { r.picture_bytes = j.size; r.mtime = j.mtime; r.web = !!stat(WEB_JPG); }
 	if (l) {
 		let i = live_info(LIVE, SIZE);
-		if (type(i) == 'object') { r.live = true; r.fps = i.fps; r.frames = i.frames; r.live_bytes = i.bytes; if (l.mtime > (r.mtime ?? 0)) r.mtime = l.mtime; r.web_live = !!stat(WEB_LIVE); }
+		if (type(i) == 'object') { r.live = true; r.fps = i.fps; r.frames = i.frames; r.live_bytes = i.bytes; r.live_version = i.version; if (l.mtime > (r.mtime ?? 0)) r.mtime = l.mtime; r.web_live = !!stat(WEB_LIVE); }
 	}
 	return r;
 }
@@ -108,6 +122,14 @@ else if (method == 'set') {
 		if (v != +req[k] || v < KEYS[k][1] || v > KEYS[k][2]) fail(sprintf('%s must be %d to %d', k, KEYS[k][1], KEYS[k][2]));
 		uci.set('u30pro_native_control', 'display', KEYS[k][0], '' + v);
 	}
+	if (req.pages != null) {
+		let p = int(req.pages);
+		if (p != +req.pages || p < 0 || p > LIVE_ALL) fail(sprintf('pages must be 0 to %d', LIVE_ALL));
+		uci.set('u30pro_native_control', 'display', 'wp_live_pages', '' + p);
+		uci.set('u30pro_native_control', 'display', 'wp_live', p & 2 ? '2' : p & 1 ? '1' : '0');
+	}
+	else if (req.live != null)
+		uci.delete('u30pro_native_control', 'display', 'wp_live_pages');
 	if (!uci.commit('u30pro_native_control')) fail('Cannot save the settings');
 	panel_reload();
 	out({ accepted: true, settings: settings() });

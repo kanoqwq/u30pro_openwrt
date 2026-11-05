@@ -656,12 +656,18 @@ static DEVICE_ATTR_RO(native_state);
 static struct attribute *ump_attrs[] = { &dev_attr_native_state.attr, NULL };
 static const struct attribute_group ump_attr_group = { .attrs = ump_attrs };
 
+static bool battery_present = true;
+module_param(battery_present, bool, 0444);
+MODULE_PARM_DESC(battery_present, "Physical battery fitted (false for F50 Pro)");
+
 static int ump_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct power_supply_config config = {};
 	struct ump_fgu *f;
 	int ret;
+	if (!battery_present)
+		return -ENODEV;
 	f = devm_kzalloc(dev, sizeof(*f), GFP_KERNEL);
 	if (!f)
 		return -ENOMEM;

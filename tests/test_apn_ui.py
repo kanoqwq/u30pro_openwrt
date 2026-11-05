@@ -18,13 +18,18 @@ class ApnUI(unittest.TestCase):
             page.route('**/*',lambda r:r.abort())
             for lang in ('zh','en','tr'):
                 page.set_content('<html><head></head><body style="margin:16px"></body></html>')
-                page.evaluate('''({common,apn,lang})=>{
+                page.evaluate('''async({common,apn,lang})=>{
                     window.L={env:{lang},bind:(fn,ctx)=>fn.bind(ctx)};
                     window._=s=>s; window.N_=(a,b,n)=>n===1?a:b;
                     window.calls=[];
                     window.state={ok:1,data_sim:1,current:{apn:'',pdptype:'IPV4V6'},profiles:[{id:'automatic',name:'SIM default',apn:'',pdptype:'IPV4V6',current:true}]};
+                    window.simState={slots:2,actual_sim:1,saved_sim:1,physical:{model:'f50pro',supported:true,logical_cards:[0,4]}};
                     const rpc={declare:spec=>async(...args)=>{
                         if(spec.method==='apn_get')return JSON.parse(JSON.stringify(state));
+                        if(spec.method==='sim_get'){
+                            if(window.failSimInfo)throw new Error('fixture metadata unavailable');
+                            return JSON.parse(JSON.stringify(simState));
+                        }
                         if(spec.method!=='apn_set')return {};
                         if(window.failNext){window.failNext=false;return {ok:0,error:'apn_storage'};}
                         calls.push(args);let [action,payload]=args,p=JSON.parse(payload);
@@ -35,8 +40,27 @@ class ApnUI(unittest.TestCase):
                     }};
                     const M=new Function('rpc','baseclass',common)(rpc,{extend:x=>x});
                     const view=new Function('view','rpc','M',apn)({extend:x=>x},rpc,M);
-                    window.M=M;window.apnView=view;document.body.append(view.render(state));
+                    window.M=M;window.apnView=view;document.body.append(view.render(await view.load()));
                 }''',{'common':common,'apn':apn,'lang':lang})
+                external={'zh':'外置 SIM','en':'External SIM','tr':'Harici SIM'}[lang]
+                internal={'zh':'内置 SIM','en':'Built-in SIM','tr':'Dahili SIM'}[lang]
+                self.assertTrue(page.locator('.apn-current').inner_text().endswith(external+' 1'))
+                page.evaluate('async()=>{state.data_sim=0;simState.physical.logical_cards=[3,4];await apnView.refresh();}')
+                self.assertTrue(page.locator('.apn-current').inner_text().endswith(external+' 2'))
+                page.evaluate('async()=>{state.data_sim=1;simState.physical.logical_cards=[3,1];await apnView.refresh();}')
+                self.assertTrue(page.locator('.apn-current').inner_text().endswith(internal+' 2'))
+                page.evaluate('async()=>{M.selectViewedSlot("0");simState.physical.logical_cards=[0,4];await apnView.refresh();}')
+                self.assertTrue(page.locator('.apn-current').inner_text().endswith(external+' 1'))
+                page.evaluate('async()=>{simState.physical.logical_cards=[0,99];await apnView.refresh();}')
+                self.assertNotIn('SIM 2',page.locator('.apn-current').inner_text())
+                page.evaluate('async()=>{delete simState.physical;await apnView.refresh();}')
+                self.assertTrue(page.locator('.apn-current').inner_text().endswith('SIM 2'))
+                page.evaluate('async()=>{simState.physical={model:"f50pro",supported:true,logical_cards:[0,4]};await apnView.refresh();}')
+                page.evaluate('async()=>{failSimInfo=true;await apnView.refresh();}')
+                self.assertNotIn('SIM 2',page.locator('.apn-current').inner_text())
+                self.assertFalse(page.locator('.apn-head button').nth(1).is_disabled())
+                page.evaluate('async()=>{failSimInfo=false;await apnView.refresh();}')
+                self.assertEqual(page.evaluate('calls.length'),0,'Reading card names must not change APN or SIM')
                 page.locator('.apn-head button').nth(1).click()
                 page.locator('.mud-apn-editor input').nth(0).fill('Carrier <Test>')
                 page.locator('.mud-apn-editor input').nth(1).fill('internet.example')

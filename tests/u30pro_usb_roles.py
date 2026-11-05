@@ -123,6 +123,26 @@ esac
             self.assertEqual((self.port/'port_type').read_text().strip(),'source')
             (self.root/'etc/mu300/platform').write_text('u30pro')
 
+    def test_f50pro_host_is_data_only_and_does_not_write_typec_or_charger(self):
+        (self.root/'etc/mu300/model').write_text('f50pro\n')
+        controller=self.cap.parent
+        (controller/'external_power_only').write_text('1\n')
+        (controller/'external_data_role').write_text('auto\n')
+        (controller/'current_data_role').write_text('device\n')
+        before=(self.port/'port_type').read_bytes()
+        for shell in self.each_shell():
+            for mode in ('host','device','auto'):
+                r=self.script(shell,ROLE,mode,U30PRO_USB_SYSROOT=self.root)
+                self.assertEqual(r.returncode,0,r.stderr)
+                self.assertEqual((controller/'external_data_role').read_text().strip(),mode)
+                self.assertEqual((self.port/'port_type').read_bytes(),before)
+            self.assertEqual(self.script(shell,ROLE,'status',U30PRO_USB_SYSROOT=self.root).stdout.strip(),'device')
+        self.assertFalse((self.tmp/'unsafe').exists())
+        (controller/'external_power_only').write_text('0\n')
+        for shell in self.each_shell():
+            self.assertNotEqual(self.script(shell,ROLE,'host',U30PRO_USB_SYSROOT=self.root).returncode,0)
+        self.assertEqual((self.port/'port_type').read_bytes(),before)
+
     def test_ambiguous_ports_and_missing_kernel_capability_refuse_changes(self):
         extra=self.root/'sys/class/typec/port1';extra.mkdir()
         (extra/'data_role').write_text('device');(extra/'port_type').write_text('dual')

@@ -5,6 +5,24 @@ set -eu
 R=${U30PRO_USB_SYSROOT:-}
 fail() { echo "u30pro-usb-role: $*" >&2; exit 1; }
 [ "$(cat "$R/etc/mu300/platform" 2>/dev/null)" = u30pro ] || fail 'not U30 Pro'
+# MU3356 receives power on this same C port. Its data-host mode must not
+# request SOURCE or depend on the unpopulated battery-product boost IC.
+if [ "$(cat "$R/etc/mu300/model" 2>/dev/null)" = f50pro ]; then
+    controller=
+    for node in "$R"/sys/bus/platform/drivers/musb-sprd/*/external_power_only; do
+        [ -f "$node" ] && [ "$(cat "$node")" = 1 ] || continue
+        [ -z "$controller" ] || fail 'more than one external-power controller'
+        controller=${node%/external_power_only}
+    done
+    [ -n "$controller" ] || fail 'F50 Pro external-power kernel support unavailable'
+    case ${1:-status} in
+        capable) [ "$(cat "$controller/dual_role_capable")" = 1 ]; exit;;
+        status) cat "$controller/current_data_role"; exit;;
+        policy) cat "$controller/external_data_role"; exit;;
+        host|device|auto) printf '%s\n' "$1" > "$controller/external_data_role"; exit;;
+        *) fail 'usage: u30pro-usb-role {host|device|auto|status|policy|capable}';;
+    esac
+fi
 port=
 for node in "$R"/sys/class/typec/port*; do
     [ -r "$node/data_role" ] && [ -w "$node/port_type" ] || continue

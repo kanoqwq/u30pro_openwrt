@@ -181,7 +181,7 @@ static void page_display(Cv *c)
 		setting_row(c, 262 - off, H_GLASS_BLUR, "玻璃模糊", v[1]);
 		setting_row(c, 314 - off, H_GLASS_TINT, "玻璃颜色", TINT_NAMES[glass_tint % NTINT]);
 		setting_row(c, 366 - off, H_WP_DIM, "壁纸压暗", v[2]);
-		if (lw.n > 1) setting_row(c, 418 - off, H_WP_LIVE, "动态壁纸", LIVE_NAMES[wp_live % 3]);
+		if (lw.n > 1) setting_row(c, 418 - off, H_WP_LIVE, "动态壁纸", LIVE_NAMES[live_preset()]);
 		scroll_end(c, 1, lw.n > 1 ? 470 : 418);
 	}
 }

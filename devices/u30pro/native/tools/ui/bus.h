@@ -5,10 +5,11 @@
  *   command {"cmd": "..."}          one UI command: page N, sheet N, fn N, overlay K ARG, home, wake, toast TEXT, notice [TEXT], theme N
  *   feed {"data": {key: value}}     the data the feeder (u30pro-ui-feed) collects: cellular, Wi-Fi, SMS, ... (keys of feed_set())
  *   reload {}                       read the settings again (after the web interface or uci changed them)
- * Events it sends: "u30pro.panel.request" {"request": "kick"|"sms_refresh"|"sms_ack"} for the feeder.
+ * Events: "u30pro.panel.request" with kick/sms_refresh, scoped sms_read
+ * {id,slot}, or sms_close. Legacy sms_ack remains accepted by the feeder.
  * Settings, section "display": theme (index), sleep (seconds: 30 60 120 300 0), wake (single|double|key), lock (0|1), pin
  * ("<salt>:<sha256(salt + PIN)>"), pinlen, touch_flip_x, touch_flip_y, and the wallpaper and glass of wall.h: wp_dim, glass, glass_blur,
- * glass_tint, wp_live.
+ * glass_tint, wp_live, wp_live_pages, and fast_panel (0|1: the panel's high refresh, panel_speed in platform.h).
  * The connection is served from the UI's own poll loop (no uloop); it is opened again when ubusd goes away. */
 #include <libubox/blobmsg.h>
 #include <libubus.h>
@@ -56,6 +57,10 @@ static void settings_save(void)
 	cfg_set(c, &pkg, "glass_tint", v);
 	snprintf(v, sizeof v, "%d", wp_live);
 	cfg_set(c, &pkg, "wp_live", v);
+	if (wp_live_pages >= 0) {
+		snprintf(v, sizeof v, "%d", wp_live_pages);
+		cfg_set(c, &pkg, "wp_live_pages", v);
+	}
 	if (pkg) uci_commit(c, &pkg, false);
 	uci_free_context(c);
 }
@@ -73,7 +78,7 @@ static void settings_load(void)
 	lock_on = 0;
 	pin_hash[0] = 0;
 	pin_digits = 0;
-	wp_dim = 30; glass_clear = 50; glass_blur = 50; glass_tint = 0; wp_live = 2;
+	wp_dim = 30; glass_clear = 50; glass_blur = 50; glass_tint = 0; wp_live = 2; wp_live_pages = -1; fast_panel = 0;
 	if (!c) return;
 	if (!uci_load(c, "u30pro_native_control", &pkg) && (s = uci_lookup_section(c, pkg, "display"))) {
 		if ((v = uci_lookup_option_string(c, s, "theme")) && atoi(v) >= 0 && atoi(v) < NTHEMES) theme_idx = atoi(v);
@@ -91,6 +96,8 @@ static void settings_load(void)
 		if ((v = uci_lookup_option_string(c, s, "glass_blur")) && atoi(v) >= 0 && atoi(v) <= 100) glass_blur = atoi(v);
 		if ((v = uci_lookup_option_string(c, s, "glass_tint")) && atoi(v) >= 0 && atoi(v) < NTINT) glass_tint = atoi(v);
 		if ((v = uci_lookup_option_string(c, s, "wp_live")) && atoi(v) >= 0 && atoi(v) <= 2) wp_live = atoi(v);
+		if ((v = uci_lookup_option_string(c, s, "wp_live_pages")) && *v >= '0' && *v <= '9' && atoi(v) <= LIVE_ALL) wp_live_pages = atoi(v);
+		fast_panel = (v = uci_lookup_option_string(c, s, "fast_panel")) && !strcmp(v, "1");
 	}
 	key_short = KA_PAGE;
 	key_long = KA_NONE;
@@ -102,6 +109,7 @@ static void settings_load(void)
 		if ((v = uci_lookup_option_string(c, s, "home_long_press_ms")) && key_long_ms_ok(atoi(v))) key_long_ms = atoi(v);
 	}
 	uci_free_context(c);
+	panel_speed(panel_fast_now > 0);	/* switched off: back to 48 MHz at once */
 }
 
 /* ------------------------------------------------------------------ requests to the feeder */
@@ -110,6 +118,16 @@ static void bus_request(const char *what)
 	if (!bus) return;
 	blob_buf_init(&bus_b, 0);
 	blobmsg_add_string(&bus_b, "request", what);
+	ubus_send_event(bus, "u30pro.panel.request", bus_b.head);
+}
+
+static void bus_sms_read(const char *id, int slot)
+{
+	if (!bus) return;
+	blob_buf_init(&bus_b, 0);
+	blobmsg_add_string(&bus_b, "request", "sms_read");
+	blobmsg_add_string(&bus_b, "id", id);
+	blobmsg_add_string(&bus_b, "slot", slot ? "1" : "0");
 	ubus_send_event(bus, "u30pro.panel.request", bus_b.head);
 }
 
@@ -192,6 +210,7 @@ static int m_feed(struct ubus_context *c, struct ubus_object *o, struct ubus_req
 	blobmsg_parse(feed_policy, __F_MAX, tb, blob_data(msg), blob_len(msg));
 	if (!tb[F_DATA]) return UBUS_STATUS_INVALID_ARGUMENT;
 	D.nsms = 0;
+	for (int i = 0; i < 6; i++) D.sms[i].id[0] = 0;
 	D.sinr_ok = D.nr = D.nr_idle = D.nr_rsrp_ok = D.nr_sinr_ok = 0;
 	D.bw_idx = -1;
 	D.lte_bw[0] = 0;
@@ -207,6 +226,7 @@ static int m_feed(struct ubus_context *c, struct ubus_object *o, struct ubus_req
 		default: continue;
 		}
 		feed_set(blobmsg_name(cur), v);
+		if (!strcmp(blobmsg_name(cur), "sms_error") && v[0]) toast_show(v, C_WARN, 2500);
 	}
 	D.feed_ok = 1;
 	if (!asleep) dirty = 1;
@@ -219,11 +239,43 @@ static int m_reload(struct ubus_context *c, struct ubus_object *o, struct ubus_r
 	return m_status(c, o, req, method, msg);
 }
 
+/* A separate completion method must not clear cellular/SMS fields as feed does. */
+enum { Q_TOKEN, Q_RESULT, __Q_MAX };
+static const struct blobmsg_policy charge_policy[__Q_MAX] = {
+	[Q_TOKEN] = { "token", BLOBMSG_TYPE_STRING }, [Q_RESULT] = { "result", BLOBMSG_TYPE_TABLE }
+};
+enum { CHGR_OK, CHGR_AVAILABLE, CHGR_PAUSED, CHGR_REASON, CHGR_PENDING, CHGR_ERROR, __CHGR_MAX };
+static const struct blobmsg_policy charge_result_policy[__CHGR_MAX] = {
+	[CHGR_OK] = { "ok", BLOBMSG_TYPE_BOOL }, [CHGR_AVAILABLE] = { "available", BLOBMSG_TYPE_BOOL },
+	[CHGR_PAUSED] = { "paused", BLOBMSG_TYPE_BOOL }, [CHGR_REASON] = { "reason", BLOBMSG_TYPE_STRING },
+	[CHGR_PENDING] = { "pending", BLOBMSG_TYPE_BOOL }, [CHGR_ERROR] = { "error", BLOBMSG_TYPE_STRING }
+};
+static int m_charge_result(struct ubus_context *c, struct ubus_object *o,
+        struct ubus_request_data *req, const char *method, struct blob_attr *msg)
+{
+	struct blob_attr *tb[__Q_MAX], *r[__CHGR_MAX];
+	(void)c; (void)o; (void)req; (void)method;
+	blobmsg_parse(charge_policy, __Q_MAX, tb, blob_data(msg), blob_len(msg));
+	if (!tb[Q_TOKEN] || !tb[Q_RESULT]) return UBUS_STATUS_INVALID_ARGUMENT;
+	const char *token = blobmsg_get_string(tb[Q_TOKEN]);
+	if (!token[0] || strspn(token, "0123456789") != strlen(token)) return UBUS_STATUS_INVALID_ARGUMENT;
+	blobmsg_parse(charge_result_policy, __CHGR_MAX, r, blobmsg_data(tb[Q_RESULT]), blobmsg_data_len(tb[Q_RESULT]));
+	int ok = r[CHGR_OK] && blobmsg_get_bool(r[CHGR_OK]);
+	if (ok && (!r[CHGR_AVAILABLE] || !r[CHGR_PAUSED] || !r[CHGR_PENDING] || !r[CHGR_REASON])) return UBUS_STATUS_INVALID_ARGUMENT;
+	bypass_complete((unsigned)strtoul(token, NULL, 10), ok,
+	    r[CHGR_AVAILABLE] && blobmsg_get_bool(r[CHGR_AVAILABLE]), r[CHGR_PAUSED] && blobmsg_get_bool(r[CHGR_PAUSED]),
+	    r[CHGR_REASON] && !strcmp(blobmsg_get_string(r[CHGR_REASON]), "limit"),
+	    r[CHGR_PENDING] && blobmsg_get_bool(r[CHGR_PENDING]), r[CHGR_ERROR] ? blobmsg_get_string(r[CHGR_ERROR]) : "charge_failed");
+	bus_request("kick");
+	return 0;
+}
+
 static const struct ubus_method bus_methods[] = {
 	UBUS_METHOD_NOARG("status", m_status),
 	UBUS_METHOD("screen", m_screen, screen_policy),
 	UBUS_METHOD("command", m_command, command_policy),
 	UBUS_METHOD("feed", m_feed, feed_policy),
+	UBUS_METHOD("charge_result", m_charge_result, charge_policy),
 	UBUS_METHOD_NOARG("reload", m_reload),
 };
 static struct ubus_object_type bus_type = UBUS_OBJECT_TYPE("u30pro.panel", bus_methods);

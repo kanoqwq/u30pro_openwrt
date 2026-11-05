@@ -102,8 +102,8 @@ static void collect_charger(void)
 	D.chg_online = rd_long(p, 0) == 1;
 	snprintf(p, sizeof p, "%s/input_current_limit", base);
 	D.chg_ilim = (float)rd_long(p, 0) / 1e6f;
-	snprintf(p, sizeof p, "%s/charge_behaviour", base);
-	D.chg_bypass = rd_text(p, b, sizeof b) && strstr(b, "[inhibit-charge]");
+	/* Manual direct supply is fed from mu300-charge.paused. Hardware
+	 * inhibit-charge also covers automatic limits and must not set the switch. */
 	if (!vbus_path[0])
 		for (int i = 0; i < 8; i++) {
 			snprintf(p, sizeof p, UI_SYSFS "/sys/bus/iio/devices/iio:device%d/name", i);
@@ -220,12 +220,20 @@ static void feed_set(const char *k, char *v)
 	if (!strcmp(k, "sinr")) { D.sinr = (float)atof(v); D.sinr_ok = 1; return; }
 	if (!strcmp(k, "nr_rsrp")) { D.nr_rsrp = (float)atof(v); D.nr_rsrp_ok = 1; return; }
 	if (!strcmp(k, "nr_sinr")) { D.nr_sinr = (float)atof(v); D.nr_sinr_ok = 1; return; }
+	I("sms_slot", D.sms_slot);
+	if (!strncmp(k, "sms_id.", 7)) {
+		int i = atoi(k + 7);
+		if (i >= 0 && i < 6) snprintf(D.sms[i].id, sizeof D.sms[i].id, "%s", v);
+		return;
+	}
 	S("lte_bw", D.lte_bw);
 	S("op", D.op); S("cell_state", D.cell_state); S("ip", D.ip); S("iface", D.iface);
 	S("relay_ssid", D.relay_ssid); I("relay_state", D.relay_state); S("relay_cfg", D.relay_cfg); I("relay_on", D.relay_on);
 	S("ssid", D.ssid); S("psk", D.psk); S("wifi_band", D.wifi_band); S("kernel", D.kernel); S("slot", D.slot); S("version", D.version);
 	I("cell_connected", D.cell_connected); I("csq", D.csq); I("have_sig", D.have_sig); I("band", D.band); I("pci", D.pci);
 	I("earfcn", D.earfcn); I("bw_idx", D.bw_idx); I("nr", D.nr); I("nr_idle", D.nr_idle); I("nr_band", D.nr_band); I("nr_pci", D.nr_pci); I("nr_arfcn", D.nr_arfcn); I("nr_bw", D.nr_bw); I("wifi_enabled", D.wifi_enabled); I("wifi_active", D.wifi_active);
+	I("chg_control_ok", D.chg_control_ok); I("chg_bypass", D.chg_bypass);
+	I("chg_limited", D.chg_limited); I("chg_pending", D.chg_pending);
 	I("admin_wifi", D.admin_wifi); I("chg_paused", D.chg_paused); I("endc", D.endc); I("channel", D.channel); I("nclients", D.nclients); I("usb_up", D.usb_up); I("sms_unread", D.sms_unread); I("sms_total", D.sms_total);
 	F("rsrp", D.rsrp); F("rsrq", D.rsrq);
 #undef S
@@ -356,6 +364,7 @@ static int feed_load(void)
 
 	if (!f) return 0;
 	D.nsms = 0;
+	for (int i = 0; i < 6; i++) D.sms[i].id[0] = 0;
 	D.sinr_ok = D.nr = D.nr_idle = D.nr_rsrp_ok = D.nr_sinr_ok = 0;
 	D.bw_idx = -1;
 	memset(D.cl, 0, sizeof D.cl);

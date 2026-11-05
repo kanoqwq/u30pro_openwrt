@@ -3,3 +3,45 @@ msgstr "Content-Type: text/plain; charset=UTF-8\nLanguage: tr\n"
 
 msgid "Screen wallpaper"
 msgstr "Ekran duvar kağıdı"
+
+msgid "Everywhere"
+msgstr "Her yerde"
+
+msgid "Home page"
+msgstr "Ana sayfa"
+
+msgid "Signal page"
+msgstr "Sinyal sayfası"
+
+msgid "Traffic page"
+msgstr "Trafik sayfası"
+
+msgid "Functions"
+msgstr "İşlevler"
+
+msgid "Pages under Functions"
+msgstr "İşlevlerin alt sayfaları"
+
+msgid "Control centre and SMS list"
+msgstr "Kontrol merkezi ve SMS listesi"
+
+msgid "PIN pad"
+msgstr "PIN tuş takımı"
+
+msgid "Pop-ups (QR code, SMS, power menu)"
+msgstr "Açılır pencereler (QR kodu, SMS, güç menüsü)"
+
+msgid "It plays on selected scenes while the screen is still and pauses on a touch, swipe or scrolling list. Playback uses additional CPU and battery; unselected scenes keep a still frame."
+msgstr "Seçili ekranlar hareketsizken oynatılır; dokunma, kaydırma veya liste kaydırmada duraklar. Oynatma CPU ve pil tüketimini artırır; seçilmeyen ekranlar sabit kareyi gösterir."
+
+msgid "It was converted in the older way (JPEG frames): set it again for a sharper picture and less work for the screen."
+msgstr "Bu canlı duvar kâğıdı eski JPEG kareleriyle dönüştürülmüş; daha net görüntü ve daha az ekran işlemi için videoyu yeniden seçin."
+
+msgid "High refresh"
+msgstr "Yüksek yenileme"
+
+msgid "Use 96 MHz during swipes and high frame rate wallpapers, returning to the stock 48 MHz when idle. Up to about 53 fps; off by default. This exceeds the panel's stock clock. Turn it off if you see specks, shifted lines or wrong colours."
+msgstr "Kaydırma ve yüksek kare hızlı duvar kâğıtlarında 96 MHz kullanır, boşta stok 48 MHz'e döner. Yaklaşık 53 kare/sn; varsayılan olarak kapalıdır. Panelin stok saatini aşar. Noktalar, kaymış çizgiler veya yanlış renkler görürseniz kapatın."
+
+msgid "%d fps (needs high refresh)"
+msgstr "%d kare/sn (yüksek yenileme gerekir)"

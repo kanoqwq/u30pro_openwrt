@@ -93,4 +93,35 @@ printf '0-1,3\n' > "$UNISOC_CORES_SYS/present"
 call get
 test "$(value '@.cores[2].id')" = 3
 test -z "$(value '@.cores[3].id')"
-echo 'PASS core discovery, validation, fixed cores, temporary/persistent settings, boot replay, reset, write/save rollback'
+# ARM64/PSCI may expose CPU0 as a normal hotpluggable core. Follow its
+# online attribute, keeping the missing-node checks above for fixed cores.
+printf '0-3\n' > "$UNISOC_CORES_SYS/present"
+printf '1\n' > "$UNISOC_CORES_SYS/cpu0/online"
+printf '1\n' > "$UNISOC_CORES_SYS/cpu3/online"
+call get
+test "$(value '@.cores[0].writable')" = true
+alt='[{"id":0,"online":false},{"id":1,"online":true},{"id":2,"online":false},{"id":3,"online":false}]'
+request "$alt" true
+test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 0
+test "$(cat "$UNISOC_CORES_SYS/cpu1/online")" = 1
+printf '1\n' > "$UNISOC_CORES_SYS/cpu0/online"
+call boot
+test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 0
+if request '[{"id":0,"online":false},{"id":1,"online":false},{"id":2,"online":false},{"id":3,"online":false}]'; then
+    echo 'accepted all cores offline'; exit 1
+fi
+test "$(value '@.error')" = cpu_cores_fixed
+test "$(cat "$UNISOC_CORES_SYS/cpu1/online")" = 1
+# A read-only CPU0 remains fixed, even on a platform with an online node.
+chmod 444 "$UNISOC_CORES_SYS/cpu0/online"
+call get
+test "$(value '@.cores[0].writable')" = false
+if request "$full"; then echo 'accepted change to fixed CPU0'; exit 1; fi
+test "$(value '@.error')" = cpu_cores_fixed
+test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 0
+chmod 644 "$UNISOC_CORES_SYS/cpu0/online"
+printf '{"reset":true,"persist":false}' | call apply
+test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 1
+test "$(cat "$UNISOC_CORES_SYS/cpu1/online")" = 1
+test ! -e "$UNISOC_CORES_CONFIG"
+echo 'PASS core discovery, capability-based CPU0, last-online protection, validation, fixed cores, temporary/persistent settings, boot replay, reset, write/save rollback'

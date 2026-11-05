@@ -8,11 +8,19 @@ testdir=$(mktemp -d "${TMPDIR:?runner supplies owned temporary storage}/u30pro-n
 trap 'rm -rf -- "$testdir"' EXIT HUP INT TERM
 python3 "$top/tools/u30pro-build.py" check --sources-only
 python3 "$top/tests/u30pro_port.py"
+python3 "$top/tests/u30pro_sdio_clock.py"
+python3 "$top/tests/u30pro_restart.py"
+python3 "$top/openwrt/tests/ra-renew.py"
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_package_state.py
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_public_build.py
 python3 "$top/tests/u30pro_navigation.py"
 python3 "$top/tests/u30pro_sim_status.py"
+python3 "$top/tests/u30pro_screen_sms.py"
 python3 "$top/tests/u30pro_power_events.py"
+python3 "$top/tests/u30pro_screen_charge.py"
+python3 "$top/tests/u30pro_wallpaper_scenes.py"
+python3 "$top/tests/u30pro_wallpaper_tiles.py"
+python3 "$top/tests/u30pro_high_refresh.py"
 python3 "$top/tests/u30pro_uninstall_storage.py"
 test_busybox=$(python3 -c 'import runpy,sys; print(runpy.run_path(sys.argv[1])["settings"]()[2]["busybox"])' "$top/tools/build-settings.py")
 OPENWRT_TEST_BUSYBOX="$test_busybox" python3 -m unittest discover -s "$top/installer/tests" -p test_native_worker.py
@@ -24,6 +32,8 @@ python3 -m unittest discover -s "$top/tests" -p test_u30pro_nfc.py
 python3 -m unittest discover -s "$top/tests" -p test_nfc_dashboard.py
 python3 -m unittest discover -s "$top/tests" -p test_v50_sim.py
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_cards.py
+python3 -m unittest discover -s "$top/tests" -p test_f50pro_cards.py
+PYTHONPATH="$top/tests" python3 -m unittest test_sim_radio test_u30_dsds test_data_sim test_dual_radio
 # The production native tools use Zig/Clang, not GCC-specific diagnostics.
 cc=${CC:-clang}
 "$cc" -std=gnu11 -O2 -Wall -Wextra -Werror -DATD_TEST "$native/tools/u30pro_atd.c" -o "$testdir/atd"

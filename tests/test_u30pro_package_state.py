@@ -110,6 +110,20 @@ class RetainedRoot(unittest.TestCase):
             package.busybox_aliases(self.root,['../outside'])
         self.assertFalse((self.root/'opt/mu300/outside').exists())
 
+    def test_root_archive_keeps_mount_points_without_runtime_files(self):
+        for name in ['tmp/failed-test/config', 'run/modem/state', 'tmp2/keep', 'etc/mu300/model']:
+            path=self.root/name;path.parent.mkdir(parents=True,exist_ok=True)
+            path.write_text('fixture')
+        output=self.work/'root.tar.gz'
+        with package.tarfile.open(output,'w:gz') as archive:
+            for path in self.root.iterdir():
+                archive.add(path,arcname=path.name,filter=package.root_archive_member)
+        with package.tarfile.open(output) as archive:
+            names=set(archive.getnames())
+            self.assertIn('tmp',names);self.assertIn('run',names)
+            self.assertIn('tmp2/keep',names);self.assertIn('etc/mu300/model',names)
+            self.assertFalse(any(n.startswith(('tmp/','run/')) for n in names))
+
     def test_boot_validation_uses_the_selected_layout(self):
         config = json.loads((TOP/'tools/build-layout.json').read_text())
         config['kernel_objects'] = '{workspace}/selected-objects'

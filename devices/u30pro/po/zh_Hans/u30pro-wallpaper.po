@@ -3,3 +3,45 @@ msgstr "Content-Type: text/plain; charset=UTF-8\nLanguage: zh_Hans\n"
 
 msgid "Screen wallpaper"
 msgstr "屏幕壁纸"
+
+msgid "Everywhere"
+msgstr "全部界面"
+
+msgid "Home page"
+msgstr "主页"
+
+msgid "Signal page"
+msgstr "信号页"
+
+msgid "Traffic page"
+msgstr "流量页"
+
+msgid "Functions"
+msgstr "功能列表"
+
+msgid "Pages under Functions"
+msgstr "功能里的各页"
+
+msgid "Control centre and SMS list"
+msgstr "控制中心和短信列表"
+
+msgid "PIN pad"
+msgstr "密码盘"
+
+msgid "Pop-ups (QR code, SMS, power menu)"
+msgstr "弹窗（二维码、短信、电源菜单）"
+
+msgid "It plays on selected scenes while the screen is still and pauses on a touch, swipe or scrolling list. Playback uses additional CPU and battery; unselected scenes keep a still frame."
+msgstr "在勾选的界面静止时播放，触摸、翻页或列表滚动时暂停。播放会增加 CPU 与电量消耗；未勾选的界面保持静态画面。"
+
+msgid "It was converted in the older way (JPEG frames): set it again for a sharper picture and less work for the screen."
+msgstr "这段动态壁纸采用旧版 JPEG 帧格式；重新选择原视频设置，可提升清晰度并减少屏幕处理开销。"
+
+msgid "High refresh"
+msgstr "高刷新"
+
+msgid "Use 96 MHz during swipes and high frame rate wallpapers, returning to the stock 48 MHz when idle. Up to about 53 fps; off by default. This exceeds the panel's stock clock. Turn it off if you see specks, shifted lines or wrong colours."
+msgstr "翻页和高帧率动态壁纸播放时使用 96 MHz，空闲后恢复原厂 48 MHz，最高约 53 帧/秒，默认关闭。此模式超出屏幕原厂时钟；若出现花点、错位或颜色异常，请关闭。"
+
+msgid "%d fps (needs high refresh)"
+msgstr "%d 帧/秒（需开启高刷新）"

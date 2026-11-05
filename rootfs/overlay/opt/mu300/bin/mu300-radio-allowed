@@ -3,7 +3,9 @@
 case ${1:-} in 0|1|--flags|--dsds) ;; *) exit 2;; esac
 model=$(mu300-device 2>/dev/null)
 standby_supported=0
-case "$model" in f50|u30air) standby_supported=1;; esac
+case "$model" in
+    f50|u30air|u30pro) standby_supported=1;;
+esac
 dsds=0
 if [ "$standby_supported" = 1 ]; then
     value=$(uci -q get unisoc_modem.main.dual_standby 2>/dev/null)

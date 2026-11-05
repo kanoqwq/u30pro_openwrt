@@ -26,6 +26,9 @@ current() {
 
 set_band() {  # set_band 2.4|5
     if is_openwrt; then
+        old_band=$(uci -q get wireless.radio0.band)
+        old_ht=$(uci -q get wireless.radio0.htmode)
+        remembered=
         if [ "$1" = 2.4 ]; then
             b=2g ch=6 ht=HT20
             chl='delete wireless.radio0.channels
@@ -38,13 +41,34 @@ delete wireless.radio0.acs_exclude_dfs'
             chl="set wireless.radio0.channels='$(wifi_ap5_channels "$cc")'
 set wireless.radio0.acs_exclude_dfs='1'"
         fi
+        # Band changes must not turn an AX AP into N/AC. Keep each band's
+        # legal HE width so HE80 -> HE40 -> HE80 restores the user's 5 GHz
+        # width, while a manually selected HE40/HE20 is retained too.
+        case $old_ht in
+            HE20|HE40|HE80)
+                saved_ht=$(uci -q get "wireless.radio0.mu300_htmode_$b")
+                if [ "$b" = 2g ]; then
+                    case $saved_ht in HE20|HE40) ht=$saved_ht;; *) ht=HE40;; esac
+                else
+                    max_width=$(wifi_ap5_width "$cc" "$ch")
+                    case $saved_ht in HE20|HE40|HE80) ht=$saved_ht;; *) ht=HE$max_width;; esac
+                    [ "${ht#HE}" -le "$max_width" ] || {
+                        echo 'saved AX width is not permitted on the target channel' >&2; return 1;
+                    }
+                fi
+                case $old_band in 2g|5g) remembered="set wireless.radio0.mu300_htmode_$old_band='$old_ht'";; esac
+                ;;
+            HE*) echo 'unsupported AX width; band and wireless mode were not changed' >&2; return 1;;
+        esac
         uci -q batch <<UCI
 set wireless.radio0.band='$b'
 set wireless.radio0.channel='$ch'
 set wireless.radio0.htmode='$ht'
 $chl
+$remembered
 commit wireless
 UCI
+        [ "$?" = 0 ] || { echo 'wireless band settings could not be saved' >&2; return 1; }
         wifi reload >/dev/null 2>&1 &
     else
         [ -f "$CONF" ] || { echo "no $CONF (the hotspot has not run yet)" >&2; exit 1; }

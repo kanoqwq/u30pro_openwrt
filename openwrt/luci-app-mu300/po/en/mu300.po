@@ -107,3 +107,45 @@ msgstr "No readings"
 
 msgid "已更新"
 msgstr "Updated"
+
+msgid "2内置卡 + 2插拔卡"
+msgstr "2 built-in SIMs + 2 removable SIMs"
+
+msgid "2插拔卡"
+msgstr "2 removable SIMs"
+
+msgid "射频、锁定及 AT 查看仍按两个逻辑卡槽控制。"
+msgstr "Radio, locks and AT views use the two logical SIM slots."
+
+msgid "卡源组合"
+msgstr "SIM source combination"
+
+msgid "卡源"
+msgstr "SIM source"
+
+msgid "分别选择两个逻辑栈接入的卡源，重启后保留。卡源选择不改变默认上网卡或射频开关。"
+msgstr "Choose the SIM source for each logical stack. Saved across reboots; this does not change the default data SIM or radio switches."
+
+msgid "应用卡源组合"
+msgstr "Apply SIM sources"
+
+msgid "应用卡源组合？"
+msgstr "Apply SIM sources?"
+
+msgid "正在应用卡源组合…"
+msgstr "Applying SIM sources…"
+
+msgid "卡源组合已保存"
+msgstr "SIM sources saved"
+
+msgid "此机型不支持双卡双待"
+msgstr "This model does not support dual SIM dual standby"
+
+msgid "TTL"
+msgstr "TTL"
+
+msgid "自动跟随上网卡"
+msgstr "Follow data SIM automatically"
+
+msgid "当前上网卡状态暂不可用"
+msgstr "The current data SIM is temporarily unavailable"

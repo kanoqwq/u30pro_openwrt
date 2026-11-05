@@ -15,6 +15,24 @@ DEFAULTS = TOP / 'openwrt/overlay/etc/uci-defaults/90-mu300'
 
 
 class LedSettings(unittest.TestCase):
+    def test_f50pro_legacy_calls_never_write_its_white_emitters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base=Path(tmp);(base/'etc/mu300').mkdir(parents=True)
+            (base/'etc/mu300/model').write_text('f50pro\n')
+            bindir=base/'bin';bindir.mkdir();calls=base/'calls'
+            for name,body in [('mu300-device','echo u30pro'),('ubus',f'echo "$*" >> "{calls}"')]:
+                p=bindir/name;p.write_text('#!/bin/sh\n'+body+'\n');p.chmod(0o755)
+            for name in ('sc27xx:red','sc27xx:green','sc27xx:blue'):
+                p=base/'sys/class/leds'/name;p.mkdir(parents=True)
+                (p/'brightness').write_text('73\n');(p/'max_brightness').write_text('255\n')
+            env=dict(os.environ,PATH=f'{bindir}:{os.environ["PATH"]}',MU300_BIN=str(bindir),
+                     MU300_SYSROOT=str(base),MU300_LED_SYSFS_ROOT=str(base/'sys/class/leds'))
+            for program,args in [(LED,['online-5g']),(TOP/'rootfs/overlay/opt/mu300/bin/mu300-led',['data','on'])]:
+                result=subprocess.run(['sh',str(program),*args],env=env,capture_output=True,text=True)
+                self.assertEqual(result.returncode,0,result.stderr)
+            self.assertEqual(calls.read_text().splitlines(),["send f50pro.led {}"]*2)
+            self.assertTrue(all(p.read_text()=='73\n' for p in (base/'sys/class/leds').glob('*/brightness')))
+
     def test_v50_without_physical_groups_never_drives_unrelated_lamps(self):
         with tempfile.TemporaryDirectory() as tmp:
             base=Path(tmp);leds=base/'leds';run=base/'run';run.mkdir()
@@ -134,7 +152,7 @@ const form = { NamedSection: {}, GridSection: {}, Flag: {}, Value: {}, ListValue
 form.Map = function() {
     const map = { sections: [], section(_type, name, _id, title) {
         const section = { name, title, options: [], option(_type, key, label, description) {
-            const option = { key, label, description, value() {} };
+            const option = { key, label, description, values:[], value(v,t) {this.values.push([v,t]);} };
             this.options.push(option); return option;
         } };
         this.sections.push(section); return section;
@@ -174,6 +192,16 @@ for (const [locale, title, signal, wifi] of [
     const battery = opts.find(o => o.key === 'battery_brightness');
     if (!battery || battery.datatype !== 'range(0,255)' || !opts.some(o => o.key === 'battery')) throw Error('U30 battery controls');
     if (!opts.some(o => o.key === 'timeout' && o.default === '60')) throw Error('U30 idle timeout');
+
+    const native={};
+    for (const name of ['net_red','net_green','net_blue','wifi_red','wifi_green','wifi_blue','sc27xx:red','sc27xx:green'])native[name]={max_brightness:name.startsWith('sc27xx:')?255:1,triggers:[]};
+    const pro=page.render([native,[]]).sections[0].options;
+    for (const [key,value] of [['signal_4g','blue'],['signal_5g','white'],['signal_offline','red'],['wifi_2g','green'],['wifi_5g','white']]) {
+        const option=pro.find(o=>o.key===key);
+        if(!option || option.default!==value || option.values.length!==5)throw Error('F50 Pro colour mapping: '+key);
+    }
+    if(!pro.some(o=>o.key==='boot_animation' && o.default==='1'))throw Error('F50 Pro boot animation');
+    if(pro.some(o=>o.key==='battery'||o.key==='signal2'))throw Error('F50 Pro must not inherit other product lamps');
 
 }
 '''

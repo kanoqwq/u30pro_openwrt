@@ -26,6 +26,7 @@
 #include <sys/ioctl.h>
 #include <time.h>
 #include <unistd.h>
+#include <signal.h>
 
 #define BUS "/dev/i2c-4"
 #define ADDR 0x57
@@ -39,6 +40,35 @@
 
 static const char WSC_TYPE[] = "application/vnd.wfa.wsc";
 static int fd = -1;
+static int reset_fd = -1;
+
+static void reset_release(void)
+{
+	if (reset_fd >= 0) {
+		lseek(reset_fd, 0, SEEK_SET);
+		write(reset_fd, "1\n", 2);
+		close(reset_fd);
+		reset_fd = -1;
+	}
+}
+static void reset_signal(int sig)
+{
+	reset_release();
+	_exit(128 + sig);
+}
+static int reset_acquire(void)
+{
+	char model[32] = "";
+	FILE *f = fopen("/etc/mu300/model", "r");
+	if (f) { fgets(model, sizeof model, f); fclose(f); }
+	if (strcmp(model, "f50pro\n") && strcmp(model, "f50pro")) return 0;
+	reset_fd = open("/sys/kernel/f50pro_nfc/reset", O_RDWR | O_CLOEXEC);
+	if (reset_fd < 0) return -1;
+	atexit(reset_release);
+	signal(SIGTERM, reset_signal); signal(SIGINT, reset_signal);
+	if (write(reset_fd, "0\n", 2) != 2) return -1;
+	return 0;
+}
 
 static int xfer(struct i2c_msg *m, int n)
 {
@@ -172,6 +202,11 @@ static int open_tag(unsigned *size, int writing)
 {
 	unsigned char cc[4];
 
+	if (reset_acquire()) {
+		fprintf(stderr, "u30pro-nfc: F50 Pro reset owner unavailable: %s\n", strerror(errno));
+		return -1;
+	}
+	if (reset_fd >= 0) msleep(20);
 	fd = open(BUS, O_RDWR | O_CLOEXEC);
 	if (fd < 0 || tag_read(CC, cc, 4)) {
 		fprintf(stderr, "u30pro-nfc: no tag on %s at 0x%02x: %s\n", BUS, ADDR, strerror(errno));
@@ -316,6 +351,11 @@ int main(int argc, char **argv)
 	char key[80] = "";
 	unsigned size, n;
 	int wpa2;
+	if (argc == 2 && !strcmp(argv[1], "probe")) {
+		if (open_tag(&size, 0)) return 1;
+		printf("NFC Type 2 tag, %u data bytes\n", size);
+		return 0;
+	}
 
 	if (argc >= 4 && !strcmp(argv[1], "encode") && (wpa2 = auth_arg(argv[3])) >= 0) {
 		if (wpa2 && !key_ok(argc > 4 ? argv[4] : ""))

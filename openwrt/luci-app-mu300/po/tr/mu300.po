@@ -107,3 +107,45 @@ msgstr "Ölçüm yok"
 
 msgid "已更新"
 msgstr "Güncellendi"
+
+msgid "2内置卡 + 2插拔卡"
+msgstr "2 dahili SIM + 2 çıkarılabilir SIM"
+
+msgid "2插拔卡"
+msgstr "2 çıkarılabilir SIM"
+
+msgid "射频、锁定及 AT 查看仍按两个逻辑卡槽控制。"
+msgstr "Radyo, kilitler ve AT görünümleri iki mantıksal SIM yuvasını kullanır."
+
+msgid "卡源组合"
+msgstr "SIM kaynak birleşimi"
+
+msgid "卡源"
+msgstr "SIM kaynağı"
+
+msgid "分别选择两个逻辑栈接入的卡源，重启后保留。卡源选择不改变默认上网卡或射频开关。"
+msgstr "Her mantıksal yığının SIM kaynağını seçin. Yeniden başlatmada korunur; varsayılan veri SIM’i veya radyo anahtarları değişmez."
+
+msgid "应用卡源组合"
+msgstr "SIM kaynaklarını uygula"
+
+msgid "应用卡源组合？"
+msgstr "SIM kaynakları uygulansın mı?"
+
+msgid "正在应用卡源组合…"
+msgstr "SIM kaynakları uygulanıyor…"
+
+msgid "卡源组合已保存"
+msgstr "SIM kaynakları kaydedildi"
+
+msgid "此机型不支持双卡双待"
+msgstr "Bu model çift SIM çift beklemeyi desteklemiyor"
+
+msgid "TTL"
+msgstr "TTL"
+
+msgid "自动跟随上网卡"
+msgstr "Veri SIM kartını otomatik izle"
+
+msgid "当前上网卡状态暂不可用"
+msgstr "Geçerli veri SIM durumu geçici olarak kullanılamıyor"

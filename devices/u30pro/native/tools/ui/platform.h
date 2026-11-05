@@ -223,6 +223,22 @@ static unsigned long long stat_compose_us, stat_present_us;	/* time spent compos
 static long last_flip_ms;
 #define FULL_REFRESH_MS 1000
 
+/* "High refresh" (u30pro_native_control.display.fast_panel): the panel's SPI clock at 96 MHz instead of the stock 48 MHz, so a frame is
+ * written within one refresh period (about 17.5 of 18.9 ms), and a frame ready within 4 ms after a TE edge starts at once (te_window_us):
+ * up to the panel's 53 frames a second instead of about 26.  Beyond the clock the panel table names; off by default (see u30pro-nv3002c.c).
+ * It is used only while frames come faster than 48 MHz can carry them (a swipe, a drag, a scroll, a live wallpaper above 26 fps: the main
+ * loop's panel_speed_tick); a second after that the clock is back at 48 MHz. */
+static int fast_panel, panel_fast_now = -1;
+
+static void panel_speed(int fast)
+{
+	fast = fast_panel && fast;
+	if (fast == panel_fast_now) return;
+	panel_fast_now = fast;
+	sysfs_write("/sys/module/u30pro_nv3002c/parameters/spi_hz", fast ? "96000000\n" : "0\n");
+	sysfs_write("/sys/module/u30pro_nv3002c/parameters/te_window_us", fast ? "4000\n" : "0\n");
+}
+
 /* The kernel driver can send only the changed windows of a frame (module parameter "partial" of u30pro-nv3002c).  On the glass those windows
  * did not show up reliably (the clock stayed at the old minute while the counters said the window had been sent), so the UI asks for whole frames:
  * a full 240x240 RGB565 frame is 19 ms on the 48 MHz link, and the 1 fps floor costs 2 % of it. */
@@ -242,21 +258,27 @@ static int flip_in_flight(void)
 	return 1;
 }
 
-/* returns 1 when the frame was handed to the display (or is already on it), 0 when the previous flip is still in progress */
-static int present(const Cv *c)
+/* A frame goes out in two steps.  present_prepare dithers it into the buffer that is not on the glass: that may happen while the flip
+ * before is still being written to the panel (the driver copies a frame out of its buffer when the write starts).  present then only
+ * asks for the flip.  The panel's write starts at a TE pulse; at 96 MHz a frame is written in about 17.6 ms of the 18.9 ms between two
+ * pulses, so a flip asked for right on the completion catches the next pulse, where dithering first (about 2 ms) missed it and every
+ * frame waited a period more (26 instead of 53 frames a second). */
+static int prep_buf = -1, prep_same;	/* the buffer holding the frame prepared; or the frame equals the one on the glass */
+
+static void present_prepare(const Cv *c)
 {
 	size_t row = (size_t)c->w * 4;
 	long now = now_ms();
 
-	if (flip_in_flight()) return 0;
 	if (!hist[0]) {
 		hist[0] = calloc((size_t)c->w * c->h, 4);
 		hist[1] = calloc((size_t)c->w * c->h, 4);
 		if (!hist[0] || !hist[1]) die("frame history");
 	}
 	stat_frames++;
+	prep_same = 0;
 	/* the main loop wakes exactly when the next frame is due, so the floor gets a little tolerance against that jitter */
-	if (!first_present && now - last_flip_ms < FULL_REFRESH_MS - 50 && !memcmp(hist[cur_buf], c->p, row * c->h)) { stat_same++; return 1; }
+	if (!first_present && now - last_flip_ms < FULL_REFRESH_MS - 50 && !memcmp(hist[cur_buf], c->p, row * c->h)) { prep_same = 1; prep_buf = -1; return; }
 	int b = first_present ? 0 : cur_buf ^ 1;
 
 	for (unsigned y = 0; y < height; y++) {
@@ -268,6 +290,23 @@ static int present(const Cv *c)
 		memcpy(mine, src, row);
 		stat_rows++;
 	}
+	prep_buf = b;
+}
+
+/* forget a prepared frame (the screen went to sleep) */
+static void present_drop(void) { prep_buf = -1; prep_same = 0; }
+
+/* returns 1 when the frame was handed to the display (or is already on it), 0 when the previous flip is still in progress; a frame not
+ * prepared yet is prepared first */
+static int present(const Cv *c)
+{
+	long now = now_ms();
+	int b;
+
+	if (prep_buf < 0 && !prep_same) present_prepare(c);
+	if (prep_same) { prep_same = 0; stat_same++; return 1; }
+	if (flip_in_flight()) return 0;
+	b = prep_buf;
 	if (first_present) {
 		struct drm_mode_crtc cr = { .set_connectors_ptr = ptr(&connector), .count_connectors = 1, .crtc_id = crtc, .fb_id = fb[b], .mode_valid = 1 };
 
@@ -289,6 +328,7 @@ static int present(const Cv *c)
 			flip_at = now;
 		}
 	}
+	prep_buf = -1;
 	cur_buf = b;
 	last_flip_ms = now;
 	stat_flips++;

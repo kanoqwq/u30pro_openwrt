@@ -137,3 +137,7 @@ esac''')
 
 class F50Dsds(U30Dsds):
     model = 'f50'
+
+
+class U30ProDsds(U30Dsds):
+    model = 'u30pro'

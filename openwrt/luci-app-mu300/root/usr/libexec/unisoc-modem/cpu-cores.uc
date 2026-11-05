@@ -17,7 +17,7 @@ function cores() {
         let value = text(path), valid = value == '0' || value == '1';
         // A missing online file denotes a kernel-managed, non-hotpluggable CPU.
         push(out, {id, online: valid ? value == '1' : true,
-            writable: id != 0 && valid && !!(fs.stat(path)?.mode & 128)});
+            writable: valid && !!(fs.stat(path)?.mode & 128)});
     }
     return sort(out, (a, b) => a.id - b.id);
 }
@@ -41,7 +41,7 @@ function validate(target, current) {
         let found = filter(current, p => p.id == c.id)[0];
         if (!found || seen[''+c.id]) die('cpu_cores_topology');
         seen[''+c.id] = true;
-        if ((c.id == 0 && !c.online) || (!found.writable && c.online != found.online))
+        if (!found.writable && c.online != found.online)
             die('cpu_cores_fixed');
     }
     if (!length(filter(target, c => c.online))) die('cpu_cores_fixed');

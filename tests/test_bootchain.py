@@ -50,7 +50,7 @@ CHAIN = ('uboot', 'sml', 'teecfg', 'trustos', 'vbmeta')
 # never to be written by this, whatever happens (backup-device.sh's CRITICAL list and more)
 NEVER = ('nr_fixnv1', 'nr_fixnv2', 'nr_runtimenv1', 'nr_deltanv', 'prodnv', 'miscdata', 'persist', 'calinv', 'isedata',
          'ztecfg', 'ztepersist', 'boot', 'init_boot', 'vendor_boot', 'super', 'userdata', 'misc', 'nr_modem', 'nr_phy',
-         'pm_sys', 'metadata')
+         'pm_sys', 'metadata', 'dtb')
 
 
 def sha(p):
@@ -111,6 +111,19 @@ class Fixture(ShellTest):
 
 
 class Check(Fixture):
+    def test_mu3356_native_platform_is_accepted_without_writing(self):
+        for shell in self.each_shell():
+            self.device(model='MU3356',product='MU3356',differ=('sml',))
+            for slot in ('a','b'):(self.by/('dtb_'+slot)).unlink()
+            with self.props.open('a') as f:f.write('ro.board.platform=ums9632\n')
+            before=self.snapshot()
+            result=self.run_bc(shell,'check')
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertIn('BOOTCHAIN-PLAN a b sml',result.stdout)
+            self.assertEqual(self.snapshot(),before)
+            self.props.write_text(self.props.read_text().replace('ums9632','ums9620'))
+            self.assertNotEqual(self.run_bc(shell,'check').returncode,0)
+            self.assertEqual(self.snapshot(),before)
     def test_v50_platform_guard_and_read_only_plan(self):
         for shell in self.each_shell():
             self.device(model='V50',product='MU3351',differ=('teecfg',))
@@ -235,6 +248,19 @@ class Refusals(Fixture):
 
 
 class Sync(Fixture):
+    def test_f50pro_uses_standard_bsp_and_never_copies_independent_dtb(self):
+        for shell in self.each_shell():
+            self.device(model='MU3356',product='MU3356',differ=('sml',))
+            with self.props.open('a') as f:f.write('ro.board.platform=ums9632\n')
+            (self.by/'dtb_a').write_bytes(b'original-a')
+            (self.by/'dtb_b').write_bytes(b'original-b')
+            before={name:(self.by/name).read_bytes() for name in ('dtb_a','dtb_b')}
+            result=self.run_bc(shell,'sync',self.tmp/'backup')
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            self.assertEqual((self.by/'sml_a').read_bytes(),(self.by/'sml_b').read_bytes())
+            for name,value in before.items():self.assertEqual((self.by/name).read_bytes(),value)
+            self.assertFalse(any('dtb' in p.name for p in (self.tmp/'backup').rglob('*')))
+
     def test_identical_writes_nothing(self):
         for shell in self.each_shell():
             self.device()

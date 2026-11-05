@@ -5,6 +5,7 @@
 // Copyright (C) 2018 Spreadtrum, Inc.
 // Author: Chunyan Zhang <chunyan.zhang@unisoc.com>
 
+#include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/highmem.h>
@@ -20,6 +21,7 @@
 #include <linux/slab.h>
 #include <linux/mfd/syscon.h>
 #include <linux/regmap.h>
+#include <dt-bindings/clock/sprd,ums9632-clk.h>
 #include "../core/card.h"
 
 #include "sdhci-pltfm.h"
@@ -243,6 +245,12 @@ static inline void _sdhci_sprd_set_clock(struct sdhci_host *host,
 	sdhci_writew(host, 0, SDHCI_CLOCK_CONTROL);
 
 	div = sdhci_sprd_calc_div(sprd_host->base_rate, clk);
+	/* The provider is a 2x source. Report the bus clock, not ios.clock's
+	 * requested value (which used to say 208 MHz on the 195 MHz parent).
+	 */
+	if (sprd_host->sdio_host)
+		host->mmc->actual_clock = sprd_host->base_rate /
+			(div ? 4 * div : 2);
 	div = ((div & 0x300) >> 2) | ((div & 0xFF) << 8);
 	sdhci_enable_clk(host, div);
 
@@ -307,6 +315,8 @@ static void sdhci_sprd_set_clock(struct sdhci_host *host, unsigned int clock)
 
 	if (clock == 0) {
 		sdhci_writew(host, 0, SDHCI_CLOCK_CONTROL);
+		if (sprd_host->sdio_host)
+			host->mmc->actual_clock = 0;
 	} else if (clock != host->clock) {
 		sdhci_sprd_sd_clk_off(host);
 		_sdhci_sprd_set_clock(host, clock);
@@ -350,6 +360,43 @@ static unsigned int sdhci_sprd_get_max_clock(struct sdhci_host *host)
 static unsigned int sdhci_sprd_get_min_clock(struct sdhci_host *host)
 {
 	return 100000;
+}
+
+/* UMS9632 Wi-Fi only: select the existing fixed-factor parent without
+ * retuning the shared PLL. Do this before base_rate is cached and before
+ * card enumeration/DLL tuning; never alter the eMMC or removable SD host.
+ */
+static int sdhci_sprd_wifi_clock(struct device *dev,
+				struct sdhci_sprd_host *sprd_host)
+{
+	struct of_phandle_args spec = { .args_count = 1,
+		.args = { CLK_V4NRPLL_409M6 } };
+	struct clk *parent;
+	int ret;
+
+	if (!sprd_host->r11p3_trial || !sprd_host->sdio_host)
+		return 0;
+	spec.np = of_find_compatible_node(NULL, NULL, "sprd,ums9632-g5l-pll");
+	if (!spec.np)
+		return dev_err_probe(dev, -ENODEV, "Wi-Fi clock provider missing\n");
+	parent = of_clk_get_from_provider(&spec);
+	of_node_put(spec.np);
+	if (IS_ERR(parent))
+		return dev_err_probe(dev, PTR_ERR(parent), "Wi-Fi parent not ready\n");
+	if (clk_get_rate(parent) != 409600000UL) {
+		clk_put(parent);
+		return dev_err_probe(dev, -EINVAL, "Wi-Fi parent is not 409.6 MHz\n");
+	}
+	ret = clk_set_parent(sprd_host->clk_sdio, parent);
+	if (!ret)
+		ret = clk_set_rate(sprd_host->clk_sdio, 409600000UL);
+	clk_put(parent);
+	if (ret)
+		return dev_err_probe(dev, ret, "Cannot set Wi-Fi 2x clock\n");
+	if (clk_get_rate(sprd_host->clk_sdio) != 409600000UL)
+		return dev_err_probe(dev, -EINVAL, "Unexpected Wi-Fi 2x clock\n");
+	dev_info(dev, "Wi-Fi SDIO: v4nrpll-409m6, 204.8 MHz bus maximum\n");
+	return 0;
 }
 
 static void sdhci_sprd_set_uhs_signaling(struct sdhci_host *host,
@@ -1200,6 +1247,9 @@ static int sdhci_sprd_probe(struct platform_device *pdev)
 		goto pltfm_free;
 	}
 	sprd_host->clk_sdio = clk;
+	ret = sdhci_sprd_wifi_clock(&pdev->dev, sprd_host);
+	if (ret)
+		goto pltfm_free;
 	sprd_host->base_rate = clk_get_rate(sprd_host->clk_sdio);
 	if (!sprd_host->base_rate)
 		sprd_host->base_rate = SDHCI_SPRD_CLK_DEF_RATE;

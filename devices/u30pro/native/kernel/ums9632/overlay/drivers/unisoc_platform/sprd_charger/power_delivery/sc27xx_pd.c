@@ -14,6 +14,7 @@
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
+#include <linux/sprd_ums9632_product.h>
 #include <linux/slab.h>
 #include <linux/usb/typec.h>
 #include <linux/usb/sprd_tcpm.h>
@@ -670,6 +671,14 @@ static int sc27xx_pd_set_vbus(struct tcpc_dev *tcpc, bool on, bool charge)
 	struct sc27xx_pd *pd = tcpc_to_sc27xx_pd(tcpc);
 	int ret = 0;
 
+	if (sprd_ums9632_external_power_only()) {
+		if (on) return -EOPNOTSUPP;
+		mutex_lock(&pd->lock);
+		pd->vbus_on = false;
+		pd->charge_on = charge;
+		mutex_unlock(&pd->lock);
+		return 0;
+	}
 	mutex_lock(&pd->lock);
 	if (pd->vbus_on == on) {
 		sprd_pd_log(pd, "vbus is already %s\n", on ? "On" : "Off");
@@ -3125,10 +3134,12 @@ static int sc27xx_pd_probe(struct platform_device *pdev)
 	}
 	sc27xx_init_tcpc_dev(pd);
 
-	pd->vbus = devm_regulator_get(pd->dev, "vbus");
-	if (IS_ERR(pd->vbus)) {
-		dev_err(&pdev->dev, "pd failed to get vbus\n");
-		return PTR_ERR(pd->vbus);
+	if (!sprd_ums9632_external_power_only()) {
+		pd->vbus = devm_regulator_get(pd->dev, "vbus");
+		if (IS_ERR(pd->vbus)) {
+			dev_err(&pdev->dev, "pd failed to get vbus\n");
+			return PTR_ERR(pd->vbus);
+		}
 	}
 
 	pd->vconn = devm_regulator_get_optional(pd->dev, "vconn");

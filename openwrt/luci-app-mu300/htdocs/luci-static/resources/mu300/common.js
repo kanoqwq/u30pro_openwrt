@@ -11,12 +11,22 @@
  * 质量色不用写死的色值，走 --success/--warning/--danger 与 color-mix，
  * 深浅两套模式都跟随主题。 */
 
-function selectedSlot() {
-    try { return sessionStorage.getItem('mu300-view-slot') === '1' ? '1' : '0'; } catch(e) { return '0'; }
+var dataSlot=null, simSelectorUpdate=null;
+function viewChoice() {
+    // The old key mixed the implicit SIM1 default with explicit choices.
+    // Only this new key records a deliberate manual override.
+    try { var value=sessionStorage.getItem('mu300-view-choice');return value==='0'||value==='1'?value:'auto'; }
+    catch(e) { return 'auto'; }
 }
-function selectViewedSlot(slot) {
-    if (String(slot) !== '0' && String(slot) !== '1') return false;
-    try { sessionStorage.setItem('mu300-view-slot', String(slot)); return true; } catch(e) { return false; }
+function selectedSlot() { var choice=viewChoice();return choice==='auto'?(dataSlot || '0'):choice; }
+function selectViewedSlot(slot, followData) {
+    slot=String(slot);
+    if (slot!=='0' && slot!=='1' && slot!=='auto') return false;
+    try {
+        sessionStorage.setItem('mu300-view-choice',followData || slot==='auto'?'auto':slot);
+        if(followData && slot!=='auto')dataSlot=slot;
+        return true;
+    } catch(e) { return false; }
 }
 function scopedRpc(options) {
     var count = (options.params || []).length;
@@ -25,11 +35,50 @@ function scopedRpc(options) {
     return function() {
         var args = Array.prototype.slice.call(arguments, 0, count);
         while (args.length < count) args.push('');
-        args.push(selectedSlot());
-        return call.apply(null, args);
+        function invoke() {args.push(selectedSlot());return call.apply(null,args);}
+        if(viewChoice()!=='auto')return invoke();
+        // Resolve the actual data stack before the first AT/status request.
+        // Concurrent page requests share this read-only, AT-free query.
+        return callSimGet().then(function(){
+            if(dataSlot==null)throw new Error(translate('当前上网卡状态暂不可用'));
+            return invoke();
+        });
     };
 }
-var callSimGet = rpc.declare({ object: 'mu300dash', method: 'sim_get', expect: { '': {} } });
+var simInfo=null;
+var rpcSimGet = rpc.declare({ object: 'mu300dash', method: 'sim_get', expect: { '': {} } });
+var simRequest=null;
+function callSimGet() {
+    if(simRequest)return simRequest;
+    simRequest=rpcSimGet().then(function(info){
+        simInfo=info;
+        var current=info.actual_sim, saved=info.saved_sim;
+        if(current===0 || current===1 || current==='0' || current==='1')dataSlot=String(current);
+        else if(saved===0 || saved===1 || saved==='0' || saved==='1')dataSlot=String(saved);
+        else if(info.slots===1)dataSlot='0';
+        else dataSlot=null;
+        if(viewChoice()!=='auto' && !slotSupported(viewChoice(),info))selectViewedSlot('auto');
+        if(simSelectorUpdate)simSelectorUpdate(info);
+        return info;
+    },function(error){simInfo=null;throw error;})
+        .finally(function(){simRequest=null;});
+    return simRequest;
+}
+function slotName(slot, info) {
+    var physical=(info || simInfo || {}).physical;
+    if(physical && ['f50pro','u30pro','v50'].includes(physical.model) && physical.supported!==false) {
+        var id=(physical.logical_cards || [])[Number(slot)];
+        if(id===3 || (id===4 && physical.model==='f50pro'))return translate('外置 SIM')+' '+(physical.model==='f50pro' && id===3?2:1);
+        if(id===0 || id===1 || id===2)return translate('内置 SIM')+' '+(id+1);
+    }
+    return 'SIM '+(Number(slot)+1);
+}
+function slotSupported(slot, info) {
+    var physical=(info || simInfo || {}).physical;
+    if(physical && physical.supported && ['f50pro','u30pro','v50'].includes(physical.model) && Array.isArray(physical.cards))
+        return physical.cards.some(function(id){return (id===0 || id===3?0:1)===Number(slot);});
+    return Number(slot)===0 || (info || {}).slots!==1;
+}
 var simSelectorCleanup = null, simSelectorGeneration = 0;
 function simSelector(root, layout) {
     var generation = ++simSelectorGeneration;
@@ -37,7 +86,7 @@ function simSelector(root, layout) {
     callSimGet().then(function(info) {
         if (!root.isConnected || generation !== simSelectorGeneration) return;
         if (info.slots !== 2) {
-            if (selectedSlot() !== '0') { sessionStorage.removeItem('mu300-view-slot'); location.reload(); }
+            if (viewChoice() !== 'auto') { selectViewedSlot('0',true); location.reload(); }
             return;
         }
         var anchor=layout==='hero' && root.querySelector('.mud-hero-meta');
@@ -46,25 +95,34 @@ function simSelector(root, layout) {
         if (!anchor) panel.style.marginBottom='14px';
         var summary=document.createElement('summary');
         summary.className='mud-sim-toggle';
-        var caption=translate('正在查看')+' SIM '+(Number(selectedSlot())+1);
-        summary.textContent=anchor?'SIM '+(Number(selectedSlot())+1):caption;
-        summary.title=caption;summary.setAttribute('aria-label',caption);
         var label=document.createElement('label'), select=document.createElement('select');
         label.className='mud-sim-select-label';label.textContent=translate('查看卡槽')+' ';
-        ['0','1'].forEach(function(v) { var o=document.createElement('option');o.value=v;o.textContent='SIM '+(Number(v)+1);select.appendChild(o); });
-        select.value=selectedSlot();label.appendChild(select);
+        var automatic=document.createElement('option');automatic.value='auto';automatic.textContent=translate('自动跟随上网卡');select.appendChild(automatic);
+        ['0','1'].forEach(function(v) { var o=document.createElement('option');o.value=v;o.textContent=slotName(v,info);select.appendChild(o); });
+        select.value=viewChoice();label.appendChild(select);
+        function update(current) {
+            var caption=translate('正在查看')+' '+slotName(selectedSlot(),current);
+            summary.textContent=anchor?slotName(selectedSlot(),current):caption;
+            summary.title=caption;summary.setAttribute('aria-label',caption);
+            select.value=viewChoice();
+            Array.prototype.forEach.call(select.options,function(o){if(o.value!=='auto'){
+                o.textContent=slotName(o.value,current);o.disabled=!slotSupported(o.value,current);
+            }});
+        }
+        update(info);simSelectorUpdate=update;
         var body=document.createElement('div');body.className='mud-sim-options';
         var note=document.createElement('p');note.className='mud-note';
         note.textContent=translate('仅切换查看与控制对象，不切换上网卡。');
         body.append(label,note);panel.append(summary,body);
         if(anchor)anchor.appendChild(panel);else root.prepend(panel);
-        select.onchange=function() {if(selectViewedSlot(select.value))location.reload();else select.value=selectedSlot();};
+        select.onchange=function() {if(selectViewedSlot(select.value))location.reload();else select.value=viewChoice();};
         function outside(event) {if(anchor && !panel.contains(event.target))panel.open=false;}
         function keydown(event) {if(event.key==='Escape' && panel.open){panel.open=false;summary.focus();event.preventDefault();}}
         var lifetime=new MutationObserver(function(){if(!root.isConnected)cleanup();});
         function cleanup() {
             lifetime.disconnect();panel.remove();
             document.removeEventListener('click',outside);document.removeEventListener('keydown',keydown);
+            if(simSelectorUpdate===update)simSelectorUpdate=null;
             if(simSelectorCleanup===cleanup)simSelectorCleanup=null;
         }
         simSelectorCleanup=cleanup;
@@ -135,6 +193,17 @@ var callUsbNetAdd = rpc.declare({ object: 'mu300dash', method: 'usb_net_add', pa
  * standalone package works in any OpenWrt buildroot without po2lmo or extra
  * language packages. Chinese remains the source/fallback language. */
 var DASH_I18N = {
+    '2内置卡 + 2插拔卡': ['2 built-in SIMs + 2 removable SIMs', '2 dahili SIM + 2 çıkarılabilir SIM'],
+    '2插拔卡': ['2 removable SIMs', '2 çıkarılabilir SIM'],
+    "卡源组合": ["SIM source combination", "SIM kaynak birleşimi"],
+    "卡源": ["SIM source", "SIM kaynağı"],
+    "分别选择两个逻辑栈接入的卡源，重启后保留。卡源选择不改变默认上网卡或射频开关。": ["Choose the SIM source for each logical stack. Saved across reboots; this does not change the default data SIM or radio switches.", "Her mantıksal yığının SIM kaynağını seçin. Yeniden başlatmada korunur; varsayılan veri SIM’i veya radyo anahtarları değişmez."],
+    "应用卡源组合": ["Apply SIM sources", "SIM kaynaklarını uygula"],
+    "应用卡源组合？": ["Apply SIM sources?", "SIM kaynakları uygulansın mı?"],
+    "正在应用卡源组合…": ["Applying SIM sources…", "SIM kaynakları uygulanıyor…"],
+    "卡源组合已保存": ["SIM sources saved", "SIM kaynakları kaydedildi"],
+    "此机型不支持双卡双待": ["This model does not support dual SIM dual standby", "Bu model çift SIM çift beklemeyi desteklemiyor"],
+    '射频、锁定及 AT 查看仍按两个逻辑卡槽控制。': ['Radio, locks and AT views use the two logical SIM slots.', 'Radyo, kilitler ve AT görünümleri iki mantıksal SIM yuvasını kullanır.'],
 	"电池与电量": ["Battery & power", "Pil ve güç"],
 	"电池历史": ["Battery history", "Pil geçmişi"],
 	"电池使用时间": ["On battery", "Pilde geçen süre"],
@@ -194,7 +263,6 @@ var DASH_I18N = {
     "无法读取兼容性设置，请刷新页面后重试": ["Unable to read compatibility settings; reload the page and try again", "Uyumluluk ayarları okunamadı; sayfayı yenileyip tekrar deneyin"],
     "保存兼容性设置失败，未执行网络模式应用": ["Could not save compatibility settings; the network mode was not applied", "Uyumluluk ayarları kaydedilemedi; şebeke modu uygulanmadı"],
     '恢复核心初始状态': ['Restore initial core states', 'İlk çekirdek durumlarını geri yükle'],
-    'CPU0 保持在线': ['CPU0 stays online', 'CPU0 açık kalır'],
     "CPU0 深度休眠": ["CPU0 deep idle", "CPU0 derin boşta bekleme"],
     "允许 CPU0 深度休眠": ["Allow CPU0 deep idle", "CPU0 derin boşta beklemesine izin ver"],
     "开启有利于空闲省电；关闭优先低延迟。仅改变 CPU0 深层空闲状态，WFI 和其他核心保持原设置。": ["Enable to favor idle power savings; disable to favor low latency. Only CPU0 deep states change; WFI and other cores keep their settings.", "Boştayken enerji tasarrufu için açın; düşük gecikme için kapatın. Yalnızca CPU0 derin durumları değişir; WFI ve diğer çekirdek ayarları korunur."],
@@ -203,7 +271,7 @@ var DASH_I18N = {
     "无法读取 CPU0 深度休眠状态": ["Cannot read CPU0 deep idle state", "CPU0 derin boşta bekleme durumu okunamıyor"],
     "CPU0 深度休眠设置失败": ["CPU0 deep idle change failed", "CPU0 derin boşta bekleme ayarı başarısız"],
     "CPU 核心开关": ["CPU core controls", "CPU çekirdek denetimleri"],
-    "按内核能力逐核开启或关闭。CPU0 保持在线；关闭核心会降低并行处理能力，是否省电取决于实际负载。": ["Enable or disable individual cores supported by the kernel. CPU0 stays online. Disabling cores reduces parallel capacity; power savings depend on the workload.", "Çekirdek desteğine göre CPU çekirdeklerini açın veya kapatın. CPU0 açık kalır. Çekirdek kapatmak paralel kapasiteyi azaltır; enerji tasarrufu yüke bağlıdır."],
+    "按内核能力逐核开启或关闭，至少保留一个核心在线。关闭核心会降低并行处理能力，是否省电取决于实际负载。": ["Enable or disable individual cores supported by the kernel, keeping at least one core online. Disabling cores reduces parallel capacity; power savings depend on the workload.", "Çekirdek desteğine göre CPU çekirdeklerini açın veya kapatın; en az bir çekirdek açık kalmalıdır. Çekirdek kapatmak paralel kapasiteyi azaltır; enerji tasarrufu yüke bağlıdır."],
     "仅保存核心开关；不改变调频、调压和温控配置。": ["Save core states only; frequency, voltage and thermal settings are unchanged.", "Yalnızca çekirdek durumlarını kaydeder; frekans, voltaj ve sıcaklık ayarları değişmez."],
     "应用核心设置": ["Apply core settings", "Çekirdek ayarlarını uygula"],
     "正在读取核心状态…": ["Reading core states…", "Çekirdek durumları okunuyor…"],
@@ -228,6 +296,7 @@ var DASH_I18N = {
     '3内置卡 + 1插拔卡': ['3 built-in SIMs + 1 removable SIM', '3 dahili SIM + 1 çıkarılabilir SIM'],
     '内置 SIM': ['Built-in SIM', 'Dahili SIM'],
     '外置 SIM': ['External SIM', 'Harici SIM'],
+    '卡槽信息暂不可读': ['SIM slot information is unavailable', 'SIM yuvası bilgileri okunamıyor'],
     '内置 SIM 3 与内置 SIM 2 共用逻辑卡槽 SIM2；外置 SIM 与内置 SIM 1 共用 SIM1。射频、锁定及 AT 查看仍按两个逻辑卡槽控制。': ['Built-in SIM 3 shares logical SIM2 with built-in SIM 2; the external SIM shares SIM1 with built-in SIM 1. Radio, locks and AT views still use the two logical slots.', 'Dahili SIM 3 ve dahili SIM 2 mantıksal SIM2 yuvasını; harici SIM ve dahili SIM 1 ise SIM1 yuvasını paylaşır. Radyo, kilitler ve AT görünümü iki mantıksal yuvayı kullanır.'],
     '无法识别 V50 硬件版本，未更改选卡': ['Unknown V50 board version; SIM selection unchanged', 'V50 kart sürümü bilinmiyor; SIM seçimi değiştirilmedi'],
     '此功能仅适用于 V50': ['This feature is only available on V50', 'Bu özellik yalnızca V50 içindir'],
@@ -653,6 +722,8 @@ var DASH_I18N = {
 	'留空使用平台默认映射，不影响已有流量账本。': ['Leave empty for platform defaults; existing traffic ledgers are preserved.', 'Platform varsayılanları için boş bırakın; mevcut trafik kayıtları korunur.'],
 	'正在查看': ['Viewing', 'Görüntülenen'],
 	'查看卡槽': ['View SIM slot', 'SIM yuvasını görüntüle'],
+	'自动跟随上网卡': ['Follow data SIM automatically', 'Veri SIM kartını otomatik izle'],
+	'当前上网卡状态暂不可用': ['The current data SIM is temporarily unavailable', 'Geçerli veri SIM durumu geçici olarak kullanılamıyor'],
 	'仅切换查看与控制对象，不切换上网卡。': ['Changes the SIM being viewed and controlled, not the mobile data SIM.', 'Görüntülenen ve kontrol edilen SIM değişir; mobil veri SIM kartı değişmez.'],
 	'SIM 卡槽不可用': ['SIM slot unavailable', 'SIM yuvası kullanılamıyor'],
 	'请使用 SIM 管理切换卡槽，终端禁止改写卡槽寻址': ['Use SIM management to switch cards; changing SIM addressing in the terminal is blocked', 'Kart değiştirmek için SIM yönetimini kullanın; terminalde SIM adresleme değişikliği engellendi'],
@@ -753,6 +824,8 @@ var DASH_I18N = {
 	'切换 USB 角色': ['Switch USB role', 'USB rolünü değiştir'],
 	'设备模式': ['Device mode', 'Cihaz modu'],
 	'主机模式': ['Host mode', 'Ana makine modu'],
+	'主机模式（外部供电）': ['Host mode (external power)', 'Ana makine (harici güç)'],
+	'F50 Pro 主机模式需要带外部供电的扩展坞，设备不会向外设供电。USB 网络和串口会断开，请使用 Wi-Fi 管理。': ['F50 Pro host mode requires an externally powered dock; the device does not supply accessory power. USB networking and serial will disconnect; manage over Wi-Fi.', 'F50 Pro ana makine modu harici güçlü bir dock gerektirir; cihaz aksesuara güç sağlamaz. USB ağı ve seri bağlantı kesilir; Wi-Fi üzerinden yönetin.'],
 	'开机自动启用主机模式': ['Enable host mode at boot', 'Açılışta ana makine modunu etkinleştir'],
 	'应用角色': ['Apply role', 'Rolü uygula'],
 	'主机模式会断开本端口的 USB 网络与串口。F50 没有电池；切换后可能失去管理连接，外接 USB 网卡通常需要自供电 Hub。': ['Host mode disconnects USB networking and serial on this port. F50 has no battery; management may be lost and a USB adapter usually needs a powered hub.', 'Ana makine modu bu bağlantı noktasındaki USB ağını ve seri bağlantıyı keser. F50 bataryasızdır; yönetim bağlantısı kaybolabilir ve USB bağdaştırıcısı genellikle harici güçlü bir hub gerektirir.'],
@@ -1554,6 +1627,8 @@ html.mud-bootstrap-theme{--surface:var(--background-color-high);--surface-sunken
 .mud-rsrp small{font-size:.9rem;font-weight:500}
 .mud-chips{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
 .mud-imei-label{display:inline-flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mud-k.mud-imei-label{flex:1 1 0;min-width:0;overflow-wrap:anywhere}
+.mud-imei-label + .mud-v{flex:0 0 auto;white-space:nowrap}
 .mud-imei-active{display:inline-flex;align-items:center;padding:1px 6px;border-radius:99px;font-size:.68rem;font-weight:600;line-height:1.4;color:var(--success,#2fbf71);background:color-mix(in srgb,var(--success,#2fbf71) 14%,transparent);white-space:nowrap}
 .mud-imei-active[hidden]{display:none}
 .mud-tag{display:inline-block;padding:1px 8px;border-radius:99px;background:var(--surface-sunken,rgba(127,127,127,.1));font-size:.74rem;font-weight:600;font-variant-numeric:tabular-nums}
@@ -2022,7 +2097,7 @@ return baseclass.extend({
 	callSmsList: callSmsList, callSmsShow: callSmsShow, callSmsSend: callSmsSend, callSmsJob: callSmsJob,
 	callSmsDel: callSmsDel, callSmsSync: callSmsSync,
 	callForwardGet: callForwardGet, callForwardStatus: callForwardStatus,
-	callSimGet: callSimGet, simSelector: simSelector, selectedSlot: selectedSlot, selectViewedSlot: selectViewedSlot,
+	callSimGet: callSimGet, simSelector: simSelector, slotName: slotName, slotSupported: slotSupported, selectedSlot: selectedSlot, selectViewedSlot: selectViewedSlot,
 	callForwardSet: callForwardSet, callForwardTest: callForwardTest, callForwardClear: callForwardClear,
 	callTrafficGet: callTrafficGet, callTrafficSet: callTrafficSet,
 	callTrafficClear: callTrafficClear,

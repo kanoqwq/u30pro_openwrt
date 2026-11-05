@@ -26,6 +26,11 @@ SOURCES = {
     'u30pro-panel': ['tools/u30pro_ui.c'],
     'u30pro-nfc': ['tools/u30pro_nfc.c'],
     'sml-voltage-check': [],
+    'mu300-keys': [],
+}
+SHARED_SOURCES = {
+    'sml-voltage-check': TOP/'tools/sml-voltage/sml-voltage-check.c',
+    'mu300-keys': TOP/'tools/keys/mu300-keys.c',
 }
 
 
@@ -55,7 +60,7 @@ def build():
     for name, sources in SOURCES.items():
         dynamic = name == 'u30pro-panel'
         dependencies = [NATIVE / p for p in sources]
-        if name == 'sml-voltage-check': dependencies = [TOP/'tools/sml-voltage/sml-voltage-check.c']
+        if name in SHARED_SOURCES: dependencies = [SHARED_SOURCES[name]]
         dependencies += sorted((NATIVE / ('tools/ui' if dynamic else 'modem-native-re/src')).glob('*.h'))
         inputs = {str(p.relative_to(TOP)): digest(p) for p in dependencies}
         libraries = []
@@ -87,7 +92,7 @@ def build():
         if name == 'u30-modemd':
             flags += ['-pthread', '-Wno-unused-parameter']
         command = [COMPILER['prefix'](LAYOUT)+'gcc', *flags,
-                   *([TOP/'tools/sml-voltage/sml-voltage-check.c'] if name == 'sml-voltage-check' else [NATIVE/p for p in sources]),
+                   *([SHARED_SOURCES[name]] if name in SHARED_SOURCES else [NATIVE/p for p in sources]),
                    '-o', pending, *(['-l:'+p.name for p in libraries]+['-lm'] if dynamic else [])]
         COMPILER['execute'](command, LAYOUT, WORKSPACE)
         verify_elf(pending, dynamic)

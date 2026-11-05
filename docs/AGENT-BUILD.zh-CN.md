@@ -6,6 +6,9 @@
 - 本地路径 `D:/Git/u30pro_openwrt`，独立仓库 `kanoqwq/u30pro_openwrt`，维护分支 `main`。
 - 基底为用户的 `minikano-openwrt-feats`，不得改用 MU300 main。
 - 内核为 U30 Pro 原生 6.12.94，不是 MU300 的 7.2/6.18。
+- F50 Pro / MU3356 已有独立产品配置：`--profiles f50pro-6.12`。
+  平台 ABI 仍为 u30pro，产品标记为 f50pro；不要把它当作旧 F50 的安装布局，
+  不要复制另一套内核或 rootfs。两款共享内核对象，产品构建按顺序使用固定 staging。
 - `tools/build-layout.json` 默认只使用公开依赖；首次运行 `build` 会自动准备并校验。
 - 本机复用原有内核缓存时，显式传 `--config tools/build-layout.local.json --workspace /home/kano/openwrt-build`。
   这个被忽略的本机配置只覆盖缓存选择，不是其他用户的构建前提，也不自动搜索其他仓库。

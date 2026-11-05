@@ -15,7 +15,7 @@ class DashboardInfo(unittest.TestCase):
         s=self.snap
         self.assertEqual(s.run('sim_state','0'),'unknown')
         s.write('run/mu300-registration/sim0.json','{"slot":0,"state":"absent"}')
-        self.assertEqual(s.run('sim_state','0'),'unknown')
+        self.assertEqual(s.run('sim_state','0'),'absent')
         s.write('run/mu300-registration/sim-power0','')
         self.assertEqual(s.run('sim_state','0'),'absent')
         self.assertEqual(s.run('sim_state','1'),'unknown')

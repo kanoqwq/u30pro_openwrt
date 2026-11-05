@@ -10,6 +10,22 @@ function el(tag,text,cls){var n=document.createElement(tag);if(text!=null)n.text
 Object.assign(errors,{apn_identity:'无法读取当前 SIM 身份，请稍后重试',apn_bound:'此接入点仍被 SIM 使用，不能删除',apn_scope:'当前 SIM 已记住接入点，请使用按卡应用'});
 function t(s){return M.translate(s);}
 function proto(s){return {IP:'IPv4',IPV6:'IPv6',IPV4V6:'IPv4 / IPv6'}[s]||s;}
+function readCurrent(){
+    // SIM metadata is read-only; APN always follows its own data_sim, never
+    // the dashboard's manually selected viewing slot.
+    return Promise.all([get(),M.callSimGet().catch(function(){return null;})]).then(function(rows){
+        return Object.assign({},rows[0],{simInfo:rows[1]});
+    });
+}
+function dataCard(data){
+    var info=data.simInfo,physical=info&&info.physical;
+    if(!info)return t('卡槽信息暂不可读');
+    var label=M.slotName(data.data_sim,info);
+    if(physical&&['f50pro','u30pro','v50'].includes(physical.model)&&
+       label==='SIM '+(Number(data.data_sim)+1))
+        return t('卡槽信息暂不可读');
+    return label;
+}
 var CSS=`
 .mud-apn .apn-panel{padding:20px;min-width:0}.mud-apn h3{margin:0;border:0;padding:0;font-size:1rem;color:var(--text)}
 .mud-apn .apn-head,.mud-apn .apn-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.mud-apn .apn-head h3{flex:1}
@@ -25,13 +41,13 @@ var CSS=`
 @media(max-width:480px){.mud-apn .apn-panel{padding:14px}.mud-apn .apn-actions .mud-btn{flex:1}.mud-apn .apn-head h3{flex-basis:100%}}
 `;
 return view.extend({
-    load:function(){return get();},
+    load:function(){return readCurrent();},
     render:function(data){
         M.injectCss();M.localizeMenu();
         this.root=el('div',null,'mud mud-apn');this.root.append(el('style',CSS));
         this.paint(data);return this.root;
     },
-    refresh:function(){var self=this,seq=this.readSeq=(this.readSeq||0)+1;return get().then(function(r){if(seq===self.readSeq)self.paint(r);});},
+    refresh:function(){var self=this,seq=this.readSeq=(this.readSeq||0)+1;return readCurrent().then(function(r){if(seq===self.readSeq)self.paint(r);});},
     run:function(button,action,payload){
         var self=this;if(self.busy)return Promise.resolve();self.busy=true;self.readSeq=(self.readSeq||0)+1;M.busy(button,true);
         var toast=M.toast('正在应用…',{type:'busy',timeout:0});
@@ -83,7 +99,7 @@ return view.extend({
         refresh.onclick=function(){if(self.busy)return;M.busy(refresh,true);self.refresh().catch(function(){M.toast('读取失败，稍后重试',{type:'error'});}).finally(function(){M.busy(refresh,false);});};
         add.onclick=function(){self.edit(null,add);};add.disabled=!data.ok;
         if(!data.ok){panel.append(el('p',t(errors[data.error]||'读取失败，稍后重试'),'mud-note'));return;}
-        panel.append(el('p',t('当前配置')+'：'+(data.current.apn||t('SIM 默认'))+' · '+proto(data.current.pdptype)+' · SIM '+(data.data_sim+1),'mud-note'));
+        panel.append(el('p',t('当前配置')+'：'+(data.current.apn||t('SIM 默认'))+' · '+proto(data.current.pdptype)+' · '+dataCard(data),'mud-note apn-current'));
         var phase=data.connecting?'正在连接':data.connected?'已连接':data.dial&&data.dial.phase==='failed'?'连接失败':'未连接';
         panel.append(el('p',t(phase)+' · '+t(data.remembered?'按当前 SIM 记住选择':'使用全局接口配置'),'mud-note'));
         var auto=el('button',t('自动匹配当前 SIM'),'mud-btn');head.append(auto);

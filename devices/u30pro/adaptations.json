@@ -16,8 +16,8 @@
   },
   "tools/u30pro_ui.c": {
     "source_sha256": "509f50da062d843c0f59d4d2c62ea856925ae103524e14c0b5ba1a2ac3d188a6",
-    "sha256": "7708153564329913926e82b9581ebf1937c460582cb71a4224a839204214229f",
-    "reason": "Keep native UI/plugin contracts, persistent wallpaper and MU300 action owners. Present the first boot frame before status reads; add a PIN-preserving power menu with explicit confirmation and isolated touch handling, preserving short power and Wi-Fi key actions. Complete an in-flight page destination before the next swipe/key; rebuild destination hit boxes for a new touch and discard an older drag superseded by a page key. Keep the normal animation duration and native input APIs. Wake the still-locked screen on validated kernel power_supply ONLINE edges through a nonblocking netlink FD; startup baseline and repeated/full/limit status changes do not wake or extend idle time. No new polling or timer."
+    "sha256": "a5f0d7ee102402d17db4f8d05a108566e18a125d288be97388f1bedfe715900f",
+    "reason": "Keep native UI/plugin contracts, persistent wallpaper and MU300 action owners. Present the first boot frame before status reads; add a PIN-preserving power menu with explicit confirmation and isolated touch handling, preserving short power and Wi-Fi key actions. Complete an in-flight page destination before the next swipe/key; rebuild destination hit boxes for a new touch and discard an older drag superseded by a page key. Keep the normal animation duration and native input APIs. Wake the still-locked screen on validated kernel power_supply ONLINE edges through a nonblocking netlink FD; startup baseline and repeated/full/limit status changes do not wake or extend idle time. No new polling or timer. Manual direct supply follows the shared charge policy paused field, separately from automatic charge limits; acknowledge real charge actions and failures without optimistic switch state. Backport scene-selectable live wallpaper from 33333s/U30pro-openwrt c0d52d26d71509868c6bd3c3802475cc54f50cb9; preserve legacy wp_live, native plugin/RPC, local theme/i18n/transient notifications and MU300 paths. Web scene masks, backend persistence and native pause/preset behavior stay in sync. Backport 33333s/U30pro-openwrt 3c2759ea98ab9292f8849136cc637fe8d067bd6f and 302d1d120e9a34de440000d22b579a6041e3b957: lossless U3LW v2 tile deltas, tracked background regrounding and pipelined presentation. Preserve v1 JPEG clips, web theme protocol, local i18n, power/charge actions and gesture behavior. Validate malformed streams and allocation retry; regression tests compare actual decoded frames and rendered pixels. Backport optional high refresh from 33333s/U30pro-openwrt 791ca4e20c45b5c5d4e66f18be1b10d580cd74d2: default-off adaptive 96 MHz/TE window, asynchronous double-buffered writes, 50 fps export and 60 fps decode. Retain local MU300 integration, zh/en/tr themed controls and browser window.Response fix. Wait for DMA ownership before reuse/teardown, finish first frame before backlight; drop fast clock on sleep/exit. Center date and optional unread icon as one group; use stable SMS IDs and explicit SIM scope for backend-confirmed mark-read, preserve opened message identity across list reordering, and return from detail to its SMS list before closing the sheet."
   },
   "tools/u30pro_nvsyncd.c": {
     "source_sha256": "3ef7fd800ccffe874b3a491da450bb67388f2585aec2cc04ed600d6ac5a6a9c5",
@@ -31,13 +31,13 @@
   },
   "tools/ui/wall.h": {
     "source_sha256": "8f508c9dffd87358076ddc4400ae0a105ba51596df5d111bca5c01bc74e7c1bb",
-    "sha256": "298496bbe2c0c01f0b38f763f5ed8d1db0420e980b2892323f4ec376995fa3e6",
-    "reason": "Keep upstream screen/plugin RPC and UCI contracts; route key actions to MU300 policy owners and store wallpaper in the persistent MU300 root rather than the reference /mnt/data layout. Record the committed LF bytes required by .gitattributes; the previous receipt described the same source with CRLF."
+    "sha256": "e9f202ca75e6b8e1f858621b71a818c77c7511eda24fd13b37e4c8971ef13bb6",
+    "reason": "Keep upstream screen/plugin RPC and UCI contracts; route key actions to MU300 policy owners and store wallpaper in the persistent MU300 root rather than the reference /mnt/data layout. Record the committed LF bytes required by .gitattributes; the previous receipt described the same source with CRLF. Backport scene-selectable live wallpaper from 33333s/U30pro-openwrt c0d52d26d71509868c6bd3c3802475cc54f50cb9; preserve legacy wp_live, native plugin/RPC, local theme/i18n/transient notifications and MU300 paths. Web scene masks, backend persistence and native pause/preset behavior stay in sync. Backport 33333s/U30pro-openwrt 3c2759ea98ab9292f8849136cc637fe8d067bd6f and 302d1d120e9a34de440000d22b579a6041e3b957: lossless U3LW v2 tile deltas, tracked background regrounding and pipelined presentation. Preserve v1 JPEG clips, web theme protocol, local i18n, power/charge actions and gesture behavior. Validate malformed streams and allocation retry; regression tests compare actual decoded frames and rendered pixels. Backport optional high refresh from 33333s/U30pro-openwrt 791ca4e20c45b5c5d4e66f18be1b10d580cd74d2: default-off adaptive 96 MHz/TE window, asynchronous double-buffered writes, 50 fps export and 60 fps decode. Retain local MU300 integration, zh/en/tr themed controls and browser window.Response fix. Wait for DMA ownership before reuse/teardown, finish first frame before backlight; drop fast clock on sleep/exit."
   },
   "ui/native-control/overlay/usr/share/u30pro/wallpaper.uc": {
     "source_sha256": "6c91885b7fa813829fac86ac9d0d1f64b36098788a88263f9ffbbcdfe65963a7",
-    "sha256": "a637b7bbe3b5bb6fae65da5303a0b6be92ee927708b8f107cde30ad1a1b23717",
-    "reason": "Retain native wallpaper RPC and file format, persistent MU300 root path; use shared LuCI theme tokens, responsive controls, zh/en/tr translations and themed confirmation. Guard concurrent operations and release browser video resources."
+    "sha256": "28a35f0017a49804f2874272986a7d83a646bcb811be6e929003d6118be36c2a",
+    "reason": "Retain native wallpaper RPC and file format, persistent MU300 root path; use shared LuCI theme tokens, responsive controls, zh/en/tr translations and themed confirmation. Guard concurrent operations and release browser video resources. Backport scene-selectable live wallpaper from 33333s/U30pro-openwrt c0d52d26d71509868c6bd3c3802475cc54f50cb9; preserve legacy wp_live, native plugin/RPC, local theme/i18n/transient notifications and MU300 paths. Web scene masks, backend persistence and native pause/preset behavior stay in sync. Backport 33333s/U30pro-openwrt 3c2759ea98ab9292f8849136cc637fe8d067bd6f and 302d1d120e9a34de440000d22b579a6041e3b957: lossless U3LW v2 tile deltas, tracked background regrounding and pipelined presentation. Preserve v1 JPEG clips, web theme protocol, local i18n, power/charge actions and gesture behavior. Validate malformed streams and allocation retry; regression tests compare actual decoded frames and rendered pixels. Backport optional high refresh from 33333s/U30pro-openwrt 791ca4e20c45b5c5d4e66f18be1b10d580cd74d2: default-off adaptive 96 MHz/TE window, asynchronous double-buffered writes, 50 fps export and 60 fps decode. Retain local MU300 integration, zh/en/tr themed controls and browser window.Response fix. Wait for DMA ownership before reuse/teardown, finish first frame before backlight; drop fast clock on sleep/exit."
   },
   "ui/native-control/overlay/usr/share/rpcd/acl.d/u30pro-wallpaper.json": {
     "source_sha256": "150f57004aefc80a5f77056d85ba747d43055b38272503427bfff701567456c4",
@@ -46,8 +46,8 @@
   },
   "ui/native-control/overlay/www/luci-static/resources/view/system/u30pro-wallpaper.js": {
     "source_sha256": "04341b79cf71b57dbe96c8828ecbe5458506b6cafd75618241cec8f0994b2037",
-    "sha256": "d9e283c7a610e859a93f05a4b597a546b629af490181c309e25a2a3532cdc426",
-    "reason": "Retain native wallpaper RPC and file format, persistent MU300 root path; use shared LuCI theme tokens, responsive controls, zh/en/tr translations and themed confirmation. Guard concurrent operations and release browser video resources. Reuse one themed transient toast for save/upload errors and success, restarting its expiry instead of accumulating persistent LuCI notifications."
+    "sha256": "654d2d7191611ace10c5930243b829616c67a66e7935fb9c4a907a506fb88baa",
+    "reason": "Retain native wallpaper RPC and file format, persistent MU300 root path; use shared LuCI theme tokens, responsive controls, zh/en/tr translations and themed confirmation. Guard concurrent operations and release browser video resources. Reuse one themed transient toast for save/upload errors and success, restarting its expiry instead of accumulating persistent LuCI notifications. Backport only the wallpaper resampling fix from 33333s/U30pro-openwrt d88a20295c03af93fa198e64cb827cf8ed78e0e0: halve image/video crops before the final 480/240 pixel conversion; preserve the local theme, translations, RPC and file formats. Backport scene-selectable live wallpaper from 33333s/U30pro-openwrt c0d52d26d71509868c6bd3c3802475cc54f50cb9; preserve legacy wp_live, native plugin/RPC, local theme/i18n/transient notifications and MU300 paths. Web scene masks, backend persistence and native pause/preset behavior stay in sync. Backport 33333s/U30pro-openwrt 3c2759ea98ab9292f8849136cc637fe8d067bd6f and 302d1d120e9a34de440000d22b579a6041e3b957: lossless U3LW v2 tile deltas, tracked background regrounding and pipelined presentation. Preserve v1 JPEG clips, web theme protocol, local i18n, power/charge actions and gesture behavior. Validate malformed streams and allocation retry; regression tests compare actual decoded frames and rendered pixels. Explicitly use the browser window.Response for CompressionStream output; LuCI evaluates modules in a closure with an unrelated XHR Response constructor. Verify compression under that actual LuCI closure. Backport optional high refresh from 33333s/U30pro-openwrt 791ca4e20c45b5c5d4e66f18be1b10d580cd74d2: default-off adaptive 96 MHz/TE window, asynchronous double-buffered writes, 50 fps export and 60 fps decode. Retain local MU300 integration, zh/en/tr themed controls and browser window.Response fix. Wait for DMA ownership before reuse/teardown, finish first frame before backlight; drop fast clock on sleep/exit."
   },
   "modem-native-re/src/main.c": {
     "source_sha256": "12aa835da93bf58638286f363190f82c71107cabe4b059b068eda8634f079f75",
@@ -81,43 +81,43 @@
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/display/u30pro-nv3002c.c": {
     "source_sha256": "85846b8055597791c01cc4f78734148e1dfa6e4fee20f5bc53158b0b091451b0",
-    "sha256": "84f443551bc7ecd32c030863bfec752efb56335424fe28d4b04b2b6dd9a56e38",
-    "reason": "Preserve firmware panel GPIO state across probe/defer and omit the competing automatic black fbdev modeset. Native KMS takes output GPIO ownership only with its first frame; retain stock reset/init and normal DPMS sleep/wake."
+    "sha256": "a68211e5a6bba28000fd9d926e135e4a6aad6467cea80ba2b800b337c6f7a6c0",
+    "reason": "Preserve firmware panel GPIO state across probe/defer and omit the competing automatic black fbdev modeset. Native KMS takes output GPIO ownership only with its first frame; retain stock reset/init and normal DPMS sleep/wake. Backport optional high refresh from 33333s/U30pro-openwrt 791ca4e20c45b5c5d4e66f18be1b10d580cd74d2: default-off adaptive 96 MHz/TE window, asynchronous double-buffered writes, 50 fps export and 60 fps decode. Retain local MU300 integration, zh/en/tr themed controls and browser window.Response fix. Wait for DMA ownership before reuse/teardown, finish first frame before backlight; drop fast clock on sleep/exit."
   },
   "tools/ui/platform.h": {
     "source_sha256": "b520e88bce29572a20f84a8b4b2095d2c63246469bcf371ef965f2e740cb9ab6",
-    "sha256": "7cbc2fd6cb316c18fb1bbcbbaa7d23d9825afb575a7244c1c1b25a57c7f534c0",
-    "reason": "Native KMS/DPMS owns display wake. Recognize a held power key once at 1500 ms while still held, suppress its release action and clear state on lost input events; keep all other native input behavior."
+    "sha256": "bfe488a948736bf588a41811e6c857a31080b3c2069da5e39e9a13ffff4f0b2e",
+    "reason": "Native KMS/DPMS owns display wake. Recognize a held power key once at 1500 ms while still held, suppress its release action and clear state on lost input events; keep all other native input behavior. Backport optional high refresh from 33333s/U30pro-openwrt 791ca4e20c45b5c5d4e66f18be1b10d580cd74d2: default-off adaptive 96 MHz/TE window, asynchronous double-buffered writes, 50 fps export and 60 fps decode. Retain local MU300 integration, zh/en/tr themed controls and browser window.Response fix. Wait for DMA ownership before reuse/teardown, finish first frame before backlight; drop fast clock on sleep/exit."
   },
   "tools/ui/common.h": {
     "source_sha256": "da701c3e88bec7dd0174ae5405052ccd0dbd647227237787d60edb6ec3f66272",
-    "sha256": "7cb59bb1e9b51e4892ac8c4b7c75280a662086338664492112f80d16eaabe481",
-    "reason": "Add a native LTE component-bandwidth text field to preserve MU300 parsed carrier aggregation widths; retain legacy bw_idx and all upstream plugin fields."
+    "sha256": "512d8c848408883e70e322a1203d159d84c72ff8a9ea23e1ed24bb2754e67cad",
+    "reason": "Add a native LTE component-bandwidth text field to preserve MU300 parsed carrier aggregation widths; retain legacy bw_idx and all upstream plugin fields. Manual direct supply follows the shared charge policy paused field, separately from automatic charge limits; acknowledge real charge actions and failures without optimistic switch state. Center date and optional unread icon as one group; use stable SMS IDs and explicit SIM scope for backend-confirmed mark-read, preserve opened message identity across list reordering, and return from detail to its SMS list before closing the sheet."
   },
   "tools/ui/data.h": {
     "source_sha256": "866a396e8bb8e07c4f66d2c2060bbd70c165517868d84c63783f545968fc8ef8",
-    "sha256": "c1617ad37c6ef44fee09ee24bff2319e8a9cfc81e5432ec190f9bc73d8b7647c",
-    "reason": "Accept LTE component-bandwidth text from the MU300 screen feeder, keeping native feed keys and other measurements unchanged."
+    "sha256": "d5b5f48c0932968a0740fb279a6a319c9b64133075de343bcc0eb5aa47b17530",
+    "reason": "Accept LTE component-bandwidth text from the MU300 screen feeder, keeping native feed keys and other measurements unchanged. Manual direct supply follows the shared charge policy paused field, separately from automatic charge limits; acknowledge real charge actions and failures without optimistic switch state. Center date and optional unread icon as one group; use stable SMS IDs and explicit SIM scope for backend-confirmed mark-read, preserve opened message identity across list reordering, and return from detail to its SMS list before closing the sheet."
   },
   "tools/ui/bus.h": {
     "source_sha256": "44b1cfa20e3680593217c47f6c17e755188349b2a1e02d31c0d1d70202acfc7e",
-    "sha256": "326c58a2b5223b21b1f4b67a73c23faba621c805acd3835d16c048aa78b54aa8",
-    "reason": "Keep native screen/plugin APIs. Clear absent LTE/NR bandwidth on each feed snapshot and expose additive power-menu status fields for UI verification. Expose additive power-event listener and external-power state for read-only deployment verification."
+    "sha256": "703d47d018300806a5c64f6f5daec4fe16594929ffee85f8056618a2d96dcfb4",
+    "reason": "Keep native screen/plugin APIs. Clear absent LTE/NR bandwidth on each feed snapshot and expose additive power-menu status fields for UI verification. Expose additive power-event listener and external-power state for read-only deployment verification. Manual direct supply follows the shared charge policy paused field, separately from automatic charge limits; acknowledge real charge actions and failures without optimistic switch state. Backport scene-selectable live wallpaper from 33333s/U30pro-openwrt c0d52d26d71509868c6bd3c3802475cc54f50cb9; preserve legacy wp_live, native plugin/RPC, local theme/i18n/transient notifications and MU300 paths. Web scene masks, backend persistence and native pause/preset behavior stay in sync. Backport optional high refresh from 33333s/U30pro-openwrt 791ca4e20c45b5c5d4e66f18be1b10d580cd74d2: default-off adaptive 96 MHz/TE window, asynchronous double-buffered writes, 50 fps export and 60 fps decode. Retain local MU300 integration, zh/en/tr themed controls and browser window.Response fix. Wait for DMA ownership before reuse/teardown, finish first frame before backlight; drop fast clock on sleep/exit. Center date and optional unread icon as one group; use stable SMS IDs and explicit SIM scope for backend-confirmed mark-read, preserve opened message identity across list reordering, and return from detail to its SMS list before closing the sheet."
   },
   "tools/ui/pages.h": {
     "source_sha256": "7400d3e1955815170014f86748ea75ab2fc9b6d7f202fe910d050dec9081cb4f",
-    "sha256": "f73cf2a6175b780337097d61a69c5637062b0c7a9eeca5dccaad37170c2e2408",
-    "reason": "Render LTE CA bandwidth text on the existing serving-cell row with the native index ABI retained. Add rounded themed power choices/confirmation within the round panel; align refresh arrowhead with the actual clockwise arc tangent. Distinguish confirmed no-SIM, unknown SIM, locked SIM, disabled data, RF off and unavailable modem in the native screen; use the shared AT owner state via the U30 Pro feeder."
+    "sha256": "c2e986ef68b58b101519594eb8b3a6325aaa4efec62adc58ad92512f903ec0a7",
+    "reason": "Render LTE CA bandwidth text on the existing serving-cell row with the native index ABI retained. Add rounded themed power choices/confirmation within the round panel; align refresh arrowhead with the actual clockwise arc tangent. Distinguish confirmed no-SIM, unknown SIM, locked SIM, disabled data, RF off and unavailable modem in the native screen; use the shared AT owner state via the U30 Pro feeder. Manual direct supply follows the shared charge policy paused field, separately from automatic charge limits; acknowledge real charge actions and failures without optimistic switch state. Backport 33333s/U30pro-openwrt 3c2759ea98ab9292f8849136cc637fe8d067bd6f and 302d1d120e9a34de440000d22b579a6041e3b957: lossless U3LW v2 tile deltas, tracked background regrounding and pipelined presentation. Preserve v1 JPEG clips, web theme protocol, local i18n, power/charge actions and gesture behavior. Validate malformed streams and allocation retry; regression tests compare actual decoded frames and rendered pixels. Center date and optional unread icon as one group; use stable SMS IDs and explicit SIM scope for backend-confirmed mark-read, preserve opened message identity across list reordering, and return from detail to its SMS list before closing the sheet."
   },
   "tools/ui/menu.h": {
     "source_sha256": "682fc834c362e9353ef4a0015e8c790798270e51635e28b77aed3fef3a10141e",
-    "sha256": "a85832e3dfcefd587b25274e9beea504adcd46a67513284735661571956dc688",
-    "reason": "Open the same themed power menu from the native control centre power tile; no immediate reboot or redundant hold gesture."
+    "sha256": "a2d60b39d49649d3a8fbf1371b7dbe6c8996708fb4754061cf80b1cc00bb6a1c",
+    "reason": "Open the same themed power menu from the native control centre power tile; no immediate reboot or redundant hold gesture. Backport scene-selectable live wallpaper from 33333s/U30pro-openwrt c0d52d26d71509868c6bd3c3802475cc54f50cb9; preserve legacy wp_live, native plugin/RPC, local theme/i18n/transient notifications and MU300 paths. Web scene masks, backend persistence and native pause/preset behavior stay in sync."
   },
   "kernel/ums9632/overlay/drivers/power/supply/u30pro-sgm41513.c": {
     "source_sha256": "604a09d3c82ecc46610dc401ca871045b23b90b905063e86ca56c367b6726d31",
-    "sha256": "dadf03129042e43873e58e96265bf4bff97afab8b91241d8e96af1e4038de4ea",
-    "reason": "Use the stock USB2 PHY/PMIC BC1.2 result, not SGM41513 PN0 PSEL bits, to select the existing stock SDP/DCP/CDP tables and report USB type. Atomic notifications queue process-context policy, probe defers for its provider and cleanup unregisters before cancelling workers. Preserve PD negotiation, user limits, JEITA, bypass, CV and OTG guards."
+    "sha256": "21eec9fef063f34bc87bde479ddead83e119f8dde2ba3c44eb4e0b104975841a",
+    "reason": "Use the stock USB2 PHY/PMIC BC1.2 result, not SGM41513 PN0 PSEL bits, to select the existing stock SDP/DCP/CDP tables and report USB type. Atomic notifications queue process-context policy, probe defers for its provider and cleanup unregisters before cancelling workers. Preserve PD negotiation, user limits, JEITA, bypass, CV and OTG guards. 2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing."
   },
   "kernel/ums9632/overlay/drivers/power/supply/Kconfig.u30pro": {
     "source_sha256": "32fbd94b6b7b90b08f53ead42fae22fb05eac04515dcb0c2e959fd0674ed39b1",
@@ -136,8 +136,8 @@
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/usb/musb/musb_sprd.c": {
     "source_sha256": "d567b3277c25ddc7da728b22028bf3aab39bc3ddf0d254530f80a93c3b3986a6",
-    "sha256": "1699b69d02cde3d9627ebb969252c9fc54ef958fdf2fd031f5537fb7ad358d81",
-    "reason": "Expose a read-only dual_role_capable attribute from the actual compiled native MUSB configuration, so the dashboard cannot offer host mode on an older gadget-only kernel. Preserve extcon-driven host/gadget transitions."
+    "sha256": "35890f0ce3d00d4ca2b9beed878e25bb465ace14bdbb91eedae3628522ca8bd1",
+    "reason": "Add explicit MU3356 external-power-only data-host policy, preserving the actual VBUS event and existing MUSB state machine. Never request boost/charger power in this mode; U30 Pro default is unchanged. Share explicit MU3356 external-power-only boot policy across MUSB and PD. Keep incoming VBUS detection/data host, never enable internal boost; original U30 Pro path stays default."
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/usb/musb/musb_virthub.c": {
     "source_sha256": "e75ebe204a3f53880386cf3431ed7d476a8922cc715ff3495724709a2ec71678",
@@ -161,8 +161,8 @@
   },
   "tools/u30pro_nfc.c": {
     "source_sha256": "81fa9e7dcc7c74fef631812ee3061dd02a6edd5fae69947fcd7b32f016a619b4",
-    "sha256": "0a9646c4f463362b8b0857831ec905fae642c007cdb11c39809e7cdf094cbbb8",
-    "reason": "Integrate native FM11NT08x Wi-Fi provisioning with a persistent native function-menu switch and event-only synchronization. Validate tag permissions and WSC bounds, publish NDEF length last, reject truncated or multiline keys, skip unchanged EEPROM pages and verify readback. No AT, NV or modem ownership changes."
+    "sha256": "684bfa91696260812db5a915d35118c2b4c413e5ece683ce64d7c0215b1a84a1",
+    "reason": "Preserve original U30 Pro tag path. For MU3356 only, acquire the stock low-for-I2C/high-at-rest reset line through a DT-derived kernel owner, restore on exit/signals and add a capability-only read probe. No AT or modem NV writes."
   },
   "ui/native-control/overlay/usr/share/u30pro/battery-log.uc": {
     "source_sha256": "f1a7dbfebeacfa68954f6e6712c26e1b4b9dd7b7c10ab3e17aad3c875faf1ead",
@@ -176,12 +176,52 @@
   },
   "ui/native-control/overlay/etc/init.d/u30pro-battlog": {
     "source_sha256": "ac1a5c2aae8f37b2b87d8b1ab15e4e094193155f276bfc14c17d1d68e73a02be",
-    "sha256": "581c7e3a0fbf91d5fbdab23afabbd17334811e7ab9380ed8d98c7a97a267dfa5",
-    "reason": "Connect native battery history to the MU300 persistent root and shared dashboard. Preserve screen file/RPC contracts; detect actual battery presence, expose live readings and estimate only from continuous discharge, with bounded retention and offline validation."
+    "sha256": "91bf8f50a3c0a08b04f8f80d8f462019ac15947cb50b7b341355440852be284a",
+    "reason": "Connect native battery history to the MU300 persistent root and shared dashboard. Preserve screen file/RPC contracts; detect actual battery presence, expose live readings and estimate only from continuous discharge, with bounded retention and offline validation. 2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing."
   },
   "tests/test_battery_log.uc": {
     "source_sha256": "8c7ff359958bc64fdf1e60722b398fd415d20ef77a8ae87432396c0ed1cf4115",
     "sha256": "fbf24ce387bf945503daf86290bb245454b7c549a3569eb90ec687e741d2ce10",
     "reason": "Connect native battery history to the MU300 persistent root and shared dashboard. Preserve screen file/RPC contracts; detect actual battery presence, expose live readings and estimate only from continuous discharge, with bounded retention and offline validation."
+  },
+  "kernel/ums9632/overlay/drivers/power/supply/u30pro-ump965x-fgu.c": {
+    "source_sha256": "c30e0967b9b05a0c503bd6ff5b20a4665008afd013b9b4c9288dca87bd5b72d2",
+    "reason": "2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing.",
+    "sha256": "8487646c4018e9cfcf9c64e9f9124d2790040c261ee0670b6e51783f1999fe89"
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/Kconfig": {
+    "source_sha256": "be2eeea729c778ef8009779f8b378325f3f0ded2bb5796bad8a4c823a13007ff",
+    "sha256": "bf134bd2ff9ac2a3f24e662d46f08ddd6a92c8c3d51eb87df1b4492dafe01dd3",
+    "reason": "Enable opt-in F50 Pro PMIC white LEDs and DT-derived NFC reset ownership as modules; other product autoload remains disabled."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/Makefile": {
+    "source_sha256": "32bbe6fc27f198862235d1db5f06e0ca71557fa7dde8e4f2421aaa9f93bba4e5",
+    "sha256": "34c55553c839825a0278450cd9cd986c47d272ad296533e867390c1dfeaf2e1c",
+    "reason": "Wire opt-in F50 Pro LED and NFC reset modules into the shared native build. Share explicit MU3356 external-power-only boot policy across MUSB and PD. Keep incoming VBUS detection/data host, never enable internal boost; original U30 Pro path stays default."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/sprd_charger/power_delivery/sc27xx_pd.c": {
+    "source_sha256": "12c53116980b96cea02a3fcfc670a254eb1df8e2cf5be7ad58bfa4e6dd11e9a1",
+    "sha256": "6fff36162838d631d10a45127f61126199a1b3b1549cf93744e01c655e83f1d7",
+    "reason": " Share explicit MU3356 external-power-only boot policy across MUSB and PD. Keep incoming VBUS detection/data host, never enable internal boost; original U30 Pro path stays default."
+  },
+  "ui/native-control/overlay/usr/libexec/rpcd/u30pro-wallpaper": {
+    "source_sha256": "8d6816b6ae85ac5b8d25907616a866feb28e940bf42e0fa2fce230a38a0c3162",
+    "reason": " Backport scene-selectable live wallpaper from 33333s/U30pro-openwrt c0d52d26d71509868c6bd3c3802475cc54f50cb9; preserve legacy wp_live, native plugin/RPC, local theme/i18n/transient notifications and MU300 paths. Web scene masks, backend persistence and native pause/preset behavior stay in sync. Backport optional high refresh from 33333s/U30pro-openwrt 791ca4e20c45b5c5d4e66f18be1b10d580cd74d2: default-off adaptive 96 MHz/TE window, asynchronous double-buffered writes, 50 fps export and 60 fps decode. Retain local MU300 integration, zh/en/tr themed controls and browser window.Response fix. Wait for DMA ownership before reuse/teardown, finish first frame before backlight; drop fast clock on sleep/exit.",
+    "sha256": "c1b65ae3d39ae1ebaaae5f860b8612249f8d70ddc9b1ad56ccf3cf0a1d97cb9a"
+  },
+  "tools/ui/gfx.h": {
+    "source_sha256": "2b0db437e8e1667092a8e96973c260a5ed6cd5183f746a2b053cea6ec2acc7e1",
+    "reason": "Backport 33333s/U30pro-openwrt 3c2759ea98ab9292f8849136cc637fe8d067bd6f and 302d1d120e9a34de440000d22b579a6041e3b957: lossless U3LW v2 tile deltas, tracked background regrounding and pipelined presentation. Preserve v1 JPEG clips, web theme protocol, local i18n, power/charge actions and gesture behavior. Validate malformed streams and allocation retry; regression tests compare actual decoded frames and rendered pixels.",
+    "sha256": "cd571973aff9ccb2e2904e77745984d4927722292cc8d4ee9482a50443186886"
+  },
+  "kernel/ums9632/overlay/drivers/mmc/host/sdhci-sprd.c": {
+    "source_sha256": "ca9e22b338868767b91785064e9e0003c41b0d15537564a865f2c807a983ead6",
+    "sha256": "633f074483220e3d3a378453548e56e85fa8e84fe58b3fe6ddc3426bf400e21b",
+    "reason": "Select the existing UMS9632 v4nrpll-409m6 parent only for the R11P3 no-SD/no-MMC Wi-Fi host before caching base_rate and card/DLL tuning; leave eMMC/SD and the shared PLL frequency unchanged. Request a 204.8 MHz bus, retain explicit lower user caps and old 208 MHz requests through the board cap, propagate provider deferral/errors and report the actual bus clock instead of the requested ios value. CPU governor unchanged. Offline tests/build are not hardware acceptance."
+  },
+  "kernel/ums9632/overlay/drivers/spi/spi-sprd-adi.c": {
+    "source_sha256": "5874f7acf95f7b8d074907389f9f97f37258a31f53baaa1e116be4942263d8ee",
+    "sha256": "6ee3b43cf1e7e6caad877f9bae5c4eb8b8b167e5a7fd3eef51d6e0cdb65ebcd9",
+    "reason": "Restore the actual MU5358 and MU3356 stock ADI restart preparation: priority 130 before PSCI 129, UMP9650 POR reset reason at 0x21d4, normal restart 0x40, preserve secure reasons 2/4 and upper byte. Gate on UMS9632 and stock sprd,psci-reboot=1. Continue to PSCI without arming a watchdog or altering poweroff."
   }
 }

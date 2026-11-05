@@ -16,21 +16,31 @@ case $model in
         R=${MU300_V50_RUN:-/run}; HW=${MU300_V50_MUX:-/sys/bus/platform/devices/sim_gpio_ctl}
         ;;
     u30pro)
-        . "${MU300_U30PRO_CARD_LIB:-/opt/mu300/lib/u30pro-card.sh}"
-        card_board_id() { u30pro_board_id; }
-        card_map() { u30pro_card_map "$@"; }
-        cards() { u30pro_cards "$@"; }
-        active_card() { u30pro_active_card "$@"; }
+        if [ "$(cat "${MU300_SYSROOT:-}/etc/mu300/model" 2>/dev/null)" = f50pro ]; then
+            model=f50pro
+            . "${MU300_F50PRO_CARD_LIB:-/opt/mu300/lib/f50pro-card.sh}"
+            card_board_id() { f50pro_board_id; }
+            card_map() { f50pro_card_map "$@"; }
+            cards() { f50pro_cards "$@"; }
+            active_card() { f50pro_active_card "$board" "$@"; }
+        else
+            . "${MU300_U30PRO_CARD_LIB:-/opt/mu300/lib/u30pro-card.sh}"
+            card_board_id() { u30pro_board_id; }
+            card_map() { u30pro_card_map "$@"; }
+            cards() { u30pro_cards "$@"; }
+            active_card() { u30pro_active_card "$@"; }
+        fi
         R=${MU300_U30PRO_RUN:-/run}; HW=${MU300_U30PRO_MUX:-/sys/bus/platform/devices/sim_gpio_ctl}
         ;;
     *) [ "${1:-}" != status ] || { echo '{"ok":1,"supported":false}'; exit 0; }; echo physical_card_unsupported >&2; exit 1 ;;
 esac
 SELF=$BIN/mu300-$model-sim
+[ "$model" != f50pro ] || SELF=$BIN/mu300-u30pro-sim
 cfg() { uci -q get "unisoc_modem.main.$1" 2>/dev/null || true; }
 fail() { echo "$1" >&2; exit 1; }
 board=$(card_board_id) || {
-    if [ "$model:${1:-}" = u30pro:boot ]; then
-        logger -t mu300-u30pro-sim 'Unknown hardware layout; leaving bootloader SIM routing unchanged'
+    if [ "${1:-}" = boot ] && { [ "$model" = u30pro ] || [ "$model" = f50pro ]; }; then
+        logger -t "mu300-$model-sim" 'Unknown hardware layout; leaving bootloader SIM routing unchanged'
         exit 0
     fi
     [ "${1:-}" != status ] || { printf '{"ok":1,"supported":false,"error":"physical_board_unknown","model":"%s"}\n' "$model"; exit 0; }
@@ -38,12 +48,15 @@ board=$(card_board_id) || {
 }
 validate() { card_map "$board" "$1" >/dev/null || fail physical_card_unavailable; }
 hw_ready() {
+    if [ "$model" = f50pro ]; then
+        [ "$(cat "$HW/layout" 2>/dev/null)" = mu3356 ] || return 1
+    fi
     [ -r "$HW/chip_select" ] && [ -r "$HW/psim_select" ] &&
     case "$(cat "$HW/chip_select"):$(cat "$HW/psim_select")" in 0:0|0:1|1:0|1:1) true;; *) false;; esac
 }
 case ${1:-} in
 status)
-    ready=false; chip=null; psim=null; actual=null; saved=null
+    ready=false; chip=null; psim=null; actual=null; saved=null; extra=
     if hw_ready; then
         chip=$(cat "$HW/chip_select"); psim=$(cat "$HW/psim_select")
         logical=$(cat "${MU300_DATA_SIM_ACTUAL:-$R/mu300-data-sim-actual}" 2>/dev/null || true)
@@ -55,13 +68,40 @@ status)
     value=$(cfg "${model}_card")
     if card_map "$board" "$value" >/dev/null; then saved=$value; fi
     cards=$(cards "$board" | tr ' ' ',')
-    printf '{"ok":1,"supported":true,"ready":%s,"board_id":%s,"cards":[%s],"active_card":%s,"saved_card":%s,"chip_select":%s,"psim_select":%s,"model":"%s"}\n' \
-        "$ready" "$board" "$cards" "$actual" "$saved" "$chip" "$psim" "$model"
+    if [ "$model" = f50pro ] || [ "$model" = u30pro ] || [ "$model" = v50 ]; then
+        first=null; second=null
+        if hw_ready; then
+            first=$(active_card 0 "$chip" "$psim") || first=null
+            second=$(active_card 1 "$chip" "$psim") || second=null
+            card_map "$board" "$first" >/dev/null || first=null
+            card_map "$board" "$second" >/dev/null || second=null
+        fi
+        extra=",\"logical_cards\":[$first,$second]"
+        if [ "$model" = f50pro ]; then
+            extra="$extra,\"saved_routes\":[$(cfg f50pro_route0 | grep -x '[0-4]' || echo null),$(cfg f50pro_route1 | grep -x '[0-4]' || echo null)]"
+        fi
+    fi
+    printf '{"ok":1,"supported":true,"ready":%s,"board_id":%s,"cards":[%s],"active_card":%s,"saved_card":%s,"chip_select":%s,"psim_select":%s,"model":"%s"%s}\n' \
+        "$ready" "$board" "$cards" "$actual" "$saved" "$chip" "$psim" "$model" "$extra"
     exit 0;;
 validate) validate "${2:-}"; hw_ready || fail physical_mux_unavailable; exit 0;;
 boot)
     target=$(cfg "${model}_card")
-    if [ "$model" = u30pro ]; then
+    # MU3356 starts from this device's stock selector state. Only an explicit
+    # saved physical-card preference may change it; never select MU5358 defaults.
+    if [ "$model" = f50pro ]; then
+        first=$(cfg f50pro_route0); second=$(cfg f50pro_route1)
+        if [ -n "$first$second" ]; then
+            case $(card_map "$board" "$first") in '0 '*) ;; *) fail physical_card_unavailable;; esac
+            case $(card_map "$board" "$second") in '1 '*) ;; *) fail physical_card_unavailable;; esac
+            hw_ready || fail physical_mux_unavailable
+            set -- --boot-pair "$first" "$second"
+        else
+        [ -n "$target" ] || exit 0
+        validate "$target"; hw_ready || fail physical_mux_unavailable
+        set -- --boot-route "$target"
+        fi
+    elif [ "$model" = u30pro ]; then
         [ -n "$target" ] || target=$(u30pro_default_card "$board")
         validate "$target"; hw_ready || fail physical_mux_unavailable
         set -- --boot-all "$target"
@@ -104,6 +144,8 @@ route_one() {
     [ -e "$R/mu300-ril-handshake" ] || fail dual_boot_required
     mapping=$(card_map "$board" "$2"); set -- "$1" $mapping
     mode=$1; stack=$2; attribute=$3; value=$4
+    [ "$mode" != --pair-route ] || [ "$model" = f50pro ] || exit 2
+    [ "$attribute" != fixed ] || return 0
     old=$(cat "$HW/$attribute")
     pending=$R/mu300/${model}-route-pending-$stack
     [ "$old" != "$value" ] || [ -e "$pending" ] || return 0
@@ -133,8 +175,17 @@ route_one() {
     # A SIM power command completing does not mean the card has finished
     # answering ATR/CPIN. Do not let the logical switch reject it too early.
     # An unplugged saved card must not prevent the peer stack booting.
-    if ! wait_card; then
-        [ "$mode" = --boot-route ] || fail sim_not_ready
+    card_ready=0
+    if [ "$model:$mode" = f50pro:--boot-route ]; then
+        # The following shared dual-radio initialization owns boot readiness.
+        # Do not delay the data SIM by waiting again on a routed empty peer.
+        :
+    elif [ "$mode" = --pair-route ] && ! "$BIN/mu300-radio-allowed" "$stack"; then
+        : # A user-disabled stack needs no ATR wait or RF enable.
+    elif wait_card; then
+        card_ready=1
+    else
+        case $mode in --boot-route|--pair-route) ;; *) fail sim_not_ready;; esac
     fi
     # Clear only transient serving/identity snapshots, never SMS or traffic.
     cache=${MU300_DASH_CACHE_ROOT:-/tmp/unisoc-modem}
@@ -150,7 +201,7 @@ route_one() {
     rm -f "$identity" "$replay" "$R/unisoc-apn-sim$stack.json"
     reg=${MU300_REGISTRATION_DIR:-$R/mu300-registration}
     rm -f "$reg/slot$stack.json" "$reg/sim$stack.json"
-    if [ "$mode" = --route ]; then
+    if [ "$mode" = --route ] || [ "$mode" = --pair-route ]; then
         # A disabled SIM2 can be explicitly enabled by the enclosing data
         # switch. Replay while it is still RF-off, before that controller's
         # SFUN=4 too, not only when its old permission was already on.
@@ -162,7 +213,7 @@ route_one() {
         fi
         # Preserve user RF permissions. Selecting SIM2 explicitly opts in
         # later through the existing RF controller, outside this RF mutex.
-        if "$BIN/mu300-radio-allowed" "$stack"; then
+        if [ "$card_ready" = 1 ] && "$BIN/mu300-radio-allowed" "$stack"; then
             ok 'AT+SFUN=4' 20 || fail physical_card_power_failed
         fi
     fi
@@ -170,7 +221,11 @@ route_one() {
     return 0
 }
 case ${1:-} in
-    --route|--boot-route) route_one "$@"; exit $?;;
+    --route|--boot-route|--pair-route) route_one "$@"; exit $?;;
+    --boot-pair)
+        [ "$model" = f50pro ] || exit 2
+        route_one --boot-route "$2" && route_one --boot-route "$3"
+        exit $?;;
     --boot-all)
         for boot_card in $(u30pro_boot_cards "$board" "$2"); do
             route_one --boot-route "$boot_card" || exit $?
@@ -185,7 +240,12 @@ target=${2:-}; validate "$target"; hw_ready || fail physical_mux_unavailable
 mapping=$(card_map "$board" "$target"); set -- $mapping
 stack=$1; attribute=$2; value=$3
 permission=0; "$BIN/mu300-radio-allowed" "$stack" || permission=$?
-case "$permission:$stack" in 0:*|1:1) ;; *) fail 'Enable the target SIM radio before switching';; esac
+case "$permission:$stack" in
+    0:*|1:1) ;;
+    1:0) { [ "$model" = f50pro ] || [ "$model" = u30pro ]; } &&
+        [ "$("$BIN/mu300-radio-allowed" --dsds)" = 0 ] || fail 'Enable the target SIM radio before switching';;
+    *) fail 'Enable the target SIM radio before switching';;
+esac
 
 gate=${MU300_SIM_MUTEX:-$R/unisoc-data-sim-switch}
 mkdir "$gate" 2>/dev/null || fail modem_busy
@@ -203,14 +263,28 @@ case "$old_data" in 0|1) ;; *) fail sim_read_failed;; esac
 old_actual=$(stack=0; query 'AT+SPSWDATA?' 4 | sed -n 's/^+SPSWDATA: *\([01]\)$/\1/p')
 case "$old_actual" in 0|1) ;; *) fail sim_read_failed;; esac
 old_pref=$(cfg "${model}_card")
+old_route0=; old_route1=
+if [ "$model" = f50pro ]; then old_route0=$(cfg f50pro_route0); old_route1=$(cfg f50pro_route1); fi
 chip=$(cat "$HW/chip_select"); psim=$(cat "$HW/psim_select")
 previous=$(active_card "$stack" "$chip" "$psim") || fail sim_read_failed
 logical() { MU300_DATA_SIM_GATE_HELD=1 "$BIN/mu300-data-sim" apply "$1"; }
+remember() {
+    uci -q set "unisoc_modem.main.${model}_card=$target" || return 1
+    if [ "$model" = f50pro ]; then
+        local live_chip live_psim source0 source1
+        live_chip=$(cat "$HW/chip_select"); live_psim=$(cat "$HW/psim_select")
+        source0=$(active_card 0 "$live_chip" "$live_psim") || return 1
+        source1=$(active_card 1 "$live_chip" "$live_psim") || return 1
+        uci -q set "unisoc_modem.main.f50pro_route0=$source0" &&
+        uci -q set "unisoc_modem.main.f50pro_route1=$source1" || return 1
+    fi
+    uci -q commit unisoc_modem
+}
 # No physical change: let the existing transaction handle same-card no-op,
 # SIM2 opt-in, WAN intent and rollback. Do not add a gratuitous ifdown.
 if [ "$previous" = "$target" ]; then
     logical "$stack" || exit 1
-    uci -q set "unisoc_modem.main.${model}_card=$target" && uci -q commit unisoc_modem || fail storage_failed
+    remember || fail storage_failed
     exit 0
 fi
 wait_down() {
@@ -235,13 +309,18 @@ restore() {
     uci -q set "unisoc_modem.main.data_sim=$old_data" || return 1
     if [ -n "$old_pref" ]; then uci -q set "unisoc_modem.main.${model}_card=$old_pref" || return 1;
     else uci -q delete unisoc_modem.main.${model}_card || true; fi
+    if [ "$model" = f50pro ]; then
+        if [ -n "$old_route0" ]; then uci -q set "unisoc_modem.main.f50pro_route0=$old_route0" || return 1;
+        else uci -q delete unisoc_modem.main.f50pro_route0 || true; fi
+        if [ -n "$old_route1" ]; then uci -q set "unisoc_modem.main.f50pro_route1=$old_route1" || return 1;
+        else uci -q delete unisoc_modem.main.f50pro_route1 || true; fi
+    fi
     uci -q commit unisoc_modem || return 1
     rm -f "$R/mu300/${model}-switch-incomplete"
     [ "$autostart" = false ] || ifup "$wan"
 }
 trap 'restore || echo sim_rollback_failed >&2; exit 143' INT TERM
-if route "$target" && logical "$stack" &&
-   uci -q set "unisoc_modem.main.${model}_card=$target" && uci -q commit unisoc_modem; then
+if route "$target" && logical "$stack" && remember; then
     rm -f "$R/mu300/${model}-switch-incomplete"
     [ "$autostart" = false ] || ifup "$wan" || logger -t "mu300-$model-sim" 'Card selected; netifd start failed'
     exit 0

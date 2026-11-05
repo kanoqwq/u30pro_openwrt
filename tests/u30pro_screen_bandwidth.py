@@ -32,6 +32,10 @@ int main(void) {
  feed_set("lte_bw",empty); feed_set("nr_bw",zero); feed_set("bw_idx",unknown);
  assert(!D.lte_bw[0] && D.nr_bw==0 && D.bw_idx==-1);
  feed_set("bw_idx",legacy); assert(D.bw_idx==5);
+ char positive[]="18.5", negative[]="-3.5", neutral[]="0";
+ feed_set("sinr",positive); assert(D.sinr_ok && fabsf(D.sinr-18.5f)<.01f);
+ feed_set("sinr",negative); assert(D.sinr_ok && fabsf(D.sinr+3.5f)<.01f);
+ feed_set("sinr",neutral); assert(D.sinr_ok && D.sinr==0.f);
  char long_text[1024]; memset(long_text,'X',sizeof long_text-1);long_text[sizeof long_text-1]=0;
  feed_set("lte_bw",long_text); assert(strlen(D.lte_bw)==sizeof(D.lte_bw)-1);
  return 0;
@@ -47,21 +51,33 @@ int main(void) {
         source=(TOP/'devices/u30pro/overlay/usr/sbin/u30pro-ui-feed').read_text()
         body=source[source.index('    let data={'):source.index('    for(let i=0;i<min(6,length(view.wifi.clients')]
         program='''const cases=[
- {lte:{bw:'1.4M'},nr:{},want:'1.4 MHz',nr_bw:0},
- {lte:{bw:'20M'},nr:{},want:'20 MHz',nr_bw:0},
- {lte:{bw:'20M+20M'},nr:{},want:'20+20 MHz',nr_bw:0},
- {lte:{bw:'10M+20M'},nr:{band:78,bw_mhz:100},want:'10+20 MHz',nr_bw:100},
+ {lte:{bw:'1.4M',sinr:18.5},nr:{},want:'1.4 MHz',nr_bw:0},
+ {lte:{bw:'20M',sinr:0},nr:{},want:'20 MHz',nr_bw:0},
+ {lte:{bw:'20M+20M',sinr:-3.5},nr:{},want:'20+20 MHz',nr_bw:0},
+ {lte:{bw:'10M+20M',sinr:8},nr:{band:78,bw_mhz:100,sinr:23.5,rsrp:-85},want:'10+20 MHz',nr_bw:100},
  {lte:{},nr:{band:28,bw_mhz:20},want:'',nr_bw:20},
- {lte:{},nr:{band:28,bw_mhz:null},want:'',nr_bw:0},
+ {lte:{sinr:null},nr:{band:28,bw_mhz:null,sinr:null,rsrp:null},want:'',nr_bw:0},
  {lte:{},nr:{band:28,bw_mhz:0},want:'',nr_bw:0},
  {lte:{},nr:{},want:'',nr_bw:0}
 ];
 const fs={readfile:()=>''}, config={get:()=>''},carrier_name=x=>x;
-for(let c in cases){
+const policies=[{},
+ {ok:true,available:true,paused:false,stopped:true,reason:'limit',pending:false},
+ {ok:true,available:true,paused:true,stopped:true,reason:'manual',pending:false},
+ {ok:true,available:true,paused:false,stopped:true,reason:'manual',pending:true},
+ {ok:false}];
+for(let c in cases)for(let charge in policies){
  let lte=c.lte,nr=c.nr,relay={},cell={},slot='0',linked=false,state='disconnected',absent=false;
  let view={wan:{},wifi:{},net:{},kernel:'test'};
  BODY
  if(data.lte_bw!==c.want || data.nr_bw!==c.nr_bw || data.bw_idx!==-1)die(sprintf('%J',data));
+ for(let pair in [['sinr',lte.sinr],['nr_sinr',nr.sinr],['nr_rsrp',nr.rsrp]]) {
+   if(pair[1]==null ? pair[0] in data : data[pair[0]]!==pair[1])die('incorrect LTE/NR signal validity');
+ }
+ if(data.chg_control_ok!==(charge.ok && charge.available?1:0))die('charge availability');
+ if(charge.ok && (data.chg_bypass!==(charge.paused?1:0) ||
+    data.chg_limited!==(charge.stopped && charge.reason=='limit'?1:0) ||
+    data.chg_pending!==(charge.pending?1:0)))die('manual/limit/pending policy');
 }
 print('PASS 8 bandwidth payloads: fractional LTE, CA, NR, NSA, unknown and RAT change\\n');
 '''.replace('BODY',body)

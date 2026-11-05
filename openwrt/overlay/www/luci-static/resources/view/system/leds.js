@@ -21,6 +21,19 @@ const labels = {
 	'LED Configuration': ['LED 配置', 'LED yapılandırması'],
 	'Configure physical status lamps and optional LED trigger actions.': ['配置物理状态灯与可选的 LED 触发动作。', 'Fiziksel durum ışıklarını ve isteğe bağlı LED tetikleyicilerini yapılandırın.'],
 	'Physical status lamps': ['物理状态灯', 'Fiziksel durum ışıkları'],
+    'Boot colour animation': ['开机跑马灯', 'Açılış renk animasyonu'],
+    'Colours rotate during startup, then normal status takes over automatically.': ['开机时轮换颜色，系统就绪后自动显示正常状态。', 'Açılışta renkler değişir; sistem hazır olunca normal duruma geçer.'],
+    'F50 Pro: choose each status colour. GPIO colours support on/off; brightness adjusts the separate white emitters.': ['F50 Pro：可自定义各状态颜色。GPIO 彩灯仅支持开关，亮度用于独立的白灯。', 'F50 Pro: Her durumun rengini seçin. GPIO renkleri aç/kapa destekler; parlaklık ayrı beyaz LED içindir.'],
+    '4G colour': ['4G 颜色', '4G rengi'],
+    '5G colour': ['5G 颜色', '5G rengi'],
+    'No service colour': ['无信号颜色', 'Servis yok rengi'],
+    '2.4 GHz colour': ['2.4 GHz 颜色', '2,4 GHz rengi'],
+    '5 GHz colour': ['5 GHz 颜色', '5 GHz rengi'],
+    'Red': ['红色', 'Kırmızı'],
+    'Green': ['绿色', 'Yeşil'],
+    'Blue': ['蓝色', 'Mavi'],
+    'White': ['白色', 'Beyaz'],
+    'Off': ['熄灭', 'Kapalı'],
     'Battery lamp': ['电池灯', 'Pil ışığı'],
     'Battery lamp brightness': ['电池灯亮度', 'Pil ışığı parlaklığı'],
     'LED timeout (seconds)': ['状态灯自动熄灭（秒）', 'LED kapanma süresi (saniye)'],
@@ -87,6 +100,8 @@ return view.extend({
 		const awRgb = !!(leds.aw_led && leds.red && leds.green && leds.blue);
 		const v50 = !!leds['v50:net1:white'];
 		const u30air = !!(leds['zte-ldo0'] && leds['zte-ldo1'] && leds['zte-ldo2'] && leds.net_blue);
+		const f50pro = !!(leds.net_red && leds.net_green && leds.net_blue &&
+            leds.wifi_red && leds.wifi_green && leds.wifi_blue && leds['sc27xx:red'] && leds['sc27xx:green']);
 		let wifiMax = leds['keyboard-backlight'] && Number(leds['keyboard-backlight'].max_brightness);
 		if (!Number.isInteger(wifiMax) || wifiMax < 1 || wifiMax > 255) wifiMax = 255;
 		const triggers = [];
@@ -106,6 +121,24 @@ return view.extend({
 		s.addremove = false;
 		if (u30air) s.description = label('U30 Air: network blue on 4G, white on 5G, red without data. Wi-Fi blue on 2.4 GHz, white on 5 GHz. These lamps support on/off only.');
 		if (v50) s.description = label('NET1 shows SIM 2; NET2 shows SIM 1. Wi-Fi: 5 GHz white, 2.4 GHz blue.');
+		if (f50pro) {
+            s.description=label('F50 Pro: choose each status colour. GPIO colours support on/off; brightness adjusts the separate white emitters.');
+            o=s.option(form.Flag,'boot_animation',label('Boot colour animation'),label('Colours rotate during startup, then normal status takes over automatically.'));
+            o.default='1';o.rmempty=false;
+            for (const [bank,title] of [['signal','Signal lamp (LTE / 5G / no service)'],['wifi','Wi-Fi hotspot lamp']]) {
+                o=s.option(form.Flag,bank,label(title));o.default='1';o.rmempty=false;
+                o=s.option(form.Value,bank+'_brightness',label(bank==='signal'?'Signal lamp brightness':'Wi-Fi lamp brightness'));
+                o.datatype='range(0,255)';o.default=bank==='signal'?'255':'127';o.rmempty=false;
+            }
+            for (const [key,title,defaultColour] of [
+                ['signal_4g','4G colour','blue'],['signal_5g','5G colour','white'],
+                ['signal_offline','No service colour','red'],
+                ['wifi_2g','2.4 GHz colour','green'],['wifi_5g','5 GHz colour','white']]) {
+                o=s.option(form.ListValue,key,label(title));
+                for (const [value,title] of [['red','Red'],['green','Green'],['blue','Blue'],['white','White'],['off','Off']])o.value(value,label(title));
+                o.default=defaultColour;o.rmempty=false;
+            }
+        } else {
 		o = s.option(form.Flag, 'signal', label(v50 ? 'NET1 lamp (SIM 2)' : 'Signal lamp (LTE / 5G / no service)'));
 		o.default = '1';
 		o.rmempty = false;
@@ -146,6 +179,7 @@ return view.extend({
             o = s.option(form.Value, 'timeout', label('LED timeout (seconds)'), label('While charging lamps stay on. Otherwise 0 keeps them on; press the power key to show them again.'));
             o.datatype = 'range(0,86400)'; o.default = '60'; o.rmempty = false;
         }
+        }
 
 		s = m.section(form.GridSection, 'led', '');
 		s.anonymous = true;
@@ -158,6 +192,7 @@ return view.extend({
 		o = s.option(form.ListValue, 'sysfs', label('LED Name'));
 		Object.keys(leds).sort().forEach(function(name) {
 			if (u30air && /^(sc27xx:|zte-ldo|net_|wifi_|pwr_green$|keyboard-backlight$)/.test(name)) return;
+			if (f50pro && /^(net_|wifi_|sc27xx:(red|green)$)/.test(name)) return;
 			o.value(name);
 		});
 		o = s.option(form.ListValue, 'trigger', label('Trigger'));

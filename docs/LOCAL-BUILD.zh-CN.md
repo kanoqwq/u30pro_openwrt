@@ -8,6 +8,15 @@
 这里构建 U30 Pro，不是 MU300/F50/V50/U30 Air；不能使用它们的 Image、模块、
 SC2355 固件或单 boot 安装布局。硬件代码来自 [移植记录](U30PRO-PORT.zh-CN.md)。
 
+现增加 F50 **Pro**（MU3356）机型入口，它不是旧 F50（UMS9620）。两款 Pro
+共用此仓库同一份已核验的 UMS9632 内核及对象缓存，机型配置和 SIM 拓扑独立。
+`--profiles u30pro-6.12` 为兼容原行为的默认值；
+`--profiles f50pro-6.12` 选择无屏、无电池、MU3356 布局。
+`--profiles all` 按顺序构建两款，用同一个受锁定的根 staging 切换明确配置，
+不会复制第二份完整根或内核树。不能同时在该 staging 组装两个机型。
+使用 `run` 手动执行 sources/finish/package/canonical_boot/test-u30pro-root.py 时，
+同样须给 runner 指定对应的 `--profiles`，它会传递 UMS9632_MODEL。
+
 ## 固定环境
 
 | 内容 | 路径 |

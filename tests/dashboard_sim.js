@@ -11,6 +11,24 @@ common.selectViewedSlot(1); assert.equal(common.selectedSlot(),'1');
 assert.equal(common.selectViewedSlot(2),false); assert.equal(common.selectedSlot(),'1');
 common.callAt('AT'); common.selectViewedSlot(0);
 assert.deepEqual(called[0],['at',['AT','1']]);
+for(const [routes,names] of [[[0,4],['Built-in SIM 1','External SIM 1']],[[3,4],['External SIM 2','External SIM 1']],[[0,1],['Built-in SIM 1','Built-in SIM 2']]]) {
+    const info={physical:{model:'f50pro',ready:true,logical_cards:routes}};
+    for(const slot of [0,1])assert.equal(common.slotName(slot,info),names[slot]);
+}
+assert.equal(common.slotName(1,{physical:{model:'u30pro',ready:true,logical_cards:[3,4]}}),'SIM 2');
+assert.equal(common.slotName(0,{physical:{model:'u30pro',ready:false,logical_cards:[3,2]}}),'External SIM 1');
+assert.equal(common.slotName(1,{physical:{model:'v50',ready:true,logical_cards:[3,2]}}),'Built-in SIM 3');
+for(const [board,cards] of Object.entries(JSON.parse(fs.readFileSync(path.resolve(__dirname,'../devices/u30pro/board-topology.json'),'utf8')).board_cards)) {
+    for(const chip of [0,1])for(const psim of [0,1]) {
+        const routes=[psim?3:0,chip?2:1].map(id=>cards.includes(id)?id:null);
+        const info={slots:2,physical:{model:'u30pro',supported:true,board_id:Number(board),cards,logical_cards:routes}};
+        for(const slot of [0,1]) {
+            const id=routes[slot];
+            assert.equal(common.slotName(slot,info),id==null?'SIM '+(slot+1):id===3?'External SIM 1':'Built-in SIM '+(id+1));
+            assert.equal(common.slotSupported(slot,info),cards.some(id=>(id===0||id===3?0:1)===slot));
+        }
+    }
+}
 
 function element(tag) {return {tag,children:[],style:{},isConnected:true,append(...n){this.children.push(...n);}};}
 function find(root,tag){return root.tag===tag?root:root.children.map(n=>find(n,tag)).find(Boolean);}
@@ -72,11 +90,11 @@ const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
         assert.equal(common.selectedSlot(),'1');
         view.unload();
     }
-    for(const [model,board,cards,target] of [['v50',0,[0,1,2],2],['v50',1,[0,1,2,3],3],['v50',2,[0,1,3],3],['v50',3,[0,1],1],['u30pro',0,[0,1,2,3],3],['u30pro',1,[0,1,2],2],['u30pro',2,[0,1],1],['u30pro',3,[0,1,3],3],['u30pro',4,[0,1,2,3],2],['u30pro',5,[3],3],['u30pro',6,[0,2],2]]) {
-        common.selectViewedSlot('0');const requests=[];
-        const physical={ok:1,supported:true,ready:true,model,board_id:board,cards,active_card:0,saved_card:0};
+    for(const [model,board,cards,target] of [['v50',0,[0,1,2],2],['v50',1,[0,1,2,3],3],['v50',2,[0,1,3],3],['v50',3,[0,1],1],['u30pro',0,[0,1,2,3],3],['u30pro',1,[0,1,2],2],['u30pro',2,[0,1],1],['u30pro',3,[0,1,3],3],['u30pro',4,[0,1,2,3],2],['u30pro',5,[3],3],['u30pro',6,[0,2],2],['f50pro',0,[0,1,2],2],['f50pro',1,[0,1],1],['f50pro',2,[0,2],2],['f50pro',3,[0,2,3,4],4],['f50pro',4,[0,1,3,4],4],['f50pro',4,[0,1,3,4],3],['f50pro',5,[3,4],4],['f50pro',5,[3,4],3]]) {
+        common.selectViewedSlot('0');const requests=[],confirmations=[];
+        const physical={ok:1,supported:true,ready:true,model,board_id:board,cards,active_card:0,saved_card:0,logical_cards:model==='f50pro'?[cards.includes(0)?0:3,cards.includes(1)?1:cards.includes(2)?2:4]:[]};
         const M={injectCss(){},localizeMenu(){},translate:s=>s,selectViewedSlot:common.selectViewedSlot,
-            confirmBox:()=>Promise.resolve(true),busy(){},toast:()=>({close(){}})};
+            confirmBox:(title,body)=>{confirmations.push(body);return Promise.resolve(true);},busy(){},toast:()=>({close(){}})};
         const rpc={declare:o=>arg=>{
             if(o.method==='physical_sim_get')return Promise.resolve({...physical});
             if(o.method==='data_sim_set') {
@@ -91,12 +109,36 @@ const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
         const root=view.render([{slots:2},{ok:1,ready:true,actual_sim:0,saved_sim:0},{...physical}]);
         function all(n,tag){return (n.tag===tag?[n]:[]).concat(...n.children.map(c=>all(c,tag)));}
         const select=all(root,'select').find(n=>n.id==='mud-v50-card');
-        assert.deepEqual(select.children.map(n=>Number(n.value)),cards,'board-specific physical choices');
+        const expected=model==='f50pro'?cards.filter(n=>n<3).concat(cards.includes(4)?[4]:[],cards.includes(3)?[3]:[]):cards;
+        assert.deepEqual(select.children.map(n=>Number(n.value)),expected,'board-specific physical choices');
+        if(model==='f50pro')for(const [id,label] of [[4,'外置 SIM 1'],[3,'外置 SIM 2']]) {
+            const option=select.children.find(n=>Number(n.value)===id);
+            if(option)assert.equal(option.textContent,label,'official external numbering must not become a different AT stack');
+        }
+        if(model==='u30pro')for(const option of select.children)
+            assert.equal(option.textContent,Number(option.value)===3?'外置 SIM 1':'内置 SIM '+(Number(option.value)+1));
+        if(model==='f50pro') {
+            const source0=all(root,'select').find(n=>n.id==='mud-f50-source0');
+            const source1=all(root,'select').find(n=>n.id==='mud-f50-source1');
+            assert.deepEqual(source0.children.map(n=>Number(n.value)),cards.filter(n=>n===0||n===3));
+            assert.deepEqual(source1.children.map(n=>Number(n.value)),cards.filter(n=>n!==0&&n!==3));
+        }
         const button=all(root,'button')[1];select.value=String(target);button.onclick();await tick();
         assert.deepEqual(requests,[model+'-card-'+target]);
+        if(model==='f50pro' && target>=3)assert.deepEqual(confirmations,[target===4?'外置 SIM 1':'外置 SIM 2']);
         assert.equal(common.selectedSlot(),target===0||target===3?'0':'1','physical IDs never become AT slot IDs');
+        if(model==='f50pro') {
+            const source0=all(root,'select').find(n=>n.id==='mud-f50-source0');
+            const source1=all(root,'select').find(n=>n.id==='mud-f50-source1');
+            const first=cards.includes(3)?3:0,second=cards.includes(4)?4:cards.includes(1)?1:2;
+            source0.value=String(first);source1.value=String(second);
+            requests.length=0;
+            all(root,'button').find(n=>n.id==='mud-f50-pair-apply').onclick();await tick();
+            assert.deepEqual(requests,['f50pro-pair-'+first+'-'+second]);
+            assert.equal(common.selectedSlot(),target===0||target===3?'0':'1','source combinations do not change the viewed/data slot');
+        }
         physical.ready=false;await view.refresh();assert(button.disabled);
         view.unload();
     }
-    console.log('SIM UI: scoped RPC, shared controls, four V50 and seven U30 Pro hardware variants pass');
+    console.log('SIM UI: scoped RPC, shared controls, V50/U30 Pro and all six F50 Pro hardware variants pass; reversed external labels retain native card IDs');
 })().catch(e=>{console.error(e);process.exitCode=1;});

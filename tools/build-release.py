@@ -141,7 +141,7 @@ class Task:
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('action', choices=('plan', 'check', 'bootstrap', 'build', 'run', 'status', 'package'))
-    parser.add_argument('--profiles', nargs='+', choices=('all', 'u30pro-6.12'), default=['all'])
+    parser.add_argument('--profiles', nargs='+', choices=('all', 'u30pro-6.12', 'f50pro-6.12'), default=['u30pro-6.12'])
     parser.add_argument('--workspace', type=Path)
     parser.add_argument('--config', type=Path, default=Path(os.environ.get('U30PRO_BUILD_CONFIG', str(TOP/'tools/build-layout.json'))))
     parser.add_argument('--jobs', type=int, default=2)
@@ -155,7 +155,8 @@ def main():
         parser.error('Run in WSL; see docs/LOCAL-BUILD.zh-CN.md')
     native = runpy.run_path(str(TOP / 'tools/u30pro-build.py'))
     workspace, _ = native['load_layout'](args.config, args.workspace)
-    native['dispatch_release'](args, command, workspace, ['u30pro-6.12'],
+    profiles=['u30pro-6.12','f50pro-6.12'] if 'all' in args.profiles else list(dict.fromkeys(args.profiles))
+    native['dispatch_release'](args, command, workspace, profiles,
                                workspace_lock=workspace_lock, task_type=Task)
 
 

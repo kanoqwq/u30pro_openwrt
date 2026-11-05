@@ -29,6 +29,7 @@ def main():
                     window.cleared={...old,status:{...old.status,today_used:0,month_used:0,cycle_used:0},days:[],months:[]};
                     const rpc={declare:o=>(...args)=>{
                         calls.push([o.method,args]);
+                        if(o.method==='sim_get') return Promise.resolve({slots:2,actual_sim:0,saved_sim:0});
                         if(o.method==='traffic_get') return new Promise(r=>gets.push(r));
                         if(o.method==='traffic_clear') return new Promise(r=>window.complete=r);
                         return Promise.resolve({});
@@ -55,7 +56,7 @@ def main():
                 assert page.locator('#mud-tr-save').is_disabled()
                 assert page.locator('#mud-tr-clear').is_disabled()
                 assert page.locator('#mud-tr-clear .mud-spin').count() == 1
-                assert page.evaluate("calls.filter(c=>c[0]==='traffic_clear')") == [['traffic_clear', [True]]]
+                assert page.evaluate("calls.filter(c=>c[0]==='traffic_clear')") == [['traffic_clear', [True, '0']]]
                 page.evaluate('complete({ok:1,data:cleared})')
                 page.wait_for_function('!v._mutating && !v._confirming')
                 assert page.locator('#mud-tr-clear .mud-spin').count() == 0

@@ -530,7 +530,7 @@ class ModemdUbus(Base):
         self.assertIn({'channel': 'stty_nr0', 'line': '+CMT (PDU spooled)'}, events)
         self.assertNotIn('0791', out)
         self.assertNotIn('+CMT: ,23', out)
-        self.assertIn({'channel': 'stty_nr1', 'line': '+CMTI: "SM",3'}, events)
+        self.assertNotIn({'channel': 'stty_nr1', 'line': '+CMTI: "SM",3'}, events)
         self.assertNotIn('+CPIN', out)
 
     def collector_program(self, mode, tag):
@@ -588,6 +588,7 @@ class ModemdUbus(Base):
                 for name in (('cell.json', 'sig.json') if mode == 'full' else ('sig.json',)):
                     mine = json.loads((dash / name).read_text())
                     theirs = json.loads((prog / name).read_text())
+                    self.assertEqual(mine.pop('card'),0)
                     self.assertEqual(self.without_ts(mine), self.without_ts(theirs), name)
         # a second request while one runs: not started
         self.table['AT+CFUN?'] = [1.0, '+CFUN: 1', 'OK']
@@ -605,6 +606,7 @@ class ModemdUbus(Base):
             return data['partial']==1 and data['neigh_pending']==0
         self.assertTrue(wait_for(partial,10))
         sig=json.loads((target.parent/'sig.json').read_text())
+        self.assertEqual(sig['card'],0)
         self.assertEqual(sig['sig_src'],'nr')
         self.assertTrue(wait_for(lambda: not (target.parent/'collect.lck').exists(),10))
         self.assertEqual(json.loads(target.read_text())['partial'],0)
@@ -627,6 +629,7 @@ class ModemdUbus(Base):
         target=self.tmp/'dash'/'cell.json'
         self.assertTrue(wait_for(lambda: target.exists() and not (target.parent/'collect.lck').exists(),10))
         self.assertIn('error',json.loads(target.read_text()))
+        self.assertEqual(json.loads(target.read_text())['card'],0)
         self.assertFalse(any('CGSN' in cmd or 'CNUM' in cmd for _,cmd in self.bridge.tx))
 
     def test_scoped_collect_writes_only_the_requested_sim_cache_and_channel(self):
@@ -638,6 +641,8 @@ class ModemdUbus(Base):
         self.assertEqual(self.ubus('call','mu300.modem','collect','{"slot":"1","mode":"full"}'),{'started':1})
         target=self.tmp/'dash'/'sim1'/'cell.json'
         self.assertTrue(wait_for(lambda: target.exists() and not (target.parent/'collect.lck').exists(),15))
+        self.assertEqual(json.loads(target.read_text())['card'],1)
+        self.assertEqual(json.loads((target.parent/'sig.json').read_text())['card'],1)
         self.assertTrue(self.bridge.tx)
         self.assertTrue(all(c=='stty_nr4' and d.startswith('AT+SPACTCARD=1;') for c,d in self.bridge.tx))
         self.assertFalse((self.tmp/'dash'/'cell.json').exists())
@@ -656,6 +661,52 @@ class ModemdUbus(Base):
         self.assertTrue(wait_for(lambda: target.exists() and not (target.parent/'collect.lck').exists(),15))
         self.assertTrue(self.bridge.tx)
         self.assertTrue(all(c=='stty_nr4' and d.startswith('AT+SPACTCARD=1;') for c,d in self.bridge.tx))
+
+    def test_pro_shared_pool_publishes_the_requested_card(self):
+        profile=Path('/etc/mu300/platform')
+        if not profile.exists() or profile.read_text().strip()!='u30pro':
+            self.skipTest('U30 Pro/F50 Pro target profile required')
+        (self.tmp/'config'/'unisoc_modem').write_text("config main 'main'\n option sim_slots '2'\n")
+        self.start(f'name=atd6,dev=/dev/stty_nr6,dir={self.run_root}/mu300-at6',
+                   f'name=atd7,dev=/dev/stty_nr7,dir={self.run_root}/mu300-at7')
+        self.ready('stty_nr6');self.wait_object();self.bridge.tx.clear()
+        self.assertEqual(self.ubus('call','mu300.modem','collect','{"slot":"1","mode":"full"}'),{'started':1})
+        target=self.tmp/'dash'/'sim1'/'cell.json'
+        self.assertTrue(wait_for(lambda: target.exists() and not (target.parent/'collect.lck').exists(),15))
+        self.assertEqual(json.loads(target.read_text())['card'],1)
+        self.assertEqual(json.loads((target.parent/'sig.json').read_text())['card'],1)
+        self.assertTrue(self.bridge.tx)
+        self.assertTrue(all(n in ('stty_nr6','stty_nr7') and cmd.startswith('AT+SPACTCARD=1;') for n,cmd in self.bridge.tx))
+        self.assertFalse((self.tmp/'dash'/'cell.json').exists())
+
+    def test_pro_bearer_events_during_commands_and_idle(self):
+        profile=Path('/etc/mu300/platform')
+        if not profile.exists() or profile.read_text().strip()!='u30pro':
+            self.skipTest('U30 Pro/F50 Pro target profile required')
+        self.start(f'name=atd2,dev=/dev/stty_nr0,dir={self.run_root}/mu300-at2')
+        self.ready('stty_nr0');self.wait_object()
+        listen = subprocess.Popen([UBUS, '-s', str(self.ubus_sock), 'listen', 'mu300.modem.urc'],
+                                  stdout=subprocess.PIPE, text=True)
+        idle='+CGEV: NW PDN DEACT 1'
+        collecting='+CGEV: NW DEACT IPV4V6,10.0.0.2,1'
+        try:
+            time.sleep(.3)
+            self.bridge.rx('stty_nr0',idle)
+            self.table['AT+CSQ']=[collecting,'+CSQ: 20,99','OK']
+            reply=self.ubus('call','mu300.modem','at',json.dumps({'channel':'atd2','cmd':'AT+SPACTCARD=0;+CSQ','timeout':2}))
+            self.assertEqual(reply['ok'],1)
+            self.assertIn('+CSQ: 20,99',reply['reply'])
+            self.bridge.rx('stty_nr0','+CGACT: 1,0')  # late query reply is not an unsolicited hint
+            self.bridge.rx('stty_nr0','AT+CGDCONT=1,IP,private-apn')
+            time.sleep(.3)
+        finally:
+            listen.terminate()
+        out=listen.communicate(timeout=5)[0]
+        events=[json.loads(l)['mu300.modem.urc'] for l in out.splitlines() if l.strip()]
+        self.assertIn({'channel':'stty_nr0','line':idle},events)
+        self.assertIn({'channel':'stty_nr0','line':collecting},events)
+        self.assertNotIn('+CGACT:',out)
+        self.assertNotIn('private-apn',out)
 
     def test_collect_rejects_unavailable_slot_custom_backend_and_switching(self):
         self.start();self.ready();self.wait_object();self.bridge.tx.clear()

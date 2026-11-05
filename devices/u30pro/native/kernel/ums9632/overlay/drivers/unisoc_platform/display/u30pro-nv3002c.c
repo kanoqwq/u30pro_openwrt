@@ -50,9 +50,17 @@ module_param_named(rotation, u30_rotation, int, 0444);
 MODULE_PARM_DESC(rotation, "panel rotation in degrees (0, 90, 180, 270)");
 
 
+/*
+ * The SPI clock.  The stock panel table asks for 48 MHz; a whole frame then takes about 26 ms, longer than the panel's refresh period
+ * (18.9 ms), so the TE-synchronised writes come at most every other period (about 26 fps).  The controller divides its 192 MHz source
+ * clock by two at the least: 96 MHz is the only faster clock, beyond the 48 MHz the panel table names.  It writes a frame in about 17.5 ms,
+ * inside one period; on the units tried the picture stays correct (the UI's "high refresh" setting, u30pro_native_control.display
+ * fast_panel, sets it with te_window_us).  Read for every transfer: it can change at run time.
+ */
+#define U30_SPI_MAX_HZ	96000000
 static uint u30_spi_hz;
-module_param_named(spi_hz, u30_spi_hz, uint, 0444);
-MODULE_PARM_DESC(spi_hz, "override the SPI clock (0 = stock panel table value)");
+module_param_named(spi_hz, u30_spi_hz, uint, 0644);
+MODULE_PARM_DESC(spi_hz, "the SPI clock for every transfer, up to 96000000 (0 = the panel table's value, 48 MHz); changes at run time");
 
 /*
  * Off by default since 2026-10-21: with the changed-window writes the clock of the UI stayed at the old minute on the glass although the
@@ -91,6 +99,15 @@ static unsigned int u30_te_delay_us;
 module_param_named(te_delay_us, u30_te_delay_us, uint, 0644);
 MODULE_PARM_DESC(te_delay_us, "extra delay after the TE edge before the RAM write starts, 0..20000 (default 0)");
 
+/*
+ * A frame that is ready within te_window_us after the last TE edge starts at once instead of waiting for the next edge.  Only meant for a
+ * write shorter than the period (96 MHz): the flip that follows a finished write reaches the kernel a millisecond or two after the next
+ * edge (the write ends about 1.4 ms before it), and waiting for the edge after that halved the rate.  0 (default): always wait.
+ */
+static unsigned int u30_te_window_us;
+module_param_named(te_window_us, u30_te_window_us, uint, 0644);
+MODULE_PARM_DESC(te_window_us, "a frame ready within this many us after the last TE edge starts at once (0 = always wait for the next edge)");
+
 static unsigned int u30_word_delay = 14;
 module_param_named(spi_word_delay, u30_word_delay, uint, 0644);
 MODULE_PARM_DESC(spi_word_delay, "idle SCK cycles the SPI controller leaves between words: 14 = minimum (default), 0 = the controller's default of about 44 source-clock cycles");
@@ -115,6 +132,7 @@ struct u30_stats {
 	u64 te_waits;		/* RAM writes that waited for TE */
 	u64 te_timeouts;	/* ... and gave up waiting */
 	u64 te_dead;		/* RAM writes that did not wait because the line had been silent */
+	u64 te_early;		/* RAM writes that started at once, inside te_window_us after an edge */
 	u64 write_ns;		/* duration of the last whole-frame RAM write (command byte to the end of the transfer) */
 	u64 write_max_ns;
 };
@@ -135,7 +153,15 @@ struct u30_panel {
 	u32 *reset_seq;
 	int reset_seq_len;
 	u32 hz;		/* SPI clock for every transfer (stock: spi_freq, 48 MHz) */
-	u16 *frame;	/* the window rotated by 180 degrees */
+	u16 *frame[2];	/* the window rotated by 180 degrees: one being written to the panel while the next one is filled */
+	int frame_next;	/* the one the next frame goes into */
+	/* the frame data goes out asynchronously (u30_command): the update returns while the panel RAM is still being written, so the next
+	 * frame is converted meanwhile; every command first waits for that write (u30_write_wait) */
+	struct spi_message wr_msg;
+	struct spi_transfer wr_xfer;
+	struct completion wr_done;
+	bool wr_busy;
+	u64 wr_t0;
 	u32 *prev;	/* XRGB8888 copy of what the panel RAM holds, to find the changed region of the next frame */
 	bool prev_valid;
 	struct mutex lock;	/* one SPI command/data sequence at a time (window writes of updates, debugfs commands) */
@@ -157,7 +183,7 @@ static struct u30_panel *to_u30(struct mipi_dbi_dev *dbidev)
 static int u30_spi(struct mipi_dbi *dbi, bool data, const void *buf, size_t len, u8 bpw)
 {
 	struct u30_panel *pnl = container_of(dbi, struct u30_panel, dbidev.dbi);
-	struct spi_transfer t = { .tx_buf = buf, .len = len, .speed_hz = pnl->hz, .bits_per_word = bpw,
+	struct spi_transfer t = { .tx_buf = buf, .len = len, .speed_hz = u30_spi_hz ? min(u30_spi_hz, (uint)U30_SPI_MAX_HZ) : pnl->hz, .bits_per_word = bpw,
 				  /* the gap between words (spi-sprd honours an explicit request below its default); the panel needs none */
 				  .word_delay = { .value = (u16)min(u30_word_delay, 130u), .unit = SPI_DELAY_UNIT_SCK } };
 
@@ -204,6 +230,10 @@ static void u30_wait_te(struct u30_panel *pnl)
 		pnl->st.te_dead++;
 		return;
 	}
+	if (last && u30_te_window_us && ktime_get_ns() - last < (u64)min(u30_te_window_us, (unsigned int)U30_TE_DELAY_MAX_US) * NSEC_PER_USEC) {
+		pnl->st.te_early++;
+		return;
+	}
 	pnl->st.te_waits++;
 	reinit_completion(&pnl->te_done);
 	if (!wait_for_completion_timeout(&pnl->te_done, msecs_to_jiffies(U30_TE_TIMEOUT_MS))) {
@@ -214,12 +244,43 @@ static void u30_wait_te(struct u30_panel *pnl)
 		usleep_range(delay, delay + 50);
 }
 
+/* the frame write in flight has ended (or there is none) */
+static void u30_write_wait(struct u30_panel *pnl)
+{
+	if (!pnl->wr_busy)
+		return;
+	if (!wait_for_completion_timeout(&pnl->wr_done, msecs_to_jiffies(500))) {
+		dev_warn_ratelimited(&pnl->dbidev.dbi.spi->dev, "frame write did not end\n");
+		/* A timeout does not cancel SPI DMA. Do not reuse its message/buffer
+		 * or free the panel until the controller releases ownership. */
+		wait_for_completion(&pnl->wr_done);
+	}
+	if (pnl->wr_msg.status) {
+		dev_err_ratelimited(&pnl->dbidev.dbi.spi->dev, "frame write failed: %d\n", pnl->wr_msg.status);
+		pnl->prev_valid = false;
+	}
+	pnl->wr_busy = false;
+}
+
+static void u30_write_end(void *context)
+{
+	struct u30_panel *pnl = context;
+
+	pnl->st.write_ns = ktime_get_ns() - pnl->wr_t0;
+	if (pnl->st.write_ns > pnl->st.write_max_ns)
+		pnl->st.write_max_ns = pnl->st.write_ns;
+	complete(&pnl->wr_done);
+}
+
 static int u30_command(struct mipi_dbi *dbi, u8 *cmd, u8 *par, size_t num)
 {
 	struct u30_panel *pnl = container_of(dbi, struct u30_panel, dbidev.dbi);
 	size_t i, n;
-	u64 t0;
+	u16 *frame;
 	int ret;
+
+	/* a command (D/C low) must not interleave with the frame data still going out */
+	u30_write_wait(pnl);
 
 	if ((*cmd == MIPI_DCS_SET_COLUMN_ADDRESS || *cmd == MIPI_DCS_SET_PAGE_ADDRESS) && num == 4) {
 		unsigned int s0 = (par[0] << 8) | par[1], e0 = (par[2] << 8) | par[3];
@@ -235,21 +296,34 @@ static int u30_command(struct mipi_dbi *dbi, u8 *cmd, u8 *par, size_t num)
 		return u30_spi(dbi, true, par, num, 8);
 	}
 
-	/* frame data: rotate it first, then start in the right phase of the panel refresh (u30_wait_te), then send command byte and pixels */
+	/* frame data: rotate it into the free buffer, start in the right phase of the panel refresh (u30_wait_te), send the command byte,
+	 * then the pixels without waiting for them: the update (and the DRM flip event) ends now, and the next frame is converted while
+	 * these are written.  At 96 MHz the write (about 17.5 ms) and the conversion of the next frame (about 2 ms) then fit one refresh
+	 * period together, where one after the other they did not. */
 	n = num / 2;
+	frame = pnl->frame[pnl->frame_next];
+	pnl->frame_next ^= 1;
 	for (i = 0; i < n; i++)
-		pnl->frame[n - 1 - i] = ((const u16 *)par)[i];
+		frame[n - 1 - i] = ((const u16 *)par)[i];
 	if (pnl->te_armed) {
 		pnl->te_armed = false;
 		u30_wait_te(pnl);
 	}
-	t0 = ktime_get_ns();
+	pnl->wr_t0 = ktime_get_ns();
 	ret = u30_spi(dbi, false, cmd, 1, 8);
+	if (ret)
+		return ret;
+	gpiod_set_value_cansleep(dbi->dc, 1);
+	pnl->wr_xfer = (struct spi_transfer){ .tx_buf = frame, .len = num, .bits_per_word = 16,
+					      .speed_hz = u30_spi_hz ? min(u30_spi_hz, (uint)U30_SPI_MAX_HZ) : pnl->hz,
+					      .word_delay = { .value = (u16)min(u30_word_delay, 130u), .unit = SPI_DELAY_UNIT_SCK } };
+	spi_message_init_with_transfers(&pnl->wr_msg, &pnl->wr_xfer, 1);
+	pnl->wr_msg.complete = u30_write_end;
+	pnl->wr_msg.context = pnl;
+	reinit_completion(&pnl->wr_done);
+	ret = spi_async(dbi->spi, &pnl->wr_msg);
 	if (!ret)
-		ret = u30_spi(dbi, true, pnl->frame, num, 16);
-	pnl->st.write_ns = ktime_get_ns() - t0;
-	if (pnl->st.write_ns > pnl->st.write_max_ns)
-		pnl->st.write_max_ns = pnl->st.write_ns;
+		pnl->wr_busy = true;
 	return ret;
 }
 
@@ -425,10 +499,10 @@ static int u30_stats_show(struct seq_file *m, void *unused)
 	seq_printf(m, "partial %d\n" "commits %llu\n" "skipped %llu\n" "windows %llu\n" "pixels %llu\n" "full %llu\n",
 		   u30_partial, pnl->st.commits, pnl->st.skipped, pnl->st.windows, pnl->st.pixels, pnl->st.full);
 	seq_printf(m, "te %d\n" "te_irq %d\n" "te_edge %s\n" "te_delay_us %u\n" "te_pulses %llu\n" "te_period_us %llu\n" "te_waits %llu\n"
-		   "te_timeouts %llu\n" "te_dead %llu\n" "spi_word_delay %u\n" "write_us %llu\n" "write_max_us %llu\n",
+		   "te_timeouts %llu\n" "te_dead %llu\n" "spi_word_delay %u\n" "write_us %llu\n" "write_max_us %llu\n" "te_early %llu\n" "spi_hz %u\n",
 		   u30_te_mode, pnl->te_irq, pnl->te_type == IRQ_TYPE_EDGE_FALLING ? "falling" : "rising", u30_te_delay_us, pnl->st.te_pulses,
 		   div_u64(READ_ONCE(pnl->te_period_ns), 1000), pnl->st.te_waits, pnl->st.te_timeouts, pnl->st.te_dead, u30_word_delay,
-		   div_u64(pnl->st.write_ns, 1000), div_u64(pnl->st.write_max_ns, 1000));
+		   div_u64(pnl->st.write_ns, 1000), div_u64(pnl->st.write_max_ns, 1000), pnl->st.te_early, u30_spi_hz ? u30_spi_hz : pnl->hz);
 	return 0;
 }
 
@@ -511,6 +585,7 @@ static void u30_enable(struct drm_simple_display_pipe *pipe,
 	mipi_dbi_command(dbi, MIPI_DCS_SET_ADDRESS_MODE, madctl);
 
 	mipi_dbi_enable_flush(dbidev, crtc_state, plane_state);
+	u30_write_wait(pnl);
 	/* the light comes on once the first frame is in the panel RAM, not over what a reset left there */
 	if (pnl->bl_en)
 		gpiod_set_value_cansleep(pnl->bl_en, 1);
@@ -535,6 +610,7 @@ static void u30_disable(struct drm_simple_display_pipe *pipe)
 	struct u30_panel *pnl = to_u30(dbidev);
 	int idx;
 
+	u30_write_wait(pnl);
 	mipi_dbi_pipe_disable(pipe);
 	pnl->prev_valid = false;
 	/* a disabled panel must not keep its backlight enable asserted (the backlight of this board only switches on and off with it:
@@ -668,8 +744,6 @@ static int u30_probe(struct spi_device *spi)
 		pnl->reset_seq_len = len;
 	}
 	of_property_read_u32(lcd, "spi_freq", &freq);	/* stock sets max_speed_hz = spi_freq (48 MHz) */
-	if (u30_spi_hz)
-		freq = u30_spi_hz;
 
 	/* Keep the bootloader logo powered until the first real KMS frame is ready.
 	 * A deferred probe must not reset the glass or switch off its supply. */
@@ -697,14 +771,16 @@ static int u30_probe(struct spi_device *spi)
 
 	spi->mode = SPI_MODE_3;
 	spi->bits_per_word = 8;
-	spi->max_speed_hz = freq;
+	spi->max_speed_hz = max(freq, (u32)U30_SPI_MAX_HZ);	/* the limit; every transfer asks for its own speed (u30_spi) */
 	ret = spi_setup(spi);
 	if (ret)
 		return dev_err_probe(dev, ret, "spi_setup\n");
 
 	pnl->hz = freq;
-	pnl->frame = devm_kmalloc(dev, 240 * 240 * 2, GFP_KERNEL);
-	if (!pnl->frame)
+	pnl->frame[0] = devm_kmalloc(dev, 240 * 240 * 2, GFP_KERNEL);
+	pnl->frame[1] = devm_kmalloc(dev, 240 * 240 * 2, GFP_KERNEL);
+	init_completion(&pnl->wr_done);
+	if (!pnl->frame[0] || !pnl->frame[1])
 		return -ENOMEM;
 	mutex_init(&pnl->lock);
 	u30_te_init(dev, pnl);
@@ -731,7 +807,8 @@ static int u30_probe(struct spi_device *spi)
 	/* Native UI owns this KMS connector. Registering an fbdev client here
 	 * would modeset a zero-filled buffer over the firmware logo before the
 	 * UI starts. Screen sleep/wake is handled by connector DPMS, not fb0. */
-	dev_info(dev, "NV3002C ready: 240x240, SPI %u Hz, rotation %d, TE sync %s\n", freq, u30_rotation, pnl->te_irq > 0 ? "on" : "off");
+	dev_info(dev, "NV3002C ready: 240x240, SPI %u Hz, rotation %d, TE sync %s\n", u30_spi_hz ? u30_spi_hz : freq, u30_rotation,
+		 pnl->te_irq > 0 ? "on" : "off");
 	return 0;
 }
 

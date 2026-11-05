@@ -1,5 +1,14 @@
 # Independent U30 Pro port
 
+- This repository also carries the F50 Pro / MU3356 product profile. Read
+  docs/F50PRO-PORTING.zh-CN.md and devices/f50pro/profile.json. U30 Pro and
+  F50 Pro share the UMS9632 platform transport/kernel and native boot-container
+  adapter, not their SIM topology, battery, screen or product identity.
+  `/etc/mu300/platform=u30pro` names that existing native platform ABI;
+  `/etc/mu300/model` selects the product. Never map a MU3356 board ID through
+  MU5358's table. Shared caches are intentional only for identical platform
+  source/config receipts; product selection stays explicit and sequential.
+
 - This repository is https://github.com/kanoqwq/u30pro_openwrt, maintained on
   main at D:/Git/u30pro_openwrt. Its starting branch was
   u30pro-bringup, based on kanoqwq/mu300-linux minikano-openwrt-feats at
@@ -29,6 +38,13 @@
 
 # Hardware and modem fixes
 
+- NR0 is the sole ingress for automatic modem URC events. Do not select an
+  event channel by SIM number or wait on NR3 for SIM2 notifications. The
+  ingress channel does not identify the event's SIM; confirm the target using
+  the existing explicit SIM-selection/query mechanism. This rule concerns
+  unsolicited reception only: preserve each control/data operation's existing
+  AT owner, command channel, queue and ordering. Never move all AT/control
+  traffic onto NR0 or add a competing reader to its existing owner.
 - Before adapting UFS hardware, read `docs/UFS-PORTING.zh-CN.md`. It records
   the U30 Air investigation, 512/4K geometry contract, trial boot recovery,
   and the separate E5/Changxing 60 follow-up. Do not use fastboot.

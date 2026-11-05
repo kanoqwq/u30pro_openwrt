@@ -35,7 +35,7 @@ return baseclass.extend({
 `));
         const heading=node('div','mud-cpu-heading');
         heading.append(node('h3',null,'CPU 核心开关'),node('span','mud-cpu-badge','即时生效'));
-        const note=node('p','cpu-note','按内核能力逐核开启或关闭。CPU0 保持在线；关闭核心会降低并行处理能力，是否省电取决于实际负载。');
+        const note=node('p','cpu-note','按内核能力逐核开启或关闭，至少保留一个核心在线。关闭核心会降低并行处理能力，是否省电取决于实际负载。');
         const grid=node('div','mud-core-grid'), footer=node('div','mud-cpu-actions');
         const persist=node('input');persist.type='checkbox';persist.dataset.corePersist='';
         const label=node('label','mud-cpu-persist');
@@ -55,7 +55,7 @@ return baseclass.extend({
                 const title=node('strong',null,'CPU '+c.id), live=node('small',null,c.online?'在线':'离线');live.dataset.coreLive=String(c.id);
                 text.append(title,live);
                 const input=node('input');input.type='checkbox';input.checked=c.online;input.disabled=!c.writable;input.dataset.core=String(c.id);
-                input.setAttribute('aria-label','CPU '+c.id);input.title=c.writable?'':M.translate(c.id===0?'CPU0 保持在线':'此核心由内核管理，不能关闭');
+                input.setAttribute('aria-label','CPU '+c.id);input.title=c.writable?'':M.translate('此核心由内核管理，不能关闭');
                 input.onchange=()=>{dirty=true;};
                 row.append(text,input);grid.append(row);inputs.push({c,input});
             }

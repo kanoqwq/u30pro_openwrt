@@ -68,6 +68,7 @@ CARD_EPOCH_PATH=${MU300_CARD_EPOCH_PATH:-}
 if [ -r /sys/bus/platform/devices/sim_gpio_ctl/chip_select ]; then
     card_profile=v50
     [ "$(cat /etc/mu300/platform 2>/dev/null)" != u30pro ] || card_profile=u30pro
+    [ "$card_profile" != u30pro ] || [ "$(cat /etc/mu300/model 2>/dev/null)" != f50pro ] || card_profile=f50pro
     CARD_EPOCH_PATH=/run/mu300/$card_profile-generation${MU300_SIM_SLOT:-0}
 fi
 CARD_EPOCH=

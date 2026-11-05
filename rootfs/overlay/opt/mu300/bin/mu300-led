@@ -31,6 +31,13 @@ LEDS=$R/sys/class/leds
 STATE=$R/run/mu300/led
 DEVICE=$(${MU300_BIN:-/opt/mu300/bin}/mu300-device)
 
+if [ "$(cat "$R/etc/mu300/model" 2>/dev/null)" = f50pro ]; then
+    # This product's PMIC names are white emitters owned by f50pro-leds.
+    # Compatibility callers notify that owner instead of touching hardware.
+    ubus send f50pro.led '{}' >/dev/null 2>&1 || :
+    exit 0
+fi
+
 # V50's controller is owned by led-status. The old compatibility calls must
 # not overwrite its RGB state or write the unrelated PMIC channels.
 if [ "$DEVICE" = v50 ]; then

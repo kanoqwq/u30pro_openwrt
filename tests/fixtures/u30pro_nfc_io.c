@@ -13,6 +13,8 @@
 
 static int test_open(const char *path, int flags, ...)
 {
+    if (!strcmp(path, "/sys/kernel/f50pro_nfc/reset") && getenv("NFC_TEST_RESET_FILE"))
+        return open(getenv("NFC_TEST_RESET_FILE"), flags);
     if (strcmp(path, "/dev/i2c-4")) { errno = ENODEV; return -1; }
     return open(getenv("NFC_TEST_IMAGE"), flags);
 }
@@ -40,5 +42,12 @@ static int test_ioctl(int fd, unsigned long request, ...)
 }
 
 #define open test_open
+static FILE *test_fopen(const char *path, const char *mode)
+{
+    if (!strcmp(path, "/etc/mu300/model") && getenv("NFC_TEST_MODEL_FILE"))
+        return fopen(getenv("NFC_TEST_MODEL_FILE"), mode);
+    return fopen(path, mode);
+}
+#define fopen test_fopen
 #define ioctl test_ioctl
 #include "../../devices/u30pro/native/tools/u30pro_nfc.c"
