@@ -342,6 +342,8 @@ def main():
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_screen_charge.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_wallpaper_scenes.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_wallpaper_tiles.py')],check=True)
+    subprocess.run([sys.executable,str(TOP/'tests/u30pro_glass_colour.py')],check=True)
+    subprocess.run([sys.executable,str(TOP/'tests/u30pro_high_refresh.py')],check=True)
     subprocess.run([sys.executable,'-m','unittest','discover','-s',str(TOP/'tests'),
                     '-p','test_u30pro_nfc.py'],check=True)
     # Execute the real target ucode/UCI module with an isolated configuration

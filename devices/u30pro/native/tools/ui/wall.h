@@ -241,6 +241,10 @@ static void wp_blur(const uint8_t *src, uint8_t *dst)
 /* ------------------------------------------------------------------ glass */
 /* the most (dark pane) or least (light pane) the glass may show of the wallpaper's brightness, as luma of the glass itself */
 enum { GLASS_LUMA_MAX = 112, GLASS_THIN_LUMA_MAX = 135, GLASS_LUMA_MIN = 168, GLASS_THIN = 35 };
+/* the dark glass first lowers the exposure of a bright wallpaper (wp_derive: the picture's GLASS_TOP percentile of luma to the limit),
+ * then rounds off what is still above GLASS_KNEE of the limit */
+#define GLASS_KNEE .85f
+#define GLASS_TOP 90
 
 static int glass_is_light(void) { return wp_luma(tint_r, tint_g, tint_b) >= 128; }
 
@@ -248,9 +252,9 @@ static int glass_is_light(void) { return wp_luma(tint_r, tint_g, tint_b) >= 128;
  * table per luma (ToneTab, made once per look: tone_tab); a pixel then takes only lookups and shifts: luma in 8.8 fixed point, and per luma
  * the factor that brings a channel to the mapped luma (darkening: scale; lightening: towards white).  Regrounding tones the few glass
  * samples it needs one by one (tone_px) instead of the whole picture. */
-typedef struct { int on, light, map[256], fac[256]; } ToneTab;
+typedef struct { int on, light, map[256], fac[256], chroma[256]; } ToneTab;
 
-static void tone_tab(ToneTab *t, float strength, int lmax, int lmin)
+static void tone_tab(ToneTab *t, float strength, int lmax, int lmin, float gain)
 {
 	const float pane = (float)(100 - glass_clear) / 100.f * strength, keep = (1.f - pane) * .94f;
 	const float base = (float)wp_luma(tint_r, tint_g, tint_b) * pane * .94f + 255.f * .06f;
@@ -265,8 +269,9 @@ static void tone_tab(ToneTab *t, float strength, int lmax, int lmin)
 		float v = (float)l;
 
 		if (!t->light) {
-			float knee = lim * .6f;
+			float knee = lim * GLASS_KNEE;
 
+			v *= gain;
 			if (v > knee) { float u = (v - knee) / (lim - knee); v = knee + (lim - knee) * u / (1.f + u); }
 		} else {
 			float knee = lim + (255.f - lim) * .4f;
@@ -277,6 +282,8 @@ static void tone_tab(ToneTab *t, float strength, int lmax, int lmin)
 		if (t->map[l] != l) t->on = 1;
 		/* darkening: channel * m / l; lightening: channel + (255 - channel) * (m - l) / (255 - l); as 16.16 factors */
 		t->fac[l] = !t->light ? (l ? (t->map[l] << 16) / l : 0) : ((t->map[l] - l) << 16) / (255 - l > 1 ? 255 - l : 1);
+		/* the chroma of a darkened pixel: the square root of the luma ratio, between the uniform scale and keeping it whole */
+		t->chroma[l] = l ? (int)lrintf(sqrtf((float)t->map[l] / (float)l) * 65536.f) : 65536;
 	}
 }
 
@@ -287,7 +294,9 @@ static inline void tone_px(const ToneTab *t, const uint8_t *q, uint8_t *o)
 	if (!t->on || t->map[l] == l) { o[0] = q[0]; o[1] = q[1]; o[2] = q[2]; return; }
 	f = t->fac[l];
 	for (int c = 0; c < 3; c++) {
-		int v = !t->light ? (q[c] * f) >> 16 : q[c] + (((255 - q[c]) * f) >> 16);
+		/* darkening moves the luma to the mapped one but scales the chroma (channel - luma) only by chroma[l]: a uniform scale would take the
+		 * colour out with the light, and pale pinks and skin tones turned a muddy grey-brown under the glass */
+		int v = !t->light ? t->map[l] + (((q[c] - l) * t->chroma[l]) >> 16) : q[c] + (((255 - q[c]) * f) >> 16);
 
 		o[c] = (uint8_t)(v < 0 ? 0 : (v > 255 ? 255 : v));
 	}
@@ -295,6 +304,7 @@ static inline void tone_px(const ToneTab *t, const uint8_t *q, uint8_t *o)
 
 /* the two tones of the glass (glass, thin glass), for the look of wp_check's last call */
 static ToneTab wp_tones[2];
+static float wp_gain;			/* the exposure of the dark glass (wp_derive) */
 
 static void wp_tone(const uint8_t *src, uint8_t *dst, const ToneTab *t)
 {
@@ -580,15 +590,18 @@ static void wp_reground(Cv *c)
 }
 
 /* ------------------------------------------------------------------ the wallpaper from wp_rgb */
-static void wp_derive(void)
+/* live: a frame of a clip following the one shown, whose exposure moves only part of the way to its own so the picture does not pump */
+static void wp_derive(int live)
 {
 	int keep = 100 - (wp_dim < 0 ? 0 : (wp_dim > 90 ? 90 : wp_dim));
 	uint32_t t = tint_rgb();
 	static uint8_t dimmed[WP_N * 3];
+	int hist[256] = { 0 }, top = 0;
 
 	tint_r = (int)(t >> 16 & 255); tint_g = (int)(t >> 8 & 255); tint_b = (int)(t & 255);
-	tone_tab(&wp_tones[0], 1.f, GLASS_LUMA_MAX, GLASS_LUMA_MIN);
-	tone_tab(&wp_tones[1], 1.f - GLASS_THIN / 100.f, GLASS_THIN_LUMA_MAX, GLASS_LUMA_MIN);
+	/* above the default transparency (50) the glass lets more of the wallpaper's light through: up to 24 more luma at 100, where it had
+	 * pressed a pale picture to a dull grey just as hard as at 50 */
+	const int more = glass_clear > 50 ? (glass_clear - 50) * 24 / 50 : 0;
 	const int k16 = keep * 65536 / 100;
 
 	for (int i = 0; i < WP_N; i++) {
@@ -596,7 +609,22 @@ static void wp_derive(void)
 
 		dimmed[i * 3] = (uint8_t)r; dimmed[i * 3 + 1] = (uint8_t)g; dimmed[i * 3 + 2] = (uint8_t)b;
 		wp_bg[i] = gx_rgb(r, g, b);
+		hist[wp_luma(r, g, b)]++;
 	}
+	/* the knee alone had to take a pale picture down by itself and pressed nearly all of it into the few lumas under the limit: dark, but
+	 * flat like an overexposed photo turned down.  So the picture's exposure goes down first (contrast kept), by as much as brings its
+	 * GLASS_TOP percentile to the limit, and the knee only rounds off the brightest rest */
+	for (int n = 0, i = 0; i < 256; i++) if ((n += hist[i]) * 100 < WP_N * GLASS_TOP) top = i + 1;
+	{
+		const float pane = (float)(100 - glass_clear) / 100.f, kp = (1.f - pane) * .94f;
+		const float lim = kp < .02f ? 255.f : ((float)(GLASS_LUMA_MAX + more) - (float)wp_luma(tint_r, tint_g, tint_b) * pane * .94f -
+			255.f * .06f) / kp;
+		float g = top > lim ? lim / (float)top : 1.f;
+
+		wp_gain = live && wp_gain > 0.f ? wp_gain + (g - wp_gain) * .15f : g;
+	}
+	tone_tab(&wp_tones[0], 1.f, GLASS_LUMA_MAX + more, GLASS_LUMA_MIN, wp_gain);
+	tone_tab(&wp_tones[1], 1.f - GLASS_THIN / 100.f, GLASS_THIN_LUMA_MAX + more, GLASS_LUMA_MIN, wp_gain);
 	wp_blur(dimmed, wp_soft);
 	wp_ready = 0;
 }
@@ -766,6 +794,7 @@ static int lw_apply(int i)
 static int lw_show(int i)
 {
 	unsigned long long t0 = wp_clock_us(), t1;
+	const int live = lw.cur >= 0;
 
 	if (!lw.n || i < 0 || i >= lw.n) return -1;
 	if (lw.ver == 2) {
@@ -778,7 +807,7 @@ static int lw_show(int i)
 	} else if (wp_decode(lw.map + lw.off[i], lw.len[i])) return -1;
 	lw.cur = lw.want = i;
 	t1 = wp_clock_us();
-	wp_derive();
+	wp_derive(live);
 	lw_decode_us += t1 - t0;
 	lw_derive_us += wp_clock_us() - t1;
 	lw_frames++;
@@ -830,13 +859,13 @@ static int wp_check(void)
 
 			lw_close();
 			if (!wp_read_file(WP_DIR "/wallpaper.jpg", &buf, &len)) {
-				if (!wp_decode(buf, len)) { wp_derive(); wp_on = 1; }
+				if (!wp_decode(buf, len)) { wp_derive(0); wp_on = 1; }
 				free(buf);
 			}
 		}
 		return 1;
 	}
-	if (wp_on) wp_derive();
+	if (wp_on) wp_derive(0);
 	return was || wp_on;
 }
 

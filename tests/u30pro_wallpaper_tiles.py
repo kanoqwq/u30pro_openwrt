@@ -62,7 +62,7 @@ int main(void) {
  }
  fclose(raw);wp_on=1;wp_live_pages=LIVE_ALL;
  for(int tint=0;tint<4;tint++)for(int s=0;s<9;s++){
-  glass_tint=tint;glass_blur=(tint%3)*50;glass_clear=20+tint*20;wp_derive();scene(s);compose();
+  glass_tint=tint;glass_blur=(tint%3)*50;glass_clear=20+tint*20;wp_derive(0);scene(s);compose();
   assert(wp_ground_rest(&scr));
   for(int f=0;f<3;f++){
    assert(lw_show((lw.cur+1)%lw.n)==0);wp_reground(&scr);memcpy(keep,scr.p,sizeof keep);compose();

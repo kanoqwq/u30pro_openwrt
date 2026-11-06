@@ -55,12 +55,15 @@ MODULE_PARM_DESC(rotation, "panel rotation in degrees (0, 90, 180, 270)");
  * (18.9 ms), so the TE-synchronised writes come at most every other period (about 26 fps).  The controller divides its 192 MHz source
  * clock by two at the least: 96 MHz is the only faster clock, beyond the 48 MHz the panel table names.  It writes a frame in about 17.5 ms,
  * inside one period; on the units tried the picture stays correct (the UI's "high refresh" setting, u30pro_native_control.display
- * fast_panel, sets it with te_window_us).  Read for every transfer: it can change at run time.
+ * fast_panel, sets it with te_window_us).  Read for every frame: it can change at run time.  Only the pixels of a frame go at this clock:
+ * the command bytes, their parameters and the initialisation sequence of a wake always go at the table's clock, so a bit error at 96 MHz
+ * can at worst spoil a frame, never write a register (a corrupted gamma or power register left the whole picture washed out until the
+ * next wake).
  */
 #define U30_SPI_MAX_HZ	96000000
 static uint u30_spi_hz;
 module_param_named(spi_hz, u30_spi_hz, uint, 0644);
-MODULE_PARM_DESC(spi_hz, "the SPI clock for every transfer, up to 96000000 (0 = the panel table's value, 48 MHz); changes at run time");
+MODULE_PARM_DESC(spi_hz, "the SPI clock of the frame pixels, up to 96000000 (0 = the panel table's value, 48 MHz; commands always use that); changes at run time");
 
 /*
  * Off by default since 2026-10-21: with the changed-window writes the clock of the UI stayed at the old minute on the glass although the
@@ -183,7 +186,8 @@ static struct u30_panel *to_u30(struct mipi_dbi_dev *dbidev)
 static int u30_spi(struct mipi_dbi *dbi, bool data, const void *buf, size_t len, u8 bpw)
 {
 	struct u30_panel *pnl = container_of(dbi, struct u30_panel, dbidev.dbi);
-	struct spi_transfer t = { .tx_buf = buf, .len = len, .speed_hz = u30_spi_hz ? min(u30_spi_hz, (uint)U30_SPI_MAX_HZ) : pnl->hz, .bits_per_word = bpw,
+	/* commands and their parameters at the table's clock (see u30_spi_hz); the frame pixels go out in u30_command */
+	struct spi_transfer t = { .tx_buf = buf, .len = len, .speed_hz = pnl->hz, .bits_per_word = bpw,
 				  /* the gap between words (spi-sprd honours an explicit request below its default); the panel needs none */
 				  .word_delay = { .value = (u16)min(u30_word_delay, 130u), .unit = SPI_DELAY_UNIT_SCK } };
 

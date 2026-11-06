@@ -1125,10 +1125,11 @@ static void page_system(Cv *c)
 #include "menu.h"
 
 /* ------------------------------------------------------------------ overlays */
+/* a neutral black: a blue-black had cast the wallpaper under it cold */
 static void scrim(Cv *c, int alpha)
 {
 	for (int i = 0; i < c->w * c->h; i++) {
-		c->p[i] = gx_mix(c->p[i], 0x05080E, (unsigned)alpha);
+		c->p[i] = gx_mix(c->p[i], 0x060606, (unsigned)alpha);
 		if (c->g) gx_ground_cover(&c->g[i], (unsigned)alpha);
 	}
 }

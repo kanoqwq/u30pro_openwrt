@@ -25,6 +25,7 @@ python3 "$top/tests/u30pro_screen_charge.py"
 python3 "$top/tests/u30pro_wallpaper_scenes.py"
 python3 "$top/tests/u30pro_wallpaper_tiles.py"
 python3 "$top/tests/u30pro_high_refresh.py"
+python3 "$top/tests/u30pro_glass_colour.py"
 python3 "$top/tests/u30pro_uninstall_storage.py"
 test_busybox=$(python3 -c 'import runpy,sys; print(runpy.run_path(sys.argv[1])["settings"]()[2]["busybox"])' "$top/tools/build-settings.py")
 OPENWRT_TEST_BUSYBOX="$test_busybox" python3 -m unittest discover -s "$top/installer/tests" -p test_native_worker.py
