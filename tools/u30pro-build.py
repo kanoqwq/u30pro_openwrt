@@ -101,8 +101,19 @@ def load_layout(config, workspace=None):
     return workspace, paths
 
 
+def installer_paths(paths):
+    """Use the same explicit native inputs as release assembly, without copies."""
+    selected = {'windows': 'OPENWRT_GUI_ARTIFACT',
+                'macos-arm64': 'OPENWRT_GUI_MACOS_ARTIFACT',
+                'android': 'OPENWRT_GUI_ANDROID_ARTIFACT'}
+    return {name: Path(os.environ.get(variable, str(paths['installer_artifacts']/name)))
+            for name, variable in selected.items()}
+
+
 def check_inputs(paths):
-    missing = [str(path) for path in paths.values() if not path.exists()]
+    required = [path for key,path in paths.items() if key != 'installer_artifacts']
+    required += list(installer_paths(paths).values())
+    missing = [str(path) for path in required if not path.exists()]
     if missing:
         raise ValueError('Missing registered inputs (nothing downloaded/copied):\n' + '\n'.join(missing))
     source = paths['kernel_source']

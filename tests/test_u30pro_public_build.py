@@ -27,6 +27,26 @@ class PublicInputs(unittest.TestCase):
         return {'url': 'https://downloads.example.test/pinned.tar',
                 'sha256': hashlib.sha256(content).hexdigest()}
 
+    def test_explicit_native_inputs_do_not_require_an_unused_default_cache(self):
+        build=runpy.run_path(str(TOP/'tools/u30pro-build.py'))
+        fields={'windows':'OPENWRT_GUI_ARTIFACT','macos-arm64':'OPENWRT_GUI_MACOS_ARTIFACT',
+                'android':'OPENWRT_GUI_ANDROID_ARTIFACT'}
+        roots={name:self.root/name for name in fields}
+        with mock.patch.dict(os.environ,{variable:str(roots[name]) for name,variable in fields.items()}):
+            self.assertEqual(build['installer_paths']({'installer_artifacts':self.root/'unused'}),roots)
+            for path in roots.values():path.mkdir()
+            # The unused default must not reject otherwise selected inputs.
+            with self.assertRaisesRegex(FileNotFoundError,'Makefile'):
+                build['check_inputs']({'installer_artifacts':self.root/'unused','kernel_source':self.root})
+
+    def test_missing_explicit_native_input_cannot_use_an_available_default(self):
+        build=runpy.run_path(str(TOP/'tools/u30pro-build.py'))
+        base=self.root/'defaults'
+        for name in ('windows','macos-arm64','android'):(base/name).mkdir(parents=True)
+        with mock.patch.dict(os.environ,{'OPENWRT_GUI_ARTIFACT':str(self.root/'explicit-missing')}):
+            with self.assertRaisesRegex(ValueError,'explicit-missing'):
+                build['check_inputs']({'installer_artifacts':base})
+
     def archive(self, members):
         path = self.root/'input.tar'
         with tarfile.open(path, 'w') as tar:
