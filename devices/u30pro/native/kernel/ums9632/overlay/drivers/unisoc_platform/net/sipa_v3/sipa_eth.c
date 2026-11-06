@@ -49,7 +49,6 @@
 
 static DEFINE_RATELIMIT_STATE(rlimit_eth, 10 * HZ, 1);
 
-static unsigned long queue_lock_flags;
 static spinlock_t queue_lock; /* spin-lock for queue status protection */
 
 #ifdef CONFIG_DEBUG_FS
@@ -61,8 +60,9 @@ static void sipa_eth_flowctrl_handler(void *priv, int flowctrl)
 {
 	struct sipa_eth *sipa_eth = (struct sipa_eth *)priv;
 	struct net_device *dev = sipa_eth->netdev;
+	unsigned long flags;
 
-	spin_lock_irqsave(&queue_lock, queue_lock_flags);
+	spin_lock_irqsave(&queue_lock, flags);
 
 	if (flowctrl) {
 		netif_stop_queue(dev);
@@ -72,7 +72,7 @@ static void sipa_eth_flowctrl_handler(void *priv, int flowctrl)
 		pr_info("wakeup queue on dev %s\n", dev->name);
 	}
 
-	spin_unlock_irqrestore(&queue_lock, queue_lock_flags);
+	spin_unlock_irqrestore(&queue_lock, flags);
 }
 
 static void sipa_eth_notify_cb(void *priv, enum sipa_evt_type evt,

@@ -566,6 +566,20 @@ def boot_smoke(package_root):
         assert metadata['etc/u30pro-boot-wait.sh'][0] == (TOP/'devices/u30pro/boot-wait.sh').read_bytes().replace(b'\r\n', b'\n')
         outputs=native.images(package_root,image,templates)
         assert outputs['boot'][44:1580]==base[44:1580], 'Native binding lost product kernel parameters'
+        if mode == 'part':
+            # Test the actual release -> installed -> OTA path, not only the
+            # fresh installer. A consistent three-image set can still fail
+            # before root mount if OTA loses the installed storage adapter.
+            installed = parser.metadata(outputs['boot'], 'mu300', parser._native_storage)
+            rebound = parser.bind(base, outputs['boot'], 'mu300')
+            kept = parser.metadata(rebound, 'mu300', parser._native_storage)
+            assert installed and kept == installed, 'OTA lost installed native storage/repair dependencies'
+            for required in ('etc/mu300-desktop-storage.sh', 'etc/mu300-internal-ext4.sh',
+                             'repair/usr/sbin/e2fsck', 'repair/lib/ld-musl-aarch64.so.1'):
+                assert required in kept, 'OTA boot is missing '+required
+            updated = parser.native_images(rebound, outputs)
+            assert parser.native_boot_parts(updated['boot'])[1] == parser.native_vendor_parts(updated['vendor_boot'])[0]
+            assert parser.native_vendor_parts(updated['vendor_boot'])[1:3] == parser.native_vendor_parts(outputs['vendor_boot'])[1:3]
         args=outputs['vendor_boot'][28:2076].split(b'\0',1)[0]
         if MODEL['id']=='f50pro':
             assert b'u30pro_sim_mux.layout=mu3356' in args

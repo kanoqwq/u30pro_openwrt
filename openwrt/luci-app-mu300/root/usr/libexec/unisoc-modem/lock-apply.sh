@@ -69,7 +69,57 @@ restart_write() {
 }
 
 read_field() {
-    at "$1" 4 | sed -n "s/^+$2: *//p" | head -n1 | tr -d ' \t'
+    at "$1" "${3:-4}" | sed -n "s/^+$2: *//p" | head -n1 | tr -d ' \t'
+}
+
+# UMS9632 accepts these NR setters only while this logical stack has an NR
+# work mode. Queries still return the saved NR values in LTE-only mode.
+# Keep MU300's existing command order; both Pro products share this platform.
+pro_mode_order() {
+    [ "$(cat "${MU300_PLATFORM_FILE:-/etc/mu300/platform}" 2>/dev/null)" = u30pro ]
+}
+
+write_mode_pair() {
+    local raw timeout=${1:-6}
+    if pro_mode_order; then
+        # A later NR setter can fail after the work-mode change succeeded.
+        # The next display read must show that partial result, not old success.
+        rm -f "$LOCKCACHE" || return 1
+        write_setting "AT+SPTESTMODE=$m0,$m1,$prim" "$timeout" || return 1
+        raw=$(read_field 'AT+SPTESTMODE?' SPTESTMODE "$timeout")
+        [ "$(printf '%s' "$raw" | cut -d, -f1-3)" = "$m0,$m1,$prim" ] ||
+            { fail_apply '模组回读与请求设置不一致，未保存'; return 1; }
+        # 3 is LTE-only; do not send an NR setter that the stock modem rejects.
+        [ "$m0" != 3 ] || return 0
+        write_setting "AT+SP5GRAN=$gran" "$timeout"
+    else
+        write_setting "AT+SP5GRAN=$gran" "$timeout" &&
+            write_setting "AT+SPTESTMODE=$m0,$m1,$prim" "$timeout"
+    fi
+}
+
+endc_context() {
+    local raw
+    endc_deferred=0
+    pro_mode_order || return 0
+    raw=$(read_field 'AT+SPTESTMODE?' SPTESTMODE "${1:-4}")
+    printf '%s\n' "$raw" | grep -Eq '^[0-9]+,[0-9]+,[01](,[0-9]+)*$' ||
+        { fail_apply '无法读取当前 SIM 模式，未发送设置'; return 1; }
+    [ "${raw%%,*}" != 3 ] || endc_deferred=1
+}
+
+write_endc() {
+    local value=$1 timeout=${2:-6} bit
+    endc_context "$timeout" || return 1
+    [ "$endc_deferred" = 0 ] || return 0
+    case "$value" in on) bit=1;; off) bit=2;; *) return 1;; esac
+    write_setting "AT+SPENDC=$bit" "$timeout"
+}
+
+verify_endc() {
+    endc_context "${2:-4}" || return 1
+    [ "$endc_deferred" = 0 ] || return 0
+    endc_matches "$1" "$(read_field 'AT+SPENDC?' ENDC "${2:-4}")"
 }
 
 voice_receipt() {
@@ -170,9 +220,12 @@ verify_apply() {
     case "$kind" in
         mode)
             raw=$(read_field 'AT+SPTESTMODE?' SPTESTMODE)
-            [ "$(printf '%s' "$raw" | cut -d, -f1-3)" = "$m0,$m1,$prim" ] &&
-                [ "$(read_field 'AT+SP5GRAN?' SP5GRAN)" = "$gran" ] ;;
-        endc) endc_matches "$val" "$(read_field 'AT+SPENDC?' ENDC)" ;;
+            [ "$(printf '%s' "$raw" | cut -d, -f1-3)" = "$m0,$m1,$prim" ] || return 1
+            if ! pro_mode_order || [ "$m0" != 3 ]; then
+                [ "$(read_field 'AT+SP5GRAN?' SP5GRAN)" = "$gran" ] || return 1
+            fi
+            [ -z "${mode_endc:-}" ] || verify_endc "$mode_endc" ;;
+        endc) verify_endc "$val" ;;
         lte|nr)
             # Readback remains available to the UI, but may be a normalized
             # subset and is not compared with the requested band list.
@@ -208,8 +261,7 @@ verify_reset() {
 }
 
 reset_modem_settings() {
-    write_setting 'AT+SP5GRAN=1' &&
-    write_setting "AT+SPTESTMODE=$m0,$m1,$prim" &&
+    write_mode_pair &&
     write_setting 'AT+SPENDC=1' &&
     write_band_setting 'AT+SPLBAND=1,0,0,0,0,0' &&
     write_band_setting 'AT+SPLBAND=2,0,0,0,0' &&
@@ -261,7 +313,7 @@ do_reset_apply() {
 }
 
 do_apply() {
-    local kind=$1 val=$2 m0 m1 prim gran tm v rat p fr pc pair want_lte want_nr c INTERACTIVE_APPLY=1
+    local kind=$1 val=$2 m0 m1 prim gran tm v rat p fr pc pair want_lte want_nr c mode_endc= INTERACTIVE_APPLY=1
     validate_apply "$kind" "$val" || return 1
     _t0=$(date +%s)
     if [ "$kind" = auto_apply ]; then
@@ -293,11 +345,14 @@ do_apply() {
             printf '%s\n' "$tm" | grep -Eq '^[0-9]+,[0-9]+,[01](,[0-9]+)*$' ||
                 { fail_apply '无法读取当前 SIM 模式，未发送设置'; return 1; }
             m1=$(printf '%s' "$tm" | cut -d, -f2); prim=$(printf '%s' "$tm" | cut -d, -f3)
-            write_setting "AT+SP5GRAN=$gran" && write_setting "AT+SPTESTMODE=$m0,$m1,$prim" || return 1
+            write_mode_pair || return 1
+            if pro_mode_order && [ "$m0" != 3 ] && [ -f "$STATE_DIR/endc" ]; then
+                mode_endc=$(cat "$STATE_DIR/endc")
+                validate_apply endc "$mode_endc" && write_endc "$mode_endc" || return 1
+            fi
             ;;
         endc)
-            [ "$val" = on ] && v=1 || v=2
-            write_setting "AT+SPENDC=$v" || return 1 ;;
+            write_endc "$val" || return 1 ;;
         lte)
             val=$(canonical_bands "$val")
             write_band_setting "AT+SPLBAND=1,$(lte_masks "$val")" || return 1 ;;

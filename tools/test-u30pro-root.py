@@ -33,6 +33,23 @@ def run(command, platform_fixture=None):
         if created_uptime:uptime.unlink(missing_ok=True)
 
 
+def kernel_checks():
+    """A refreshed root must contain the exact reviewed kernel's modules."""
+    package=runpy.run_path(str(TOP/'tools/u30pro-package.py'))
+    report=package['verified_kernel']()
+    objects=Path(LAYOUT['kernel_objects'])
+    module_root=ROOT/'lib/modules'/report['version']
+    count=0
+    for name in (objects/'modules.order').read_text().splitlines():
+        if name.endswith('.o'):name=name[:-2]+'.ko'
+        if '..' in Path(name).parts or Path(name).is_absolute():
+            raise ValueError('Unsafe kernel module receipt: '+name)
+        installed=module_root/Path(name).name
+        assert installed.is_file() and package['digest'](installed)==package['digest'](objects/name), \
+            'Prepared kernel module differs from the current build: '+name
+        count+=1
+    print(f'Matched Image/config/source receipt and {count} installed modules')
+
 
 def modem_checks(include_dashboard=True):
     if os.environ.get('U30PRO_BUILD_LOCKED')!='1':raise ValueError('Use build-release.py run')
@@ -99,11 +116,16 @@ def modem_checks(include_dashboard=True):
 
 def main():
     if os.environ.get('U30PRO_BUILD_LOCKED')!='1':raise ValueError('Use build-release.py run')
+    kernel_checks()
     flow=runpy.run_path(str(TOP/'tools/stage-flow-offload.py'))
     assert flow['FIXED'] in (ROOT/'usr/share/ucode/fw4.uc').read_text(), 'Stale fw4 topology discovery in prepared root'
     # These are production inputs, never files recovered from a hotfixed device.
     # Compare the assembled root too: source-only syntax tests miss stale staging.
     inputs={
+        'usr/libexec/unisoc-modem/ttl-engine':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/ttl-engine',
+        'usr/libexec/unisoc-modem/ttl':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/ttl',
+        'etc/hotplug.d/net/92-unisoc-ttl':'openwrt/luci-app-mu300/root/etc/hotplug.d/net/92-unisoc-ttl',
+        'www/luci-static/resources/view/mu300/ttl.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/ttl.js',
         'opt/mu300/bin/led-status':'rootfs/overlay/opt/mu300/bin/led-status',
         'opt/mu300/bin/mu300-led':'rootfs/overlay/opt/mu300/bin/mu300-led',
         'opt/mu300/bin/mu300-sysd':'rootfs/overlay/opt/mu300/bin/mu300-sysd',
@@ -136,6 +158,9 @@ def main():
         'usr/libexec/rpcd/mu300dash':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/mu300dash',
         'www/luci-static/resources/view/mu300/sim.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/sim.js',
         'www/luci-static/resources/view/mu300/apn.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/apn.js',
+        'usr/libexec/unisoc-modem/lock':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/lock',
+        'usr/libexec/unisoc-modem/lock-apply.sh':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/lock-apply.sh',
+        'www/luci-static/resources/view/mu300/locks.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/locks.js',
         'usr/libexec/unisoc-modem/device-usb':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/device-usb',
         'usr/libexec/unisoc-modem/usb-link.uc':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/usb-link.uc',
         'www/luci-static/resources/mu300/common.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/common.js',
@@ -371,5 +396,6 @@ def main():
 
 if __name__=='__main__':
     if sys.argv[1:]==['--modem-only']:modem_checks(include_dashboard=False)
+    elif sys.argv[1:]==['--kernel-only']:kernel_checks()
     elif len(sys.argv)==1:main()
-    else:raise SystemExit('Usage: test-u30pro-root.py [--modem-only]')
+    else:raise SystemExit('Usage: test-u30pro-root.py [--modem-only|--kernel-only]')

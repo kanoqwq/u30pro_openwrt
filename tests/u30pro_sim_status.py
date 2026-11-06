@@ -54,7 +54,8 @@ print('PASS 18 selected-SIM screen payloads\\n');
     @unittest.skipUnless(os.name=='posix','native C simulator requires POSIX')
     def test_real_native_screen_text_does_not_call_all_disconnections_dialing(self):
         source=(NATIVE/'ui/pages.h').read_text()
-        function=source[source.index('static const char *cell_text('):source.index('static void page_home(')]
+        start=source.index('static const char *cell_text(')
+        function=source[start:source.index('\n}\n',start)+3]
         tests=[('waiting-sim','无SIM卡'),('checking-sim','正在识别SIM卡'),('sim-locked','SIM卡已锁定'),
                ('radio-off','无线电已关'),('data-disabled','数据已关闭'),('modem-unavailable','基带无应答'),
                ('dialing','拨号中…')]

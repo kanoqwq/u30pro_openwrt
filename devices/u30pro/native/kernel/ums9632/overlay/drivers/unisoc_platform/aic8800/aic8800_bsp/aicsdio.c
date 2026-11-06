@@ -2434,6 +2434,12 @@ int aicwf_sdiov3_func_init(struct aic_sdio_dev *sdiodev)
 		return ret;
 	}
 
+	/* 08bda84b: F0 timing setup can shift the sampling window. Request
+	 * retuning after the final successful setup write; preserve host ownership. */
+	sdio_claim_host(sdiodev->func);
+	mmc_retune_needed(host);
+	sdio_release_host(sdiodev->func);
+
 	return ret;
 }
 

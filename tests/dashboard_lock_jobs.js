@@ -17,7 +17,8 @@ async function advance(ms) {
     now=end; await flush();
 }
 const M = new Function('rpc','baseclass','L','document','navigator','setTimeout','clearTimeout', common)(
-    {declare:o=>o.method==='lock_status' ? id=>{ calls++; return response(id); } : ()=>{}},
+    {declare:o=>o.method==='lock_status' ? id=>{ calls++; return response(id); } :
+        o.method==='sim_get' ? async()=>({actual_sim:0,slots:2}) : ()=>{}},
     {extend:x=>x}, {env:{get lang(){return lang;}}}, {}, {}, set, clear);
 const start = {ok:1,id:'abcdefghij'};
 async function main() {
@@ -50,6 +51,8 @@ async function main() {
     // All newly emitted backend error messages are translated in both locales.
     let messages = ['已应用并核对模组状态','等待模组能力数据','正在确认设置结果…'];
     messages.push('状态暂不可读，请刷新后重试',
+        'EN-DC 将在支持 5G 的网络模式下生效。',
+        'EN-DC 设置已保存，将在支持 5G 的网络模式下生效。',
         '关闭后只停止下次开机回放，已保存的网络、VoLTE 和 VoNR 设置不会被删除。',
         'VoLTE 用于 4G 通话，VoNR 用于 5G SA 通话。设置按当前查看的 SIM 保存，并跟随“开机自动应用”。',
         '关闭 VoLTE 或 VoNR 不等于屏蔽全部来电和短信，传统网络业务仍可能到达。');
@@ -87,12 +90,22 @@ async function main() {
         }, busy:(button,on)=>{button.busy=on;},
         callLockSet:(kind,val)=>{requests.push({kind,val,slot:selected}); return Promise.resolve({...start,kind});},
         waitLockJob:()=>new Promise((resolve,reject)=>{finishJob=resolve;failJob=reject;})};
-    const page = new Function('view','R','M','L','AutoMode',locks)(
+    const page = new Function('view','R','M','L','AutoMode','Roaming',locks)(
         {extend:x=>x},{poll:()=>()=>{}},fakeM,{resolveDefault:x=>Promise.resolve(x)},
-        {attach:()=>({update(){},reload(){}})});
+        {attach:()=>({update(){},reload(){}})}, {mount:()=>({reload(){},dispose(){}})});
     page.refresh=()=>Promise.resolve();
     page.note=(text,type)=>notes.push({text,type});
     page.wire(pageRoot);
+    page.lastLock={endc:'1',endc_saved:'off',endc_deferred:1};
+    assert.equal(page.endcOn(),false);
+    const endcButton=elements.get('#mud-lock-endc');
+    endcButton.onclick();confirm(true);await flush();
+    assert.deepEqual(requests,[{kind:'endc',val:'on',slot:1}]);
+    finishJob({...start,kind:'endc'});await flush();
+    assert.match(notes.at(-1).text,/EN-DC 设置已保存/);
+    page.lastLock.endc_deferred=0;
+    assert.equal(page.endcOn(),true); // Live modem state wins after NR is restored.
+    requests.length=0;notes.length=0;
     page.lastLock={volte:{enabled:true},vonr:{enabled:true}};
     page._root=pageRoot;
     page.paintVoiceSwitches(page.lastLock);

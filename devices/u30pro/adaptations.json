@@ -216,12 +216,62 @@
   },
   "kernel/ums9632/overlay/drivers/mmc/host/sdhci-sprd.c": {
     "source_sha256": "ca9e22b338868767b91785064e9e0003c41b0d15537564a865f2c807a983ead6",
-    "sha256": "633f074483220e3d3a378453548e56e85fa8e84fe58b3fe6ddc3426bf400e21b",
-    "reason": "Select the existing UMS9632 v4nrpll-409m6 parent only for the R11P3 no-SD/no-MMC Wi-Fi host before caching base_rate and card/DLL tuning; leave eMMC/SD and the shared PLL frequency unchanged. Request a 204.8 MHz bus, retain explicit lower user caps and old 208 MHz requests through the board cap, propagate provider deferral/errors and report the actual bus clock instead of the requested ios value. CPU governor unchanged. Offline tests/build are not hardware acceptance."
+    "sha256": "2e95a2916ea749e7870c6fc0e194ad9b3206e16833bf9d5d95bcfb541ebe2536",
+    "reason": "Select the existing UMS9632 v4nrpll-409m6 parent only for the R11P3 no-SD/no-MMC Wi-Fi host before caching base_rate and card/DLL tuning; leave eMMC/SD and the shared PLL frequency unchanged. Request a 204.8 MHz bus, retain explicit lower user caps and old 208 MHz requests through the board cap, propagate provider deferral/errors and report the actual bus clock instead of the requested ios value. CPU governor unchanged. Offline tests/build are not hardware acceptance. Backport 08bda84b05889068490655f8e93d6aa649aba95e with per-host activity-triggered tuning, no idle timer, synchronized suspend/remove, bounded scan and complete DLL/DMA rollback. Retune after successful card timing setup; retry only non-destructive credit reads with restored core CRC policy, abort CRC-failed FIFO transfers without replaying partial data. Keep 204.8 MHz, local TX pipeline and dynamic storage/boot contracts."
   },
   "kernel/ums9632/overlay/drivers/spi/spi-sprd-adi.c": {
     "source_sha256": "5874f7acf95f7b8d074907389f9f97f37258a31f53baaa1e116be4942263d8ee",
     "sha256": "6ee3b43cf1e7e6caad877f9bae5c4eb8b8b167e5a7fd3eef51d6e0cdb65ebcd9",
     "reason": "Restore the actual MU5358 and MU3356 stock ADI restart preparation: priority 130 before PSCI 129, UMP9650 POR reset reason at 0x21d4, normal restart 0x40, preserve secure reasons 2/4 and upper byte. Gate on UMS9632 and stock sprd,psci-reboot=1. Continue to PSCI without arming a watchdog or altering poweroff."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/aic8800/aic8800_fdrv/aicwf_sdio.c": {
+    "source_sha256": "e8fdab7cc2c01bf61ec5ebd81780503758b6c95c74087f38f259a2b8b49dfb25",
+    "sha256": "d54f70b5007b3ca922cbb82a0a87b6f72af1bc0fb1092f342e57ee79905f25f0",
+    "reason": "Adapt the AIC aggregate-writer idea from 33333s/U30pro-openwrt ff4f4906e755b7e9286c2963d9f27e11b2dadccb to per-device bounded queues, byte-accurate pool protection, ordered command/credit barriers and cancellable lifecycle. Reuse the reserved pool with two extra buffers, block sleep while writes are pending and join owners before freeing. Add atomic SDIO timing/error counters. Preserve existing 204.8 MHz clocks, CPU policy, thermal control, firmware and modem ownership; no QoS boost, affinity pinning or new recovery resets. Backport 08bda84b05889068490655f8e93d6aa649aba95e with per-host activity-triggered tuning, no idle timer, synchronized suspend/remove, bounded scan and complete DLL/DMA rollback. Retune after successful card timing setup; retry only non-destructive credit reads with restored core CRC policy, abort CRC-failed FIFO transfers without replaying partial data. Keep 204.8 MHz, local TX pipeline and dynamic storage/boot contracts."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/aic8800/aic8800_fdrv/aicwf_sdio.h": {
+    "source_sha256": "da33be0244d3accb9868a13c3c3f07e0ed4767587f1d087e73db77f4fde8bc3b",
+    "sha256": "05294259497b7bdecaa28cc72603556c34d08567a027fc9c95cd635f570e323f",
+    "reason": "Adapt the AIC aggregate-writer idea from 33333s/U30pro-openwrt ff4f4906e755b7e9286c2963d9f27e11b2dadccb to per-device bounded queues, byte-accurate pool protection, ordered command/credit barriers and cancellable lifecycle. Reuse the reserved pool with two extra buffers, block sleep while writes are pending and join owners before freeing. Add atomic SDIO timing/error counters. Preserve existing 204.8 MHz clocks, CPU policy, thermal control, firmware and modem ownership; no QoS boost, affinity pinning or new recovery resets. Backport 08bda84b05889068490655f8e93d6aa649aba95e with per-host activity-triggered tuning, no idle timer, synchronized suspend/remove, bounded scan and complete DLL/DMA rollback. Retune after successful card timing setup; retry only non-destructive credit reads with restored core CRC policy, abort CRC-failed FIFO transfers without replaying partial data. Keep 204.8 MHz, local TX pipeline and dynamic storage/boot contracts."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/aic8800/aic8800_fdrv/aicwf_txrxif.h": {
+    "source_sha256": "6db30fd80a036e435975869fe6de2ed0fdfbdc9e11111aebed34eef830a2a52c",
+    "sha256": "4980a167bd221d146c4ceb7c601a5d19d40ba8d0a02de2150c673777d2939996",
+    "reason": "Adapt the AIC aggregate-writer idea from 33333s/U30pro-openwrt ff4f4906e755b7e9286c2963d9f27e11b2dadccb to per-device bounded queues, byte-accurate pool protection, ordered command/credit barriers and cancellable lifecycle. Reuse the reserved pool with two extra buffers, block sleep while writes are pending and join owners before freeing. Add atomic SDIO timing/error counters. Preserve existing 204.8 MHz clocks, CPU policy, thermal control, firmware and modem ownership; no QoS boost, affinity pinning or new recovery resets."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/aic8800/aic8800_fdrv/aicwf_txrxif.c": {
+    "source_sha256": "ad7f7ef34daa5ecfeca4cc438a362976b165660df75a3ccdc0b5e34ecf0db1e5",
+    "sha256": "4770884edb6a6a1450ba96b380365f229ad93ef4679dc1fe1af5f09650089ed0",
+    "reason": "Quiesce and join AIC SDIO TX/RX/IRQ workers before releasing rwnx_hw and the command buffer, so the aggregate writer lifecycle cannot outlive its transport/platform owners. RX buffer cleanup remains in its existing owner. Preserve data/firmware protocols and normal startup. Check every worker start immediately and propagate its error; clear the released SDIO platform pointer so nested failure cleanup cannot free it twice."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/aic8800/aic8800_bsp/aicsdio.c": {
+    "source_sha256": "656a5b34ca03de7826836ff1a4e69f3bd7bd65b4cbd84f5dea88d5196adee6d7",
+    "sha256": "d66b29979489adc07a4bb46e94a673c16b29eabaac20f0a336d7d1afa6dfc19f",
+    "reason": " Backport 08bda84b05889068490655f8e93d6aa649aba95e with per-host activity-triggered tuning, no idle timer, synchronized suspend/remove, bounded scan and complete DLL/DMA rollback. Retune after successful card timing setup; retry only non-destructive credit reads with restored core CRC policy, abort CRC-failed FIFO transfers without replaying partial data. Keep 204.8 MHz, local TX pipeline and dynamic storage/boot contracts."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_priv.h": {
+    "source_sha256": "170e0e051abc46288fd2825d334e3c75f7872576f469675d46677d1276f6c48b",
+    "sha256": "403c5b7c507d4d246cfcb72bfded578a9bb16243d700d185af2e9cc46329e8fd",
+    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_skb_send.c": {
+    "source_sha256": "07ea3ab9f900c76c9dd3b60afe01904b965b5e5a65c93acdb5c8d26a30f0e57c",
+    "sha256": "215fc802ee611aaf3d417e408000948ef688f415e4e318004dda4646ccaa0ecf",
+    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_nic.c": {
+    "source_sha256": "4800a5aafc668858d402c15714819eebab78d787cc2b019160c3152ac037ecff",
+    "sha256": "84c6e923accb92bbcb204f0f82faab3e6b9a8db6b3dcab33eeb1ec82b1ca025d",
+    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_eth.c": {
+    "source_sha256": "7649c43991af5944d499bd70513e67147e9b2297d25a3908d23e5ee8c9aafe45",
+    "sha256": "2dac67c8933d0c9923f17a6d4d6e12d4b6cd840a877a648f0a9b4621ecd4b927",
+    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_usb.c": {
+    "source_sha256": "68c00c89e9e323b351aa3d4d53caa29e04e3f57b3645f087ad68643f208115f5",
+    "sha256": "0fca04995d00954ec0cf174a86de8895b533dcbe1dc29231c3ce8607b98b1cd4",
+    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on."
   }
 }

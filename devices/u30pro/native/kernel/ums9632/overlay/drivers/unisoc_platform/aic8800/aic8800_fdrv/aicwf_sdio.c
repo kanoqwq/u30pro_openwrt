@@ -47,6 +47,9 @@
 #include <linux/sched.h>
 #include "rwnx_msg_rx.h"
 #include "aic_bsp_export.h"
+#include "aicwf_txpipe.h"
+#include "../../../mmc/core/card.h"
+#include "aicwf_sdio_recovery.h"
 extern uint8_t scanning;
 
 #ifdef CONFIG_SDIO_ADMA
@@ -72,8 +75,59 @@ struct proc_dir_entry *wifi_suspend_node;
 
 #endif//CONFIG_GPIO_WAKEUP
 
-int tx_aggr_counter = 32; //32
-module_param_named(tx_aggr_counter, tx_aggr_counter, int, 0644);
+int tx_aggr_counter = AICWF_AGGR_MAX;
+
+static int tx_aggr_set(const char *value, const struct kernel_param *kp)
+{
+	int requested, ret = kstrtoint(value, 0, &requested);
+
+	if (ret)
+		return ret;
+	if (requested <= DATA_FLOW_CTRL_THRESH || requested > AICWF_AGGR_MAX)
+		return -ERANGE;
+	WRITE_ONCE(*(int *)kp->arg, requested);
+	return 0;
+}
+
+static const struct kernel_param_ops tx_aggr_ops = {
+	.set = tx_aggr_set, .get = param_get_int,
+};
+module_param_cb(tx_aggr_counter, &tx_aggr_ops, &tx_aggr_counter, 0644);
+
+#ifndef CONFIG_SDIO_ADMA
+/* Chosen at module load, before pools/threads exist; no live backend switch. */
+static bool tx_pipeline = true;
+module_param(tx_pipeline, bool, 0444);
+MODULE_PARM_DESC(tx_pipeline, "Pipeline aggregate preparation and SDIO writes");
+#endif
+
+static atomic64_t st_wr = ATOMIC64_INIT(0), st_bytes = ATOMIC64_INIT(0);
+static atomic64_t st_wr_ns = ATOMIC64_INIT(0), st_wr_err = ATOMIC64_INIT(0);
+static atomic64_t st_fc = ATOMIC64_INIT(0), st_fc_ns = ATOMIC64_INIT(0);
+static atomic64_t st_fc_wait = ATOMIC64_INIT(0), st_fc_err = ATOMIC64_INIT(0);
+static atomic64_t st_aggr = ATOMIC64_INIT(0), st_pkts = ATOMIC64_INIT(0);
+static atomic64_t st_bounds = ATOMIC64_INIT(0);
+
+static int sdio_stats_get(char *buf, const struct kernel_param *kp)
+{
+	return scnprintf(buf, PAGE_SIZE,
+		"writes %lld bytes %lld write_us %llu write_errors %lld "
+		"fc_reads %lld fc_us %llu fc_waits %lld fc_errors %lld "
+		"aggr %lld aggr_pkts %lld bounds_drops %lld\n",
+		atomic64_read(&st_wr), atomic64_read(&st_bytes),
+		div_u64(atomic64_read(&st_wr_ns), 1000), atomic64_read(&st_wr_err),
+		atomic64_read(&st_fc), div_u64(atomic64_read(&st_fc_ns), 1000),
+		atomic64_read(&st_fc_wait), atomic64_read(&st_fc_err),
+		atomic64_read(&st_aggr), atomic64_read(&st_pkts),
+		atomic64_read(&st_bounds));
+}
+static const struct kernel_param_ops sdio_stats_ops = { .get = sdio_stats_get };
+module_param_cb(sdio_stats, &sdio_stats_ops, NULL, 0444);
+
+static int aicwf_txpipe_send(void *context, struct skb_buff_pool *pool)
+{
+	return aicwf_sdio_txpkt(context, pool);
+}
 
 #ifdef CONFIG_PLATFORM_ZTE
 int wifi_wk_host_gpio;
@@ -122,7 +176,10 @@ int aicwf_sdio_readb(struct aic_sdio_dev *sdiodev, uint regaddr, u8 *val)
 {
 	int ret;
 	sdio_claim_host(sdiodev->func);
-	*val = sdio_readb(sdiodev->func, regaddr, &ret);
+	if (regaddr == sdiodev->sdio_reg.flow_ctrl_reg)
+		ret = aicwf_sdio_read_credit(sdiodev, regaddr, val);
+	else
+		*val = sdio_readb(sdiodev->func, regaddr, &ret);
 	sdio_release_host(sdiodev->func);
 	return ret;
 }
@@ -326,10 +383,19 @@ int aicwf_sdio_flow_ctrl_msg(struct aic_sdio_dev *sdiodev)
     int ret = -1;
     u8 fc_reg = 0;
     u32 count = 0;
+	int error = aicwf_txpipe_drain(sdiodev->tx_priv->tx_pipe);
+	u64 t0;
+
+	if (error)
+		return error;
 
     while (true) {
+		t0 = ktime_get_ns();
         ret = aicwf_sdio_readb(sdiodev, sdiodev->sdio_reg.flow_ctrl_reg, &fc_reg);
+		atomic64_inc(&st_fc);
+		atomic64_add(ktime_get_ns() - t0, &st_fc_ns);
         if (ret) {
+			atomic64_inc(&st_fc_err);
             return -1;
         }
 
@@ -340,11 +406,10 @@ int aicwf_sdio_flow_ctrl_msg(struct aic_sdio_dev *sdiodev)
 
         if (fc_reg != 0) {
             ret = fc_reg;
-            if(ret > tx_aggr_counter){
-				ret = tx_aggr_counter;
-			}
+            ret = min(ret, READ_ONCE(tx_aggr_counter));
             return ret;
         } else {
+			atomic64_inc(&st_fc_wait);
             if (count >= FLOW_CTRL_RETRY_COUNT) {
                 ret = -fc_reg;
                 break;
@@ -368,10 +433,19 @@ int aicwf_sdio_flow_ctrl(struct aic_sdio_dev *sdiodev)
     int ret = -1;
     u8 fc_reg = 0;
     u32 count = 0;
+	int error = aicwf_txpipe_drain(sdiodev->tx_priv->tx_pipe);
+	u64 t0;
+
+	if (error)
+		return error;
 
     while (true) {
+		t0 = ktime_get_ns();
         ret = aicwf_sdio_readb(sdiodev, sdiodev->sdio_reg.flow_ctrl_reg, &fc_reg);
+		atomic64_inc(&st_fc);
+		atomic64_add(ktime_get_ns() - t0, &st_fc_ns);
         if (ret) {
+			atomic64_inc(&st_fc_err);
             return -1;
         }
 
@@ -382,11 +456,9 @@ int aicwf_sdio_flow_ctrl(struct aic_sdio_dev *sdiodev)
 
         if (fc_reg > DATA_FLOW_CTRL_THRESH) {
             ret = fc_reg;
-        //    if(ret > tx_aggr_counter){
-		//		ret = tx_aggr_counter;
-		//	}
             return ret;
         } else {
+			atomic64_inc(&st_fc_wait);
             if (count >= FLOW_CTRL_RETRY_COUNT) {
                 ret = -fc_reg;
                 break;
@@ -408,10 +480,18 @@ int aicwf_sdio_flow_ctrl(struct aic_sdio_dev *sdiodev)
 int aicwf_sdio_send_pkt(struct aic_sdio_dev *sdiodev, u8 *buf, uint count)
 {
 	int ret = 0;
+	u64 t0 = ktime_get_ns();
 
 	sdio_claim_host(sdiodev->func);
 	ret = sdio_writesb(sdiodev->func, sdiodev->sdio_reg.wr_fifo_addr, buf, count);
+	if (ret) aicwf_sdio_fifo_error(sdiodev->func, ret);
 	sdio_release_host(sdiodev->func);
+	atomic64_inc(&st_wr);
+	atomic64_add(ktime_get_ns() - t0, &st_wr_ns);
+	if (ret)
+		atomic64_inc(&st_wr_err);
+	else
+		atomic64_add(count, &st_bytes);
 
 	return ret;
 }
@@ -428,6 +508,7 @@ int aicwf_sdio_recv_pkt(struct aic_sdio_dev *sdiodev, struct rx_buff *rxbuff,
 
     sdio_claim_host(sdiodev->func);
     ret = sdio_readsb(sdiodev->func, rxbuff->data, sdiodev->sdio_reg.rd_fifo_addr, size);
+    if (ret) aicwf_sdio_fifo_error(sdiodev->func, ret);
     sdio_release_host(sdiodev->func);
 
 	if (ret < 0) {
@@ -449,6 +530,7 @@ int aicwf_sdio_recv_pkt(struct aic_sdio_dev *sdiodev, struct sk_buff *skbbuf,
 
     sdio_claim_host(sdiodev->func);
     ret = sdio_readsb(sdiodev->func, skbbuf->data, sdiodev->sdio_reg.rd_fifo_addr, size);
+    if (ret) aicwf_sdio_fifo_error(sdiodev->func, ret);
     sdio_release_host(sdiodev->func);
 
 	if (ret < 0) {
@@ -1417,7 +1499,9 @@ int aicwf_sdio_sleep_allow(struct aic_sdio_dev *sdiodev)
 	sdio_info("sleep: %d, %d\n", sdiodev->state, scanning);
 	if (sdiodev->state == SDIO_ACTIVE_ST  && !scanning && !rwnx_hw->is_p2p_alive \
 		&& !rwnx_hw->is_p2p_connected && (int)(atomic_read(&sdiodev->tx_priv->tx_pktcnt) <= 0) \
-		&& (sdiodev->tx_priv->cmd_txstate == false) && (int)(atomic_read(&sdiodev->rx_priv->rx_cnt) == 0)) {
+		&& (sdiodev->tx_priv->cmd_txstate == false) && (int)(atomic_read(&sdiodev->rx_priv->rx_cnt) == 0)
+		&& !aicwf_txpipe_busy(sdiodev->tx_priv->tx_pipe)
+		&& !atomic_read(&sdiodev->tx_priv->aggr_count)) {
 		AICWFDBG(LOGSDPWRC, "%s s\n", __func__);
 		if (sdiodev->chipid == PRODUCT_ID_AIC8800D80 || sdiodev->chipid == PRODUCT_ID_AIC8800D80X2) {
 			if (aicwf_sdio_writeb(sdiodev, sdiodev->sdio_reg.wakeup_reg, 0x02) < 0) {
@@ -1524,6 +1608,11 @@ int aicwf_sdio_txpkt(struct aic_sdio_dev *sdiodev, struct skb_buff_pool * buf_po
 	//len = pkt->len;
 	frame = buf_pool->data;
 	len = buf_pool->len;
+	if (!len || len > buf_pool->size || !buf_pool->end ||
+	    buf_pool->end < frame || len > buf_pool->end - frame ||
+	    roundup(len, SDIOWIFI_FUNC_BLOCKSIZE) >
+		min_t(size_t, buf_pool->size, buf_pool->end - frame))
+		return -EMSGSIZE;
 	len = (len + SDIOWIFI_FUNC_BLOCKSIZE - 1) / SDIOWIFI_FUNC_BLOCKSIZE * SDIOWIFI_FUNC_BLOCKSIZE;
 
 	ret = aicwf_sdio_send_pkt(sdiodev, buf_pool->data,len); //pkt->data, len);
@@ -1786,6 +1875,8 @@ static void aicwf_sdio_bus_stop(struct device *dev)
 	AICWFDBG(LOGINFO, "%s Enter\n", __func__);
 
 	bus_if->state = BUS_DOWN_ST;
+	if (sdiodev->tx_priv)
+		aicwf_txpipe_cancel(sdiodev->tx_priv->tx_pipe);
 	if (sdiodev->tx_priv) {
 		ret = down_interruptible(&sdiodev->tx_priv->txctl_sema);
 		if (ret)
@@ -1876,6 +1967,10 @@ static int aicwf_sdio_tx_msg(struct aic_sdio_dev *sdiodev)
 	int adjust_len = 0;
 	int buffer_cnt = 0;
 	u8 retry = 0;
+
+	err = aicwf_txpipe_drain(sdiodev->tx_priv->tx_pipe);
+	if (err)
+		return err;
 
 	len = payload_len;
 	if ((len % TX_ALIGNMENT) != 0) {
@@ -1972,6 +2067,12 @@ static void aicwf_sdio_tx_process(struct aic_sdio_dev *sdiodev)
 		up(&sdiodev->tx_priv->txctl_sema);
 		if (waitqueue_active(&sdiodev->tx_priv->cmd_txdone_wait))
 			wake_up(&sdiodev->tx_priv->cmd_txdone_wait);
+		if (aicwf_txpipe_error(sdiodev->tx_priv->tx_pipe)) {
+			WRITE_ONCE(sdiodev->bus_if->state, BUS_DOWN_ST);
+			if (err != -ESHUTDOWN)
+				dev_err(sdiodev->dev, "SDIO command blocked by failed TX pipeline: %d\n", err);
+			return;
+		}
 	}
 
 	//data
@@ -1989,6 +2090,10 @@ static void aicwf_sdio_tx_process(struct aic_sdio_dev *sdiodev)
 
 	if (!aicwf_is_framequeue_empty(&sdiodev->tx_priv->txq)){
 		sdiodev->tx_priv->fw_avail_bufcnt = aicwf_sdio_flow_ctrl(sdiodev);
+		if (sdiodev->tx_priv->fw_avail_bufcnt < 0) {
+			err = sdiodev->tx_priv->fw_avail_bufcnt;
+			goto tx_done;
+		}
 	}
 	while (!aicwf_is_framequeue_empty(&sdiodev->tx_priv->txq)) {
 		if(sdiodev->bus_if->state != BUS_UP_ST) {
@@ -2003,14 +2108,33 @@ static void aicwf_sdio_tx_process(struct aic_sdio_dev *sdiodev)
         	    if (sdiodev->tx_priv->cmd_txstate)
                 	break;
             	    sdiodev->tx_priv->fw_avail_bufcnt = aicwf_sdio_flow_ctrl(sdiodev);
+				if (sdiodev->tx_priv->fw_avail_bufcnt < 0) {
+					err = sdiodev->tx_priv->fw_avail_bufcnt;
+					break;
+				}
         	} else {
             		if (sdiodev->tx_priv->cmd_txstate) {
-                		aicwf_sdio_send(sdiodev->tx_priv, 1);
+					err = aicwf_sdio_send(sdiodev->tx_priv, 1);
                 		break;
             		} else {
-                		aicwf_sdio_send(sdiodev->tx_priv, 0);
+					err = aicwf_sdio_send(sdiodev->tx_priv, 0);
+					if (err)
+						break;
             		}
         	}
+	}
+	if (!err && atomic_read(&sdiodev->tx_priv->aggr_count)) {
+		sdiodev->tx_priv->fw_avail_bufcnt -=
+			atomic_read(&sdiodev->tx_priv->aggr_count);
+		err = aicwf_sdio_aggr_send(sdiodev->tx_priv);
+	}
+	if (!err)
+		err = aicwf_txpipe_drain(sdiodev->tx_priv->tx_pipe);
+tx_done:
+	if (err && aicwf_txpipe_error(sdiodev->tx_priv->tx_pipe)) {
+		WRITE_ONCE(sdiodev->bus_if->state, BUS_DOWN_ST);
+		if (err != -ESHUTDOWN)
+			dev_err(sdiodev->dev, "SDIO TX pipeline stopped: %d\n", err);
 	}
 
 #ifdef CONFIG_TX_NETIF_FLOWCTRL
@@ -2126,6 +2250,7 @@ static int aicwf_sdio_bus_txmsg(struct device *dev, u8 *msg, uint msglen)
 int aicwf_sdio_send(struct aicwf_tx_priv *tx_priv, u8 txnow)
 {
 	struct sk_buff *pkt;
+	int ret;
 	struct aic_sdio_dev *sdiodev = tx_priv->sdiodev;
 	u32 aggr_len = 0;
 #ifdef CONFIG_TX_NETIF_FLOWCTRL
@@ -2153,10 +2278,11 @@ int aicwf_sdio_send(struct aicwf_tx_priv *tx_priv, u8 txnow)
 		return 0;
 	}
 
-	if (atomic_read(&tx_priv->aggr_count) == ((tx_priv->fw_avail_bufcnt>tx_aggr_counter?tx_aggr_counter:tx_priv->fw_avail_bufcnt) - DATA_FLOW_CTRL_THRESH)) {//(tx_priv->fw_avail_bufcnt - DATA_FLOW_CTRL_THRESH)) {
+	if (atomic_read(&tx_priv->aggr_count) >=
+	    min(tx_priv->fw_avail_bufcnt, READ_ONCE(tx_aggr_counter)) - DATA_FLOW_CTRL_THRESH) {
 		if (atomic_read(&tx_priv->aggr_count) > 0) {
 			tx_priv->fw_avail_bufcnt -= atomic_read(&tx_priv->aggr_count);
-			aicwf_sdio_aggr_send(tx_priv); //send and check the next pkt;
+			return aicwf_sdio_aggr_send(tx_priv);
 		}
 		return 0;
 	} else {
@@ -2187,20 +2313,51 @@ int aicwf_sdio_send(struct aicwf_tx_priv *tx_priv, u8 txnow)
 		if (tx_priv == NULL || tx_priv->tail == NULL || pkt == NULL)
 			txrx_err("null error\n");
 #endif
-		if (aicwf_sdio_aggr(tx_priv, pkt)) {
-			aicwf_sdio_aggrbuf_reset(tx_priv);
-			sdio_err("add aggr pkts failed!\n");
+		ret = aicwf_sdio_aggr(tx_priv, pkt);
+#ifndef CONFIG_SDIO_ADMA
+		/* A large frame may exhaust bytes before the packet-count limit.
+		 * Flush the intact aggregate and refresh credits before retrying it.
+		 */
+		if (ret == -ENOSPC && atomic_read(&tx_priv->aggr_count)) {
+			tx_priv->fw_avail_bufcnt -= atomic_read(&tx_priv->aggr_count);
+			ret = aicwf_sdio_aggr_send(tx_priv);
+			if (!ret) {
+				tx_priv->fw_avail_bufcnt = aicwf_sdio_flow_ctrl(sdiodev);
+				if (tx_priv->fw_avail_bufcnt > DATA_FLOW_CTRL_THRESH)
+					ret = aicwf_sdio_aggr(tx_priv, pkt);
+				else
+					ret = tx_priv->fw_avail_bufcnt < 0 ?
+						tx_priv->fw_avail_bufcnt : -EAGAIN;
+			}
+		}
+#endif
+		if (ret) {
+			struct rwnx_txhdr *txhdr = (struct rwnx_txhdr *)pkt->data;
+			int headroom = txhdr->sw_hdr->headroom;
+
+			/* aggr() leaves the packet untouched on a bounds failure. */
+			kmem_cache_free(txhdr->sw_hdr->rwnx_vif->rwnx_hw->sw_txhdr_cache,
+					txhdr->sw_hdr);
+			if (headroom <= pkt->len)
+				skb_pull(pkt, headroom);
+			consume_skb(pkt);
 			atomic_dec(&sdiodev->tx_priv->tx_pktcnt);
-			return 0;
+			if (ret == -ENOSPC || ret == -EMSGSIZE) {
+				atomic64_inc(&st_bounds);
+				return 0;
+			}
+			return ret;
 		}
 
 		//when aggr finish or there is cmd to send, just send this aggr pkt to fw
-		if ((int)atomic_read(&sdiodev->tx_priv->tx_pktcnt) == 1 || txnow || (atomic_read(&tx_priv->aggr_count) == ((tx_priv->fw_avail_bufcnt>tx_aggr_counter?tx_aggr_counter:tx_priv->fw_avail_bufcnt) - DATA_FLOW_CTRL_THRESH))) {//(tx_priv->fw_avail_bufcnt - DATA_FLOW_CTRL_THRESH))) {
+		if ((int)atomic_read(&sdiodev->tx_priv->tx_pktcnt) == 1 || txnow ||
+		    atomic_read(&tx_priv->aggr_count) >=
+			min(tx_priv->fw_avail_bufcnt, READ_ONCE(tx_aggr_counter)) - DATA_FLOW_CTRL_THRESH) {
 			tx_priv->fw_avail_bufcnt -= atomic_read(&tx_priv->aggr_count);
 		//	printk("s:%d",atomic_read(&tx_priv->aggr_count));
-			aicwf_sdio_aggr_send(tx_priv);
+			ret = aicwf_sdio_aggr_send(tx_priv);
 			atomic_dec(&sdiodev->tx_priv->tx_pktcnt);
-			return 0;
+			return ret;
 		} else {
 			atomic_dec(&sdiodev->tx_priv->tx_pktcnt);
 			return 0;
@@ -2280,6 +2437,14 @@ int aicwf_sdio_aggr(struct aicwf_tx_priv *tx_priv, struct sk_buff *pkt)
 	int allign_len = 0;
 	int headroom;
 
+	if (txhdr->sw_hdr->headroom > pkt->len ||
+	    pkt->len - txhdr->sw_hdr->headroom + sizeof(struct txdesc_api) > 0xfff)
+		return -EMSGSIZE;
+	if (!aicwf_aggr_fits(tx_priv->kmal_buf, tx_priv->tail - tx_priv->head,
+		 sizeof(sdio_header) + sizeof(struct txdesc_api) +
+		 pkt->len - txhdr->sw_hdr->headroom + TX_ALIGNMENT - 1))
+		return -ENOSPC;
+
 	sdio_header[0] = ((pkt->len - txhdr->sw_hdr->headroom + sizeof(struct txdesc_api)) & 0xff);
 	sdio_header[1] = (((pkt->len - txhdr->sw_hdr->headroom + sizeof(struct txdesc_api)) >> 8)&0x0f);
 	sdio_header[2] = 0x01; //data
@@ -2327,7 +2492,7 @@ int aicwf_sdio_aggr(struct aicwf_tx_priv *tx_priv, struct sk_buff *pkt)
 	return 0;
 }
 
-void aicwf_sdio_aggr_send(struct aicwf_tx_priv *tx_priv)
+int aicwf_sdio_aggr_send(struct aicwf_tx_priv *tx_priv)
 {
 #ifdef CONFIG_SDIO_ADMA
 	int ret = 0;
@@ -2365,6 +2530,13 @@ void aicwf_sdio_aggr_send(struct aicwf_tx_priv *tx_priv)
 	struct skb_buff_pool *kmal_buf = tx_priv->kmal_buf;
 	int ret = 0;
 	int curr_len = 0;
+	int padded_len;
+
+	if (!aicwf_aggr_fits(kmal_buf, tx_priv->tail - tx_priv->head, 0)) {
+		atomic64_inc(&st_bounds);
+		aicwf_txpipe_fail(tx_priv->tx_pipe, -EMSGSIZE);
+		return -EMSGSIZE;
+	}
 
 	//link tail is necessary
 	curr_len = tx_priv->tail - tx_priv->head;
@@ -2376,13 +2548,26 @@ void aicwf_sdio_aggr_send(struct aicwf_tx_priv *tx_priv)
 	//tx_buf->len = tx_priv->tail - tx_priv->head;
 	//ret = aicwf_sdio_txpkt(tx_priv->sdiodev, tx_buf);
 	kmal_buf->len = tx_priv->tail - tx_priv->head;
-	ret = aicwf_sdio_txpkt(tx_priv->sdiodev, kmal_buf);
+	padded_len = roundup(kmal_buf->len, TXPKT_BLOCKSIZE);
+	memset(tx_priv->tail, 0, padded_len - kmal_buf->len);
+	atomic64_inc(&st_aggr);
+	atomic64_add(atomic_read(&tx_priv->aggr_count), &st_pkts);
+	if (tx_priv->tx_pipe) {
+		ret = aicwf_txpipe_submit(tx_priv->tx_pipe);
+		if (!ret) {
+			tx_priv->kmal_buf = tx_priv->tx_pipe->pool[tx_priv->tx_pipe->fill];
+			tx_priv->head = tx_priv->kmal_buf->data;
+		}
+	} else {
+		ret = aicwf_sdio_txpkt(tx_priv->sdiodev, kmal_buf);
+	}
 	if (ret < 0) {
 		sdio_err("fail to send aggr pkt!\n");
 	}
 #endif/* CONFIG_SDIO_ADMA */
 
 	aicwf_sdio_aggrbuf_reset(tx_priv);
+	return ret;
 }
 
 void aicwf_sdio_aggrbuf_reset(struct aicwf_tx_priv *tx_priv)
@@ -2807,7 +2992,9 @@ static int aicwf_sdio_pwrctl_thread(void *data)
             rwnx_wakeup_lock(sdiodev->rwnx_hw->ws_pwrctrl);
             
 			if ((int)(atomic_read(&sdiodev->tx_priv->tx_pktcnt) <= 0) && (sdiodev->tx_priv->cmd_txstate == false) && \
-					atomic_read(&sdiodev->rx_priv->rx_cnt) == 0)
+					atomic_read(&sdiodev->rx_priv->rx_cnt) == 0 &&
+					!aicwf_txpipe_busy(sdiodev->tx_priv->tx_pipe) &&
+					!atomic_read(&sdiodev->tx_priv->aggr_count))
 				aicwf_sdio_pwr_stctl(sdiodev, SDIO_SLEEP_ST);
 			else
 				aicwf_sdio_pwrctl_timer(sdiodev, sdiodev->active_duration);
@@ -3046,6 +3233,22 @@ void aicwf_sdio_release(struct aic_sdio_dev *sdiodev)
 
 	bus_if = dev_get_drvdata(sdiodev->dev);
 	bus_if->state = BUS_DOWN_ST;
+	/* Cancel producer waits before any bus teardown can wait on TX.
+	 * Join the writer while its SDIO function and interrupt still exist.
+	 */
+	if (sdiodev->tx_priv)
+		aicwf_txpipe_join(sdiodev->tx_priv->tx_pipe);
+	#if defined(CONFIG_SDIO_PWRCTRL)
+	if (sdiodev->pwrctl_tsk) {
+		del_timer_sync(&sdiodev->timer);
+		complete_all(&sdiodev->pwrctrl_trgg);
+		kthread_stop(sdiodev->pwrctl_tsk);
+		sdiodev->pwrctl_tsk = NULL;
+	}
+
+	AICWFDBG(LOGINFO, "%s:pwrctl stopped\n", __func__);
+	#endif
+
 #ifdef CONFIG_OOB
 	if(sdiodev->oob_enable){
 		sdio_claim_host(sdiodev->func);
@@ -3070,21 +3273,26 @@ void aicwf_sdio_release(struct aic_sdio_dev *sdiodev)
 	if (sdiodev->dev)
 		aicwf_bus_deinit(sdiodev->dev);
 
-	if (sdiodev->tx_priv)
+
+	if (sdiodev->tx_priv) {
+		struct aicwf_txpipe *pipe = sdiodev->tx_priv->tx_pipe;
+
+		/* aicwf_bus_deinit has joined the producer before this free. */
+		if (pipe) {
+			sdiodev->tx_priv->kmal_buf = pipe->pool[0];
+			sdiodev->tx_priv->head = sdiodev->tx_priv->tail = pipe->pool[0]->data;
+			sdiodev->tx_priv->tx_pipe = NULL;
+			aicwf_txpipe_destroy(pipe);
+		}
 		aicwf_tx_deinit(sdiodev->tx_priv);
-
-	if (sdiodev->rx_priv)
-		aicwf_rx_deinit(sdiodev->rx_priv);
-
-	#if defined(CONFIG_SDIO_PWRCTRL)
-	if (sdiodev->pwrctl_tsk) {
-		complete_all(&sdiodev->pwrctrl_trgg);
-		kthread_stop(sdiodev->pwrctl_tsk);
-		sdiodev->pwrctl_tsk = NULL;
+		sdiodev->tx_priv = NULL;
 	}
 
-	AICWFDBG(LOGINFO, "%s:pwrctl stopped\n", __func__);
-	#endif
+	if (sdiodev->rx_priv) {
+		aicwf_rx_deinit(sdiodev->rx_priv);
+		sdiodev->rx_priv = NULL;
+	}
+
 
 	if (sdiodev->cmd_mgr.state == RWNX_CMD_MGR_STATE_INITED)
 		rwnx_cmd_mgr_deinit(&sdiodev->cmd_mgr);
@@ -3340,6 +3548,12 @@ int aicwf_sdiov3_func_init(struct aic_sdio_dev *sdiodev)
 		AICWFDBG(LOGINFO, "sdio ready\n");
 	}
 #endif
+	/* 08bda84b: F0 timing setup can shift the sampling window. Request
+	 * retuning after the final successful setup write; preserve host ownership. */
+	sdio_claim_host(sdiodev->func);
+	mmc_retune_needed(host);
+	sdio_release_host(sdiodev->func);
+
 	return ret;
 }
 
@@ -3446,6 +3660,18 @@ void *aicwf_sdio_bus_init(struct aic_sdio_dev *sdiodev)
 	sdiodev->cur_stat = 0;
 #endif
 
+#ifndef CONFIG_SDIO_ADMA
+	if (tx_pipeline) {
+		struct aicwf_txpipe *pipe = aicwf_txpipe_create(tx_priv->kmal_buf,
+				sdiodev, aicwf_txpipe_send);
+
+		if (IS_ERR(pipe)) {
+			dev_err(sdiodev->dev, "SDIO TX pipeline init failed: %ld\n", PTR_ERR(pipe));
+			goto fail;
+		}
+		tx_priv->tx_pipe = pipe;
+	}
+#endif
 	ret = aicwf_bus_init(0, sdiodev->dev);
 	if (ret < 0) {
 		sdio_err("bus init fail\n");

@@ -297,6 +297,7 @@ struct sipa_endpoint {
 };
 
 struct sipa_skb_sender {
+	bool fifo_flowctrl; /* latest hardware flow-control IRQ state */
 	struct device *dev;
 	struct sipa_endpoint *ep;
 	atomic_t left_cnt;
@@ -384,6 +385,8 @@ struct sipa_nic {
 	void *cb_priv;
 	atomic_t status;
 	bool flow_ctrl_status;
+	/* Serializes flow snapshots and their netdev stop/wake callbacks. */
+	spinlock_t flow_lock;
 	bool data_flowctrl;
 	bool rm_flowctrl;
 	struct sk_buff_head rq_skb_list;

@@ -382,10 +382,16 @@ static int sipa_nic_rm_res_request(struct sipa_nic *nic)
 		ret = sipa_rm_request_resource(nic->rm_res.cons);
 		spin_lock_irqsave(&res->lock, flags);
 		res->need_request = false;
-		if (ret == -EINPROGRESS)
-			res->request_in_progress = true;
-		else
+		if (ret != -EINPROGRESS) {
 			res->request_in_progress = false;
+			res->rm_flow_ctrl = 0;
+			if (ret)
+				res->need_request = true;
+		} else if (!res->request_in_progress) {
+			/* GRANTED ran inside request_resource or before this lock.
+			 * Do not overwrite its completion with a stale return code. */
+			ret = 0;
+		}
 
 		spin_unlock_irqrestore(&res->lock, flags);
 	}
@@ -472,95 +478,37 @@ static void sipa_nic_requeue_skb(struct sipa_nic *nic,
 		nic->rq_skb_list.qlen);
 }
 
-/**
- * sipa_nic_tx_rm_flow_ctrl() - notify netdev enter/exit tx
- * rm flow ctrl
- * @nic: nic devices that need to handle events.
- * @flow_ctrl: true or false for enter/exit.
+/* Events are hints, not an ordered stop/wake command stream. A grant can
+ * complete before the TX error path publishes ENTER, and independent FIFO
+ * enter/exit works can run in either order. Snapshot the live causes, combine
+ * them, and keep callback completion in the same per-NIC critical section.
+ * Lock order is flow_lock -> rm_res.lock; RM callbacks drop rm_res.lock before
+ * reaching here. Callbacks only stop/wake the netdev (no synchronous TX).
  */
-static void sipa_nic_tx_rm_flow_ctrl(struct sipa_nic *nic, bool flow_ctrl)
+static void sipa_nic_sync_flow_ctrl(struct sipa_nic *nic)
 {
 	struct sipa_plat_drv_cfg *ipa = sipa_get_ctrl_pointer();
+	unsigned long flags;
+	bool stopped, was_stopped;
 
 	if (!nic || !ipa)
 		return;
-
-	if (!nic->cb)
-		return;
-
-	if (nic->rm_flowctrl && flow_ctrl) {
-		dev_err(ipa->dev, "nic tx already in rm flow ctrl\n");
-		return;
-	}
-
-	if (!nic->rm_flowctrl && !flow_ctrl) {
-		dev_err(ipa->dev, "nic tx already out rm flow ctrl\n");
-		return;
-	}
-
-	if (flow_ctrl) {
-		nic->rm_flowctrl = true;
-		dev_err(ipa->dev, "sipa nic %d tx rm enter flwctl\n",
-			nic->nic_id);
-		nic->cb(nic->cb_priv, SIPA_ENTER_FLOWCTRL, 0);
-	} else {
-		nic->rm_flowctrl = false;
-		dev_info(ipa->dev, "sipa nic %d tx rm leave flwctl\n",
-			nic->nic_id);
-		nic->cb(nic->cb_priv, SIPA_LEAVE_FLOWCTRL, 0);
-	}
-
-	/* rm & data flow ctrl are mutually exclusive */
-	WARN_ON(nic->data_flowctrl && nic->rm_flowctrl);
-}
-
-/**
- * sipa_nic_tx_data_flow_ctrl() - notify netdev enter/exit tx
- * data flow ctrl
- * @nic: nic devices that need to handle events.
- * @flow_ctrl: true or false for enter/exit.
- */
-static void sipa_nic_tx_data_flow_ctrl(struct sipa_nic *nic, bool flow_ctrl)
-{
-	struct sipa_plat_drv_cfg *ipa = sipa_get_ctrl_pointer();
-
-	if (!nic || !ipa)
-		return;
-
-	if (!nic->cb)
-		return;
-
-	if (nic->data_flowctrl && flow_ctrl) {
-		dev_err(ipa->dev, "nic tx already in data flow ctrl\n");
-		return;
-	}
-
-	if (!nic->data_flowctrl && !flow_ctrl) {
-		dev_err(ipa->dev, "nic tx already out data flow ctrl\n");
-		return;
-	}
-
-	if (flow_ctrl) {
-		nic->data_flowctrl = true;
-		dev_err(ipa->dev, "sipa nic %d tx data enter flwctl\n",
-			nic->nic_id);
-		nic->cb(nic->cb_priv, SIPA_ENTER_FLOWCTRL, 0);
-	} else {
-		nic->data_flowctrl = false;
-		dev_info(ipa->dev, "sipa nic %d tx data leave flwctl\n",
-			 nic->nic_id);
-		nic->cb(nic->cb_priv, SIPA_LEAVE_FLOWCTRL, 0);
-
-		/* Asynchronous executions is required to
-		 * avoid rm release dead locks, and return
-		 * SKB needs to be sent immediately after
-		 * wake up queue to activate TCP to send data
-		 */
+	spin_lock_irqsave(&nic->flow_lock, flags);
+	if (atomic_read(&nic->status) != NIC_OPEN || !nic->cb)
+		goto out;
+	was_stopped = nic->data_flowctrl || nic->rm_flowctrl;
+	spin_lock(&nic->rm_res.lock);
+	nic->rm_flowctrl = nic->rm_res.rm_flow_ctrl;
+	spin_unlock(&nic->rm_res.lock);
+	nic->data_flowctrl = READ_ONCE(ipa->sender->fifo_flowctrl);
+	stopped = nic->data_flowctrl || nic->rm_flowctrl;
+	/* Reconcile even duplicate hints. Never let a cached flag suppress the
+	 * final wakeup; the netdev callback itself is idempotent. */
+	nic->cb(nic->cb_priv, stopped ? SIPA_ENTER_FLOWCTRL : SIPA_LEAVE_FLOWCTRL, 0);
+	if (was_stopped && !stopped)
 		schedule_work(&nic->tx_again_work);
-	}
-
-	/* rm & data flow ctrl are mutually exclusive */
-	WARN_ON(nic->data_flowctrl && nic->rm_flowctrl);
+out:
+	spin_unlock_irqrestore(&nic->flow_lock, flags);
 }
 
 /**
@@ -578,16 +526,16 @@ void sipa_nic_handle_evt(struct sipa_nic *nic, enum sipa_nic_evt_type evt,
 
 	switch (evt) {
 	case NIC_ENTER_DATA_FLWCTL:
-		sipa_nic_tx_data_flow_ctrl(nic, true);
+		sipa_nic_sync_flow_ctrl(nic);
 		break;
 	case NIC_LEAVE_DATA_FLWCTL:
-		sipa_nic_tx_data_flow_ctrl(nic, false);
+		sipa_nic_sync_flow_ctrl(nic);
 		break;
 	case NIC_ENTER_RM_FLWCTL:
-		sipa_nic_tx_rm_flow_ctrl(nic, true);
+		sipa_nic_sync_flow_ctrl(nic);
 		break;
 	case NIC_LEAVE_RM_FLWCTL:
-		sipa_nic_tx_rm_flow_ctrl(nic, false);
+		sipa_nic_sync_flow_ctrl(nic);
 		break;
 	case NIC_REQUEUE_SKB:
 		sipa_nic_requeue_skb(nic, netid, dst, data);
@@ -686,6 +634,8 @@ int sipa_nic_open(enum sipa_term_type src, int netid,
 		nic = kzalloc(sizeof(*nic), GFP_KERNEL);
 		if (!nic)
 			return -ENOMEM;
+		spin_lock_init(&nic->flow_lock);
+		atomic_set(&nic->status, NIC_CLOSE);
 		ipa->nic[nic_id] = nic;
 	}
 
@@ -800,6 +750,10 @@ void sipa_nic_close(enum sipa_nic_id nic_id)
 	}
 	spin_unlock_irqrestore(&ipa->mode_lock, flags);
 
+	spin_lock_irqsave(&nic->flow_lock, flags);
+	atomic_set(&nic->status, NIC_CLOSE);
+	spin_unlock_irqrestore(&nic->flow_lock, flags);
+
 	ret = cancel_work_sync(&nic->tx_again_work);
 	if (ret)
 		dev_err(ipa->dev, "some skb still wait for resend\n");
@@ -811,7 +765,6 @@ void sipa_nic_close(enum sipa_nic_id nic_id)
 	for (i = 0; i < len; i++)
 		dev_kfree_skb_any(skb_dequeue(&nic->rq_skb_list));
 
-	atomic_set(&nic->status, NIC_CLOSE);
 	sipa_nic_deregister_rm(nic, nic_id);
 
 	sender = ipa->sender;

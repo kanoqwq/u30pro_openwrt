@@ -12,6 +12,10 @@
 #include <linux/iopoll.h>
 #include <linux/mmc/host.h>
 #include <linux/mmc/mmc.h>
+#include <linux/mmc/sdio.h>
+#include <linux/mutex.h>
+#include <linux/thermal.h>
+#include <linux/workqueue.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/pinctrl/consumer.h>
@@ -23,6 +27,7 @@
 #include <linux/regmap.h>
 #include <dt-bindings/clock/sprd,ums9632-clk.h>
 #include "../core/card.h"
+#include "../core/sdio_ops.h"
 
 #include "sdhci-pltfm.h"
 #include "mmc_hsq.h"
@@ -83,7 +88,28 @@
 #define SDHCI_SPRD_POSRD_DLY_MASK	GENMASK(23, 16)
 #define SDHCI_SPRD_CPST_EN		GENMASK(27, 24)
 
+/* Adapted from 33333s/U30pro-openwrt 08bda84b. Per-host state, no idle timer. */
+#define SDIO_T_NONE INT_MIN
+enum { SDIO_TUNE_INIT, SDIO_TUNE_TEMP, SDIO_TUNE_PERIOD,
+       SDIO_TUNE_REQUEST, SDIO_TUNE_DRIVER, SDIO_TUNE_WHY };
+static const char * const sdio_tune_why[] = {
+    "init", "temperature", "period", "request", "driver"
+};
+struct sdhci_sprd_sdio_tune {
+    struct work_struct work;
+    struct sdhci_host *host;
+    struct mutex state_lock;
+    spinlock_t events_lock;
+    bool active, suspended, valid;
+    unsigned long last_req, next_check, tuned_at, pending_since;
+    int pending, want, t_tuned[2], t_now[2];
+    unsigned int clock, hz, dll_cnt, start, width, step, phase, narrowest;
+    char map[512];
+    unsigned int sweeps, sweep_us, checks, kept, check_us, failed, count[SDIO_TUNE_WHY];
+};
+
 struct sdhci_sprd_host {
+	struct sdhci_sprd_sdio_tune tune;
 	bool r11p3_trial;
 	bool sdio_host;	/* R11P3 host that only carries SDIO (no-sd, no-mmc: the AIC8800 Wi-Fi), bus mode from sdio_mode */
 	unsigned int sdio_f_uhs;	/* its highest clock in the UHS-I modes */
@@ -307,6 +333,8 @@ static void sdhci_sprd_enable_phy_dll(struct sdhci_host *host)
 static unsigned int sdio_mode;
 static unsigned int sdio_max_hz;
 static struct sdhci_host *sdio_mode_host;
+static DEFINE_MUTEX(sdio_control_lock);
+static void sdhci_sprd_sdio_activity(struct mmc_host *mmc);
 
 static void sdhci_sprd_set_clock(struct sdhci_host *host, unsigned int clock)
 {
@@ -613,9 +641,11 @@ static int sdhci_sprd_sdio_param_set(const char *val, const struct kernel_param 
 		return ret;
 	if (kp->arg == &sdio_mode && v > 3)
 		return -EINVAL;
-	*(unsigned int *)kp->arg = v;
+	mutex_lock(&sdio_control_lock);
+	WRITE_ONCE(*(unsigned int *)kp->arg, v);
 	if (sdio_mode_host)
 		sdhci_sprd_sdio_apply(sdio_mode_host);
+	mutex_unlock(&sdio_control_lock);
 	return 0;
 }
 
@@ -811,6 +841,7 @@ static void sdhci_sprd_trial_init_card(struct mmc_host *mmc, struct mmc_card *ca
 
 static void sdhci_sprd_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
+	sdhci_sprd_sdio_activity(mmc);
 	if (sdhci_sprd_trial_reject(mmc, mrq))
 		return;
 	sdhci_sprd_check_auto_cmd23(mmc, mrq);
@@ -821,6 +852,7 @@ static void sdhci_sprd_request(struct mmc_host *mmc, struct mmc_request *mrq)
 static int sdhci_sprd_request_atomic(struct mmc_host *mmc,
 				     struct mmc_request *mrq)
 {
+	sdhci_sprd_sdio_activity(mmc);
 	if (sdhci_sprd_trial_reject(mmc, mrq))
 		return 0;
 	sdhci_sprd_check_auto_cmd23(mmc, mrq);
@@ -1045,91 +1077,357 @@ static int sdhci_sprd_execute_sd_hs_data_tuning(struct mmc_host *mmc, struct mmc
  * first ones, so a step counts when both pass.  The middle of the longest passing run, as a phase of 256 with compensation on,
  * becomes the delay of SDR104.  Other timings keep the standard path (SDR50 works without tuning).
  */
+static unsigned int sdio_retune_mc = 10000, sdio_retune_s = 1800;
+static unsigned int sdio_retune_defer_ms = 10000;
+module_param(sdio_retune_mc, uint, 0644);
+module_param(sdio_retune_s, uint, 0644);
+module_param(sdio_retune_defer_ms, uint, 0644);
+MODULE_PARM_DESC(sdio_retune_mc, "SDR104 temperature change threshold in mC (0 disables)");
+MODULE_PARM_DESC(sdio_retune_s, "SDR104 retune interval during bus activity (seconds, 0 disables)");
+MODULE_PARM_DESC(sdio_retune_defer_ms, "Maximum active-traffic deferral before requesting a retune");
+
+static void sdhci_sprd_sdio_temperatures(int out[2])
+{
+    static const char * const names[] = { "wcn-thmzone", "soc-thmzone" };
+    int i, n, mc, previous;
+
+    for (i = 0; i < 2; i++) {
+        struct thermal_zone_device *tz = thermal_zone_get_zone_by_name(names[i]);
+
+        out[i] = SDIO_T_NONE;
+        if (IS_ERR(tz))
+            continue;
+        /* The reference NTC ADC has a transient first reading. Bound settling;
+         * do not accept an unstable final sample, or retain zone pointers. */
+        previous = SDIO_T_NONE;
+        for (n = 0; n < 12; n++) {
+            if (thermal_zone_get_temp(tz, &mc))
+                break;
+            if (previous != SDIO_T_NONE && abs((long)mc - previous) < 500) {
+                out[i] = mc;
+                break;
+            }
+            previous = mc;
+        }
+    }
+}
+
+static void sdhci_sprd_sdio_tune_work(struct work_struct *work)
+{
+    struct sdhci_sprd_sdio_tune *t = container_of(work, struct sdhci_sprd_sdio_tune, work);
+    unsigned long flags, now = jiffies;
+    int values[2], reason = 0, i;
+
+    if (!READ_ONCE(t->active) || READ_ONCE(t->suspended) ||
+        READ_ONCE(t->host->mmc->ios.timing) != MMC_TIMING_UHS_SDR104 ||
+        !READ_ONCE(t->host->mmc->can_retune))
+        return;
+    /* Sensor conversions never run with the MMC host claimed or state locked. */
+    sdhci_sprd_sdio_temperatures(values);
+    mutex_lock(&t->state_lock);
+    if (!READ_ONCE(t->active) || READ_ONCE(t->suspended) || !t->valid ||
+        READ_ONCE(t->host->mmc->ios.timing) != MMC_TIMING_UHS_SDR104 ||
+        !READ_ONCE(t->host->mmc->can_retune))
+        goto out;
+    for (i = 0; i < 2; i++) {
+        t->t_now[i] = values[i];
+        if (t->t_tuned[i] == SDIO_T_NONE)
+            t->t_tuned[i] = values[i];
+        if (READ_ONCE(sdio_retune_mc) && values[i] != SDIO_T_NONE &&
+            t->t_tuned[i] != SDIO_T_NONE &&
+            abs((long)values[i] - t->t_tuned[i]) >= READ_ONCE(sdio_retune_mc))
+            reason = SDIO_TUNE_TEMP;
+    }
+    if (!reason && READ_ONCE(sdio_retune_s) &&
+        time_after_eq(now, t->tuned_at + (unsigned long)READ_ONCE(sdio_retune_s) * HZ))
+        reason = SDIO_TUNE_PERIOD;
+    spin_lock_irqsave(&t->events_lock, flags);
+    if (reason && t->active && !t->suspended && !t->pending && !READ_ONCE(t->want)) {
+        t->pending = reason;
+        t->pending_since = now;
+    }
+    spin_unlock_irqrestore(&t->events_lock, flags);
+out:
+    mutex_unlock(&t->state_lock);
+    /* No self-requeue: an idle or suspended device has no periodic wakeups. */
+}
+
+static void sdhci_sprd_sdio_activity(struct mmc_host *mmc)
+{
+    struct sdhci_host *host = mmc_priv(mmc);
+    struct sdhci_sprd_host *sprd = TO_SPRD_HOST(host);
+    struct sdhci_sprd_sdio_tune *t = &sprd->tune;
+    unsigned long flags, previous, now = jiffies;
+
+    if (!sprd->sdio_host || !READ_ONCE(t->active) || READ_ONCE(t->suspended) ||
+        READ_ONCE(mmc->ios.timing) != MMC_TIMING_UHS_SDR104 || !READ_ONCE(mmc->can_retune))
+        return;
+    previous = READ_ONCE(t->last_req);
+    WRITE_ONCE(t->last_req, now);
+    if (!READ_ONCE(t->pending) && time_before(now, READ_ONCE(t->next_check)))
+        return;
+    spin_lock_irqsave(&t->events_lock, flags);
+    if (!t->active || t->suspended)
+        goto out;
+    if (t->pending && (time_after_eq(now, previous + msecs_to_jiffies(20)) ||
+        time_after_eq(now, t->pending_since + msecs_to_jiffies(READ_ONCE(sdio_retune_defer_ms))))) {
+        WRITE_ONCE(t->want, t->pending);
+        t->pending = 0;
+        mmc_retune_needed(mmc);
+    }
+    if (READ_ONCE(t->valid) && time_after_eq(now, t->next_check)) {
+        t->next_check = now + 5 * HZ;
+        if (READ_ONCE(sdio_retune_mc) || READ_ONCE(sdio_retune_s))
+            schedule_work(&t->work);
+    }
+out:
+    spin_unlock_irqrestore(&t->events_lock, flags);
+}
+
+static void sdhci_sprd_sdio_tune_init(struct sdhci_host *host)
+{
+    struct sdhci_sprd_sdio_tune *t = &((struct sdhci_sprd_host *)TO_SPRD_HOST(host))->tune;
+
+    t->host = host;
+    mutex_init(&t->state_lock);
+    spin_lock_init(&t->events_lock);
+    INIT_WORK(&t->work, sdhci_sprd_sdio_tune_work);
+    t->t_tuned[0] = t->t_tuned[1] = SDIO_T_NONE;
+    t->t_now[0] = t->t_now[1] = SDIO_T_NONE;
+    t->next_check = jiffies + 5 * HZ;
+    WRITE_ONCE(t->active, true);
+}
+
+static void sdhci_sprd_sdio_tune_pause(struct sdhci_host *host, bool stop)
+{
+    struct sdhci_sprd_sdio_tune *t = &((struct sdhci_sprd_host *)TO_SPRD_HOST(host))->tune;
+    unsigned long flags;
+
+    if (!t->host)
+        return;
+    spin_lock_irqsave(&t->events_lock, flags);
+    t->suspended = true;
+    if (stop)
+        t->active = false;
+    spin_unlock_irqrestore(&t->events_lock, flags);
+    cancel_work_sync(&t->work);
+}
+
+static void sdhci_sprd_sdio_tune_resume(struct sdhci_host *host)
+{
+    struct sdhci_sprd_sdio_tune *t = &((struct sdhci_sprd_host *)TO_SPRD_HOST(host))->tune;
+    unsigned long flags;
+
+    if (!t->host)
+        return;
+    spin_lock_irqsave(&t->events_lock, flags);
+    if (t->active) {
+        t->suspended = false;
+        t->next_check = jiffies;
+    }
+    spin_unlock_irqrestore(&t->events_lock, flags);
+}
+
+/* Each CMD19 uses the MMC core's own transfer timeout. A vendor DLL sweep
+ * needs up to 1.5 * dll_cnt probes, including expected failing sample points;
+ * the per-command timeout must not be mistaken for a whole-sweep deadline. */
+static int sdhci_sprd_sdio_try(struct sdhci_host *host, u32 opcode, u32 dly,
+                             unsigned int step)
+{
+    u32 mask = SDHCI_SPRD_CMD_DLY_MASK | SDHCI_SPRD_POSRD_DLY_MASK, busy;
+    int error;
+
+    dly = (dly & ~mask) | ((step << 8) & SDHCI_SPRD_CMD_DLY_MASK) |
+          ((step << 16) & SDHCI_SPRD_POSRD_DLY_MASK);
+    sdhci_writel(host, dly, SDHCI_SPRD_REG_32_DLL_DLY);
+    error = mmc_send_tuning(host->mmc, opcode, NULL);
+    if (!error)
+        return 1;
+    read_poll_timeout(sdhci_readl, busy, !(busy & SDHCI_DOING_READ),
+                      USEC_PER_MSEC, 100 * USEC_PER_MSEC, false, host, SDHCI_PRESENT_STATE);
+    sdhci_reset(host, SDHCI_RESET_CMD | SDHCI_RESET_DATA);
+    return 0;
+}
+
 static int sdhci_sprd_sdio_execute_tuning(struct mmc_host *mmc, u32 opcode)
 {
-	struct sdhci_host *host = mmc_priv(mmc);
-	struct sdhci_sprd_host *sprd_host = TO_SPRD_HOST(host);
-	u32 *p = sprd_host->phy_delay;
-	u32 mask = SDHCI_SPRD_CMD_DLY_MASK | SDHCI_SPRD_POSRD_DLY_MASK;
-	u32 dll_cfg, dll_cnt, dly, tmp;
-	unsigned int len, i, run = 0, start = 0, best = 0, best_start = 0, mid, phase;
-	bool adma = false, sdma;
-	u8 *ok;
+    struct sdhci_host *host = mmc_priv(mmc);
+    struct sdhci_sprd_host *sprd = TO_SPRD_HOST(host);
+    struct sdhci_sprd_sdio_tune *t = &sprd->tune;
+    u32 *p = sprd->phy_delay;
+    u32 mask = SDHCI_SPRD_CMD_DLY_MASK | SDHCI_SPRD_POSRD_DLY_MASK;
+    u32 saved_cfg, saved_dly, dll_cfg, dll_cnt;
+    unsigned int len, i, n, run = 0, start = 0, best = 0, best_start = 0, mid, phase;
+    bool adma, sdma, kept = false;
+    unsigned long flags;
+    ktime_t t0;
+    int why, result, error = 0;
+    u8 *ok = NULL;
 
-	if (mmc->ios.timing != MMC_TIMING_UHS_SDR104)
-		return sdhci_execute_tuning(mmc, opcode);
+    if (mmc->ios.timing != MMC_TIMING_UHS_SDR104)
+        return sdhci_execute_tuning(mmc, opcode);
+    mutex_lock(&t->state_lock);
+    t0 = ktime_get();
+    why = xchg(&t->want, 0);
+    if (!mmc->doing_retune)
+        why = SDIO_TUNE_INIT;
+    else if (why <= 0 || why >= SDIO_TUNE_WHY)
+        why = SDIO_TUNE_DRIVER;
+    t->count[why]++;
+    saved_cfg = sdhci_readl(host, SDHCI_SPRD_REG_32_DLL_CFG);
+    saved_dly = sdhci_readl(host, SDHCI_SPRD_REG_32_DLL_DLY);
+    adma = host->flags & SDHCI_USE_ADMA;
+    sdma = host->flags & SDHCI_USE_SDMA;
+    sdhci_reset(host, SDHCI_RESET_CMD | SDHCI_RESET_DATA);
+    dll_cfg = saved_cfg & ~SDHCI_SPRD_CPST_EN;
+    sdhci_writel(host, dll_cfg, SDHCI_SPRD_REG_32_DLL_CFG);
+    dll_cnt = (sdhci_readl(host, SDHCI_SPRD_REG_32_DLL_STS0) & 0xff) << 1;
+    if (!dll_cnt) { error = -EIO; goto restore; }
+    len = dll_cnt * 3 / 2;
+    ok = kcalloc(len, 1, GFP_KERNEL);
+    if (!ok) { error = -ENOMEM; goto restore; }
+    if (adma) {
+        host->flags &= ~SDHCI_USE_ADMA;
+        host->flags |= SDHCI_USE_SDMA;
+    }
+    if (why != SDIO_TUNE_INIT && t->valid && t->dll_cnt == dll_cnt &&
+        t->clock == mmc->ios.clock && t->width >= 4 && t->width < dll_cnt) {
+        unsigned int at[] = { t->start + 1, t->step, t->start + t->width - 2 }, k;
 
-	sdhci_reset(host, SDHCI_RESET_CMD | SDHCI_RESET_DATA);
-	dll_cfg = sdhci_readl(host, SDHCI_SPRD_REG_32_DLL_CFG) & ~SDHCI_SPRD_CPST_EN;
-	sdhci_writel(host, dll_cfg, SDHCI_SPRD_REG_32_DLL_CFG);
-	/* the DLL locks in half mode on R11 */
-	dll_cnt = (sdhci_readl(host, SDHCI_SPRD_REG_32_DLL_STS0) & 0xff) << 1;
-	if (!dll_cnt) {
-		dev_warn(mmc_dev(mmc), "SDIO tuning: DLL count %u\n", dll_cnt);
-		return -EIO;
-	}
-	len = dll_cnt * 3 / 2;
-	ok = kcalloc(len, 1, GFP_KERNEL);
-	if (!ok)
-		return -ENOMEM;
-
-	sdma = host->flags & SDHCI_USE_SDMA;
-	if (host->flags & SDHCI_USE_ADMA) {
-		adma = true;
-		host->flags &= ~SDHCI_USE_ADMA;
-		host->flags |= SDHCI_USE_SDMA;
-	}
-
-	dly = p[mmc->ios.timing];
-	for (i = 0; i < len; i++) {
-		dly = (dly & ~mask) | ((i << 8) & SDHCI_SPRD_CMD_DLY_MASK) | ((i << 16) & SDHCI_SPRD_POSRD_DLY_MASK);
-		sdhci_writel(host, dly, SDHCI_SPRD_REG_32_DLL_DLY);
-		ok[i] = !mmc_send_tuning(mmc, opcode, NULL);
-		if (!ok[i]) {
-			/* a failed read can leave the controller busy: wait for it before the next step */
-			read_poll_timeout(sdhci_readl, tmp, !(tmp & SDHCI_DOING_READ), USEC_PER_MSEC,
-					  100 * USEC_PER_MSEC, false, host, SDHCI_PRESENT_STATE);
-			sdhci_reset(host, SDHCI_RESET_CMD | SDHCI_RESET_DATA);
-		}
-	}
-
-	if (adma)
-		host->flags |= SDHCI_USE_ADMA;
-	if (!sdma)
-		host->flags &= ~SDHCI_USE_SDMA;
-
-	for (i = 0; i + dll_cnt < len; i++)
-		ok[i] = ok[i] && ok[i + dll_cnt];
-	/* the longest run of passing steps, around the end of the range as well */
-	for (i = 0; i < 2 * dll_cnt && best < dll_cnt; i++) {
-		if (!ok[i % dll_cnt]) {
-			run = 0;
-			continue;
-		}
-		if (!run++)
-			start = i;
-		if (run > best) {
-			best = run;
-			best_start = start;
-		}
-	}
-	kfree(ok);
-	if (!best) {
-		sdhci_writel(host, p[mmc->ios.timing], SDHCI_SPRD_REG_32_DLL_DLY);
-		dev_warn(mmc_dev(mmc), "SDIO tuning: no step of %u passes\n", dll_cnt);
-		return -EIO;
-	}
-
-	mid = (best_start + best / 2) % dll_cnt;
-	phase = mid * 256 / dll_cnt;
-	sdhci_writel(host, dll_cfg | SDHCI_SPRD_CPST_EN, SDHCI_SPRD_REG_32_DLL_CFG);
-	p[mmc->ios.timing] = (p[mmc->ios.timing] & ~mask) | ((phase << 8) & SDHCI_SPRD_CMD_DLY_MASK) |
-			     ((phase << 16) & SDHCI_SPRD_POSRD_DLY_MASK);
-	sdhci_writel(host, p[mmc->ios.timing], SDHCI_SPRD_REG_32_DLL_DLY);
-	dev_info(mmc_dev(mmc), "SDIO tuning at %u Hz: %u of %u steps pass from %u, step %u, phase 0x%02x, delay 0x%08x\n",
-		 mmc->ios.clock, best, dll_cnt, best_start % dll_cnt, mid, phase, p[mmc->ios.timing]);
-	return 0;
+        kept = true;
+        for (n = 0; n < 2 && kept; n++)
+            for (i = 0; i < ARRAY_SIZE(at) && kept; i++) {
+                k = at[i] % dll_cnt;
+                result = sdhci_sprd_sdio_try(host, opcode, p[mmc->ios.timing], k);
+                if (result < 0) { error = result; goto restore; }
+                kept = result > 0;
+                if (kept && k + dll_cnt < len) {
+                    result = sdhci_sprd_sdio_try(host, opcode, p[mmc->ios.timing], k + dll_cnt);
+                    if (result < 0) { error = result; goto restore; }
+                    kept = result > 0;
+                }
+            }
+        t->checks++;
+    }
+    if (!kept) {
+        for (i = 0; i < len; i++) {
+            result = sdhci_sprd_sdio_try(host, opcode, p[mmc->ios.timing], i);
+            if (result < 0) { error = result; goto restore; }
+            ok[i] = result > 0;
+        }
+        for (i = 0; i + dll_cnt < len; i++)
+            ok[i] = ok[i] && ok[i + dll_cnt];
+        for (i = 0; i < 2 * dll_cnt && best < dll_cnt; i++) {
+            if (!ok[i % dll_cnt]) { run = 0; continue; }
+            if (!run++) start = i;
+            if (run > best) { best = run; best_start = start; }
+        }
+        t->sweeps++;
+        t->sweep_us = ktime_us_delta(ktime_get(), t0);
+        if (!best) { error = -EIO; goto restore; }
+        mid = (best_start + best / 2) % dll_cnt;
+        phase = mid * 256 / dll_cnt;
+        p[mmc->ios.timing] = (p[mmc->ios.timing] & ~mask) |
+                            ((phase << 8) & SDHCI_SPRD_CMD_DLY_MASK) |
+                            ((phase << 16) & SDHCI_SPRD_POSRD_DLY_MASK);
+        t->clock = mmc->ios.clock;
+        t->hz = mmc->actual_clock;
+        t->dll_cnt = dll_cnt;
+        t->start = best_start % dll_cnt;
+        t->width = best;
+        t->step = mid;
+        t->phase = phase;
+        if (!t->narrowest || best < t->narrowest) t->narrowest = best;
+        for (i = 0; i < dll_cnt; i++) t->map[i] = ok[i] ? '#' : '.';
+        t->map[i] = 0;
+        WRITE_ONCE(t->valid, true);
+        dev_info(mmc_dev(mmc), "SDIO tuning (%s): %u Hz window %u/%u from %u step %u, %u us: %s\n",
+                 sdio_tune_why[why], t->hz, best, dll_cnt, t->start, mid, t->sweep_us, t->map);
+        if (best * 100 < 60 * dll_cnt)
+            dev_warn(mmc_dev(mmc), "SDIO tuning window narrower than 60 percent\n");
+    } else {
+        t->kept++;
+        t->check_us = ktime_us_delta(ktime_get(), t0);
+    }
+    t->tuned_at = jiffies;
+    memcpy(t->t_tuned, t->t_now, sizeof(t->t_tuned));
+    spin_lock_irqsave(&t->events_lock, flags);
+    t->pending = 0;
+    t->next_check = jiffies + 5 * HZ;
+    spin_unlock_irqrestore(&t->events_lock, flags);
+    sdhci_writel(host, dll_cfg | SDHCI_SPRD_CPST_EN, SDHCI_SPRD_REG_32_DLL_CFG);
+    sdhci_writel(host, p[mmc->ios.timing], SDHCI_SPRD_REG_32_DLL_DLY);
+    goto done;
+restore:
+    t->failed++;
+    /* Preserve the complete previous DLL/DMA state on every failure path. */
+    sdhci_writel(host, saved_cfg, SDHCI_SPRD_REG_32_DLL_CFG);
+    sdhci_writel(host, saved_dly, SDHCI_SPRD_REG_32_DLL_DLY);
+    dev_warn(mmc_dev(mmc), "SDIO tuning (%s) failed: %d; previous sample retained\n",
+             sdio_tune_why[why], error);
+done:
+    if (adma) host->flags |= SDHCI_USE_ADMA;
+    if (!sdma) host->flags &= ~SDHCI_USE_SDMA;
+    kfree(ok);
+    mutex_unlock(&t->state_lock);
+    return error;
 }
+
+static int sdhci_sprd_sdio_tuning_get(char *buf, const struct kernel_param *kp)
+{
+    struct sdhci_sprd_sdio_tune *t;
+    int result;
+
+    mutex_lock(&sdio_control_lock);
+    if (!sdio_mode_host) { result = -ENODEV; goto out; }
+    t = &((struct sdhci_sprd_host *)TO_SPRD_HOST(sdio_mode_host))->tune;
+    mutex_lock(&t->state_lock);
+    if (!t->valid)
+        result = sysfs_emit(buf, "not tuned (SDR104 only)\n");
+    else
+        result = sysfs_emit(buf, "clock %u steps %u window %u from %u step %u phase 0x%02x\n"
+            "map %s\ntemp wcn %d soc %d tuned %d %d\n"
+            "sweeps %u checks %u kept %u failed %u sweep_us %u check_us %u\n"
+            "retunes init %u temperature %u period %u request %u driver %u\n",
+            t->hz, t->dll_cnt, t->width, t->start, t->step, t->phase, t->map,
+            t->t_now[0], t->t_now[1], t->t_tuned[0], t->t_tuned[1],
+            t->sweeps, t->checks, t->kept, t->failed, t->sweep_us, t->check_us,
+            t->count[0], t->count[1], t->count[2], t->count[3], t->count[4]);
+    mutex_unlock(&t->state_lock);
+out:
+    mutex_unlock(&sdio_control_lock);
+    return result;
+}
+
+static int sdhci_sprd_sdio_retune_set(const char *val, const struct kernel_param *kp)
+{
+    struct sdhci_sprd_sdio_tune *t;
+    unsigned long flags;
+    int result = -ENODEV;
+
+    mutex_lock(&sdio_control_lock);
+    if (!sdio_mode_host) goto out;
+    t = &((struct sdhci_sprd_host *)TO_SPRD_HOST(sdio_mode_host))->tune;
+    spin_lock_irqsave(&t->events_lock, flags);
+    if (t->active && !t->suspended && READ_ONCE(t->valid) &&
+        READ_ONCE(sdio_mode_host->mmc->can_retune) &&
+        READ_ONCE(sdio_mode_host->mmc->ios.timing) == MMC_TIMING_UHS_SDR104) {
+        WRITE_ONCE(t->want, SDIO_TUNE_REQUEST);
+        t->pending = 0;
+        mmc_retune_needed(sdio_mode_host->mmc);
+        result = 0;
+    }
+    spin_unlock_irqrestore(&t->events_lock, flags);
+out:
+    mutex_unlock(&sdio_control_lock);
+    return result;
+}
+static const struct kernel_param_ops sdio_tuning_ops = { .get = sdhci_sprd_sdio_tuning_get };
+static const struct kernel_param_ops sdio_retune_ops = { .set = sdhci_sprd_sdio_retune_set };
+module_param_cb(sdio_tuning, &sdio_tuning_ops, NULL, 0444);
+module_param_cb(sdio_retune, &sdio_retune_ops, NULL, 0200);
+MODULE_PARM_DESC(sdio_tuning, "Read-only SDR104 window, temperature and recovery telemetry");
+MODULE_PARM_DESC(sdio_retune, "Request SDR104 retuning on the next transfer; no I/O while idle");
 
 static void sdhci_sprd_phy_param_parse(struct sdhci_sprd_host *sprd_host,
 				       struct device_node *np)
@@ -1338,8 +1636,11 @@ static int sdhci_sprd_probe(struct platform_device *pdev)
 	if (sprd_host->sdio_host && !sdio_mode_host) {
 		host->mmc_host_ops.execute_tuning = sdhci_sprd_sdio_execute_tuning;
 		sprd_host->sdio_f_uhs = sdhci_sprd_get_max_clock(host);
+		sdhci_sprd_sdio_tune_init(host);
+		mutex_lock(&sdio_control_lock);
 		sdio_mode_host = host;
 		sdhci_sprd_sdio_apply(host);
+		mutex_unlock(&sdio_control_lock);
 	}
 
 	ret = __sdhci_add_host(host);
@@ -1358,8 +1659,11 @@ static int sdhci_sprd_probe(struct platform_device *pdev)
 	return 0;
 
 err_cleanup_host:
+	mutex_lock(&sdio_control_lock);
 	if (sdio_mode_host == host)
 		sdio_mode_host = NULL;
+	sdhci_sprd_sdio_tune_pause(host, true);
+	mutex_unlock(&sdio_control_lock);
 	sdhci_cleanup_host(host);
 
 pm_runtime_disable:
@@ -1386,8 +1690,11 @@ static void sdhci_sprd_remove(struct platform_device *pdev)
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct sdhci_sprd_host *sprd_host = TO_SPRD_HOST(host);
 
+	mutex_lock(&sdio_control_lock);
 	if (sdio_mode_host == host)
 		sdio_mode_host = NULL;
+	sdhci_sprd_sdio_tune_pause(host, true);
+	mutex_unlock(&sdio_control_lock);
 	sdhci_remove_host(host, 0);
 
 	clk_disable_unprepare(sprd_host->clk_sdio);
@@ -1412,6 +1719,7 @@ static int sdhci_sprd_runtime_suspend(struct device *dev)
 	struct sdhci_host *host = dev_get_drvdata(dev);
 	struct sdhci_sprd_host *sprd_host = TO_SPRD_HOST(host);
 
+	sdhci_sprd_sdio_tune_pause(host, false);
 	mmc_hsq_suspend(host->mmc);
 	sdhci_runtime_suspend_host(host);
 
@@ -1442,6 +1750,7 @@ static int sdhci_sprd_runtime_resume(struct device *dev)
 
 	sdhci_runtime_resume_host(host, 1);
 	mmc_hsq_resume(host->mmc);
+	sdhci_sprd_sdio_tune_resume(host);
 
 	return 0;
 

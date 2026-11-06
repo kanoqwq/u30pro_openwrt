@@ -145,6 +145,7 @@ struct aicwf_tx_priv {
 	u8 *head;
 	u8 *tail;
 	struct skb_buff_pool *kmal_buf;
+	struct aicwf_txpipe *tx_pipe;
 	struct net_device	*dev;
 
 #ifdef CONFIG_SDIO_ADMA

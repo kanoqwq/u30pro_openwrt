@@ -47,6 +47,10 @@ if cmd in reads:
  label,key=reads[cmd]; value=s.get('read_override',{}).get(key,s[key])
  if key=='endc' and value=='2': value=s.get('endc_off_reply','0')
  print('+'+label+': '+value); print('OK'); sys.exit(0)
+if s.get('pro_nr_gate') and s['tm'].split(',')[int(os.environ.get('MU300_SIM_SLOT','0'))]=='3' and cmd.startswith(('AT+SP5GRAN=','AT+SPENDC=')):
+ print('+CME ERROR: 3'); sys.exit(0)
+if s.get('reject_nr_setter') and cmd.startswith('AT+SP5GRAN='):
+ print('+CME ERROR: 3'); sys.exit(0)
 if cmd=='AT+SP5GCMDS="get nr support_band"':
  print('+SP5GCMDS: get nr support_band,6,41,78,1,8,28,5'); print('OK'); sys.exit(0)
 if cmd=='AT+SP5GCMDS="get nr synch_param",42':
@@ -107,6 +111,116 @@ print('OK')
             self.assertEqual(result.returncode,0,result.stderr)
             self.assertEqual(json.loads(self.modem.read_text())['tm'],'152,128,1')
             self.assertNotIn('AT+SFUN=',(self.tmp/'commands').read_text())
+
+    def pro_env(self, slot=0):
+        platform = self.tmp/'platform'
+        platform.write_text('u30pro\n')
+        return dict(self.extra, MU300_PLATFORM_FILE=platform,
+                    MU300_SIM_SLOT=str(slot), TEST_AUTO_MODE='152')
+
+    def test_pro_lte_to_auto_restores_mode_before_nr_setters_for_both_slots(self):
+        for shell in self.each_shell():
+            for slot in (0, 1):
+                raw = ['128', '128']; raw[slot] = '3'
+                self.reset(tm=','.join(raw)+',0,20,3,1', pro_nr_gate=True)
+                result = self.script(shell, self.lock, 'apply', 'mode', 'auto', **self.pro_env(slot))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                raw[slot] = '152'
+                expected = ','.join(raw)+',0'
+                self.assertEqual(json.loads(self.modem.read_text())['tm'], expected)
+                commands = (self.tmp/'commands').read_text()
+                self.assertLess(commands.index('AT+SPTESTMODE='+expected), commands.index('AT+SP5GRAN=1'))
+                self.assertEqual((self.state/'mode').read_text(), 'auto')
+
+    def test_pro_nsa_to_lte_does_not_write_or_verify_an_unavailable_nr_setter(self):
+        for shell in self.each_shell():
+            self.reset(tm='131,152,1', gran='0', pro_nr_gate=True)
+            result = self.script(shell, self.lock, 'apply', 'mode', '4g', **self.pro_env())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(self.modem.read_text())['tm'], '3,152,1')
+            self.assertEqual(json.loads(self.modem.read_text())['gran'], '0')
+            self.assertNotIn('AT+SP5GRAN=', (self.tmp/'commands').read_text())
+            cache = json.loads((self.run/'lock.json').read_text())
+            self.assertEqual(cache['mode']['label'], '4g')
+            self.assertEqual(cache['endc_deferred'], 1)
+
+    def test_pro_lte_endc_preference_is_deferred_then_verified_on_auto(self):
+        for shell in self.each_shell():
+            for slot in (0, 1):
+                (self.state/'endc').unlink(missing_ok=True)
+                raw = ['152', '152']; raw[slot] = '3'
+                self.reset(tm=','.join(raw)+',1', pro_nr_gate=True)
+                env = self.pro_env(slot)
+                result = self.script(shell, self.lock, 'apply', 'endc', 'off', **env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((self.state/'endc').read_text(), 'off')
+                self.assertNotIn('AT+SPENDC=', (self.tmp/'commands').read_text())
+                self.assertNotIn('AT+SFUN=', (self.tmp/'commands').read_text())
+                cache = json.loads((self.run/'lock.json').read_text())
+                self.assertEqual((cache['endc'],cache['endc_saved'],cache['endc_deferred']), ('1','off',1))
+                result = self.script(shell, self.lock, 'apply', 'mode', 'auto', **env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                commands = (self.tmp/'commands').read_text()
+                self.assertLess(commands.index('AT+SPTESTMODE=152,152,1'), commands.index('AT+SPENDC=2'))
+                cache = json.loads((self.run/'lock.json').read_text())
+                self.assertEqual((cache['endc'],cache['endc_saved'],cache['endc_deferred']), ('0','off',0))
+
+    def test_pro_replay_handles_saved_lte_and_deferred_endc_before_later_auto(self):
+        for shell in self.each_shell():
+            env = self.pro_env(1)
+            self.reset(tm='152,152,0', gran='0', pro_nr_gate=True)
+            (self.state/'mode').write_text('4g')
+            (self.state/'endc').write_text('off')
+            (self.tmp/'marker').unlink(missing_ok=True)
+            result = self.script(shell, self.lock, 'replay', 'early', **env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            commands = (self.tmp/'commands').read_text()
+            self.assertNotIn('AT+SPENDC=', commands)
+            self.assertNotIn('AT+SP5GRAN=', commands)
+            self.assertNotIn('AT+SFUN=', commands)
+            (self.state/'mode').write_text('auto')
+            (self.tmp/'marker').unlink()
+            (self.tmp/'commands').write_text('')
+            result = self.script(shell, self.lock, 'replay', 'early', **env)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            commands = (self.tmp/'commands').read_text()
+            self.assertLess(commands.index('AT+SPTESTMODE=152,152,0'), commands.index('AT+SP5GRAN=1'))
+            self.assertLess(commands.index('AT+SP5GRAN=1'), commands.index('AT+SPENDC=2'))
+            self.assertEqual(json.loads(self.modem.read_text())['endc'], '2')
+
+    def test_pro_reset_from_lte_restores_nr_before_endc_and_clears_saved_intent(self):
+        for shell in self.each_shell():
+            self.reset(tm='152,3,0', pro_nr_gate=True)
+            (self.state/'mode').write_text('4g')
+            (self.state/'endc').write_text('off')
+            result = self.script(shell, self.lock, 'apply', 'reset', 'auto', **self.pro_env(1))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            commands = (self.tmp/'commands').read_text()
+            self.assertLess(commands.index('AT+SPTESTMODE=152,152,0'), commands.index('AT+SP5GRAN=1'))
+            self.assertLess(commands.index('AT+SP5GRAN=1'), commands.index('AT+SPENDC=1'))
+            self.assertFalse((self.state/'mode').exists())
+            self.assertFalse((self.state/'endc').exists())
+
+    def test_pro_ignored_mode_and_real_nr_rejection_are_not_reported_as_saved(self):
+        for shell in self.each_shell():
+            (self.state/'mode').write_text('4g')
+            (self.state/'endc').unlink(missing_ok=True)
+            self.reset(tm='152,3,0', pro_nr_gate=True, ignore=True)
+            result = self.script(shell, self.lock, 'apply', 'mode', 'auto', **self.pro_env(1))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn('AT+SP5GRAN=', (self.tmp/'commands').read_text())
+            self.assertEqual((self.state/'mode').read_text(), '4g')
+            self.reset(tm='152,3,0', gran='0', pro_nr_gate=True, reject_nr_setter=True)
+            (self.run/'lock.json').write_text('{"mode":{"work":"3"}}')
+            result = self.script(shell, self.lock, 'apply', 'mode', 'auto', **self.pro_env(1))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertEqual(json.loads(self.modem.read_text())['tm'], '152,152,0')
+            self.assertEqual((self.state/'mode').read_text(), '4g')
+            self.assertFalse((self.run/'lock.json').exists())
+            self.reset(tm='152,152,0', pro_nr_gate=True, reject=True)
+            result = self.script(shell, self.lock, 'apply', 'endc', 'off', **self.pro_env(1))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.state/'endc').exists())
 
     def test_second_slot_override_preserves_first_slot(self):
         for shell in self.each_shell():

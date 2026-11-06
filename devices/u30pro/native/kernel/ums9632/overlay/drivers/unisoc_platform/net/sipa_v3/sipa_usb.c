@@ -34,7 +34,6 @@
 #define SIPA_USB_NAPI_WEIGHT 64
 #define SIPA_USB_IFACE_PREF  "sipa_usb"
 
-static unsigned long queue_lock_flags;
 static spinlock_t queue_lock; /* spin-lock for queue status protection */
 
 #ifdef CONFIG_DEBUG_FS
@@ -44,8 +43,9 @@ static struct dentry *root;
 static void sipa_usb_flowctrl_handler(void *priv, int flowctrl)
 {
 	struct sipa_usb *usb = (struct sipa_usb *)priv;
+	unsigned long flags;
 
-	spin_lock_irqsave(&queue_lock, queue_lock_flags);
+	spin_lock_irqsave(&queue_lock, flags);
 
 	if (flowctrl) {
 		netif_stop_queue(usb->ndev);
@@ -55,7 +55,7 @@ static void sipa_usb_flowctrl_handler(void *priv, int flowctrl)
 		pr_info("wakeup queue on dev %s\n", usb->ndev->name);
 	}
 
-	spin_unlock_irqrestore(&queue_lock, queue_lock_flags);
+	spin_unlock_irqrestore(&queue_lock, flags);
 }
 
 static void sipa_usb_notify_cb(void *priv, enum sipa_evt_type evt,

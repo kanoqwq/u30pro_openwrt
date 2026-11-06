@@ -97,30 +97,44 @@ int aicwf_bus_init(uint bus_hdrlen, struct device *dev)
 #ifdef AICWF_SDIO_SUPPORT
 	spin_lock_init(&bus_if->bus_priv.sdio->wslock);//AIDEN test
 	bus_if->bustx_thread = kthread_run(sdio_bustx_thread, (void *)bus_if, "aicwf_bustx_thread");
+	if (IS_ERR(bus_if->bustx_thread)) {
+		ret = PTR_ERR(bus_if->bustx_thread);
+		bus_if->bustx_thread = NULL;
+		goto fail;
+	}
 	bus_if->busrx_thread = kthread_run(sdio_busrx_thread, (void *)bus_if->bus_priv.sdio->rx_priv, "aicwf_busrx_thread");
+	if (IS_ERR(bus_if->busrx_thread)) {
+		ret = PTR_ERR(bus_if->busrx_thread);
+		bus_if->busrx_thread = NULL;
+		goto fail;
+	}
     //new oob feature
 #ifdef CONFIG_OOB
-    if(bus_if->bus_priv.sdio->oob_enable){
-        bus_if->busirq_thread = kthread_run(sdio_busirq_thread, (void *)bus_if->bus_priv.sdio->rx_priv, "aicwf_busirq_thread");
-    }
+	if (bus_if->bus_priv.sdio->oob_enable) {
+		bus_if->busirq_thread = kthread_run(sdio_busirq_thread,
+				(void *)bus_if->bus_priv.sdio->rx_priv, "aicwf_busirq_thread");
+		if (IS_ERR(bus_if->busirq_thread)) {
+			ret = PTR_ERR(bus_if->busirq_thread);
+			bus_if->busirq_thread = NULL;
+			goto fail;
+		}
+	}
 #endif //CONFIG_OOB
 #endif
 #ifdef AICWF_USB_SUPPORT
 	bus_if->bustx_thread = kthread_run(usb_bustx_thread, (void *)bus_if, "aicwf_bustx_thread");
-	bus_if->busrx_thread = kthread_run(usb_busrx_thread, (void *)bus_if->bus_priv.usb->rx_priv, "aicwf_busrx_thread");
-#endif
-
 	if (IS_ERR(bus_if->bustx_thread)) {
-		bus_if->bustx_thread  = NULL;
-		txrx_err("aicwf_bustx_thread run fail\n");
+		ret = PTR_ERR(bus_if->bustx_thread);
+		bus_if->bustx_thread = NULL;
 		goto fail;
 	}
-
+	bus_if->busrx_thread = kthread_run(usb_busrx_thread, (void *)bus_if->bus_priv.usb->rx_priv, "aicwf_busrx_thread");
 	if (IS_ERR(bus_if->busrx_thread)) {
-		bus_if->busrx_thread  = NULL;
-		txrx_err("aicwf_bustx_thread run fail\n");
+		ret = PTR_ERR(bus_if->busrx_thread);
+		bus_if->busrx_thread = NULL;
 		goto fail;
 	}
+#endif
 
 	return ret;
 fail:
@@ -147,6 +161,26 @@ void aicwf_bus_deinit(struct device *dev)
 	bus_if = dev_get_drvdata(dev);
 	aicwf_bus_stop(bus_if);
 
+	if (bus_if->bustx_thread) {
+		complete_all(&bus_if->bustx_trgg);
+		kthread_stop(bus_if->bustx_thread);
+		bus_if->bustx_thread = NULL;
+	}
+
+#ifdef AICWF_SDIO_SUPPORT
+	/* No RX/IRQ thread may use rwnx_hw after platform deinitialization. */
+	if (bus_if->busirq_thread) {
+		complete_all(&bus_if->busirq_trgg);
+		kthread_stop(bus_if->busirq_thread);
+		bus_if->busirq_thread = NULL;
+	}
+	if (bus_if->busrx_thread) {
+		complete_all(&bus_if->busrx_trgg);
+		kthread_stop(bus_if->busrx_thread);
+		bus_if->busrx_thread = NULL;
+	}
+#endif
+
 #ifdef AICWF_USB_SUPPORT
 	usb = bus_if->bus_priv.usb;
 	if (g_rwnx_plat->enabled)
@@ -154,8 +188,9 @@ void aicwf_bus_deinit(struct device *dev)
 #endif
 #ifdef AICWF_SDIO_SUPPORT
 	sdiodev = bus_if->bus_priv.sdio;
-	if (g_rwnx_plat && g_rwnx_plat->enabled) {
+	if (g_rwnx_plat && g_rwnx_plat->enabled && sdiodev->rwnx_hw) {
 		rwnx_platform_deinit(sdiodev->rwnx_hw);
+		sdiodev->rwnx_hw = NULL;
 	}
 #endif
 
@@ -164,11 +199,6 @@ void aicwf_bus_deinit(struct device *dev)
 		bus_if->cmd_buf = NULL;
 	}
 
-	if (bus_if->bustx_thread) {
-		complete_all(&bus_if->bustx_trgg);
-		kthread_stop(bus_if->bustx_thread);
-		bus_if->bustx_thread = NULL;
-	}
 	AICWFDBG(LOGINFO, "%s Exit\r\n", __func__);
 }
 

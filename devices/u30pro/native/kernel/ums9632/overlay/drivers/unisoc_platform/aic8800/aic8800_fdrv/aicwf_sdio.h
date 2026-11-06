@@ -119,6 +119,9 @@ struct aic_sdio_reg {
 };
 
 struct aic_sdio_dev {
+    /* Updated only with this device's MMC host claimed. */
+    unsigned long recovery_since;
+    unsigned int recovery_burst;
 	struct rwnx_hw *rwnx_hw;
 	struct sdio_func *func;
 	struct sdio_func *func2;
@@ -212,7 +215,7 @@ int sdio_busirq_thread(void *data);
 #endif //CONFIG_OOB
 int aicwf_sdio_aggr(struct aicwf_tx_priv *tx_priv, struct sk_buff *pkt);
 int aicwf_sdio_send(struct aicwf_tx_priv *tx_priv, u8 txnow);
-void aicwf_sdio_aggr_send(struct aicwf_tx_priv *tx_priv);
+int aicwf_sdio_aggr_send(struct aicwf_tx_priv *tx_priv);
 void aicwf_sdio_aggrbuf_reset(struct aicwf_tx_priv *tx_priv);
 extern void aicwf_hostif_ready(void);
 extern void aicwf_hostif_fail(void);

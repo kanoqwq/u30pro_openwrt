@@ -79,11 +79,13 @@ static void sipa_sender_notify_cb(void *priv, enum sipa_hal_evt_type evt,
 		wake_up(&sender->free_waitq);
 
 	if (evt & SIPA_HAL_ENTER_FLOW_CTRL) {
+		WRITE_ONCE(sender->fifo_flowctrl, true);
 		sender->enter_flow_ctrl_cnt++;
 		schedule_work(&sender->enter_flwctl_work);
 	}
 
 	if (evt & SIPA_HAL_EXIT_FLOW_CTRL) {
+		WRITE_ONCE(sender->fifo_flowctrl, false);
 		sender->exit_flow_ctrl_cnt++;
 		schedule_work(&sender->exit_flwctl_work);
 	}

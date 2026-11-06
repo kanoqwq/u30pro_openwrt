@@ -19,6 +19,13 @@ function viewChoice() {
     catch(e) { return 'auto'; }
 }
 function selectedSlot() { var choice=viewChoice();return choice==='auto'?(dataSlot || '0'):choice; }
+function resolveSelectedSlot() {
+    if(viewChoice()!=='auto')return Promise.resolve(selectedSlot());
+    return callSimGet().then(function(){
+        if(dataSlot==null)throw new Error(translate('当前上网卡状态暂不可用'));
+        return selectedSlot();
+    });
+}
 function selectViewedSlot(slot, followData) {
     slot=String(slot);
     if (slot!=='0' && slot!=='1' && slot!=='auto') return false;
@@ -249,7 +256,12 @@ var DASH_I18N = {
 	"无法应用 TTL 设置": ["Cannot apply TTL settings", "TTL ayarı uygulanamadı"],
 	"TTL 无效": ["Invalid TTL", "Geçersiz TTL"],
 	"设置蜂窝出口数据包的 TTL 和 IPv6 跳数限制；仅影响蜂窝网络，不改变 Wi-Fi 或 USB 局域网。": ["Set the TTL and IPv6 hop limit of cellular outbound packets. Local Wi-Fi and USB traffic are unchanged.", "Hücresel çıkışın TTL ve IPv6 atlama sınırını ayarlar. Yerel Wi-Fi ve USB trafiğini değiştirmez."],
-	"启用后会关闭防火墙流量卸载，可能降低转发性能；关闭 TTL 后恢复由本功能修改的卸载设置。": ["Enabling TTL disables firewall flow offloading and may reduce forwarding performance. Turning TTL off restores offloading settings changed by this feature.", "TTL etkinleştirilince akış hızlandırması kapatılır; performans düşebilir. Kapatıldığında bu özelliğin değiştirdiği ayarlar geri yüklenir."],
+	"固定 TTL 可与软件流量卸载同时使用；IPv6 邻居发现等控制报文保持原值。启用期间暂停硬件流量卸载，关闭 TTL 后恢复原设置。": ["Fixed TTL works with software flow offloading. IPv6 neighbor discovery and other control packets keep their original hop limit. Hardware flow offloading is paused while fixed TTL is enabled, then restored when TTL is turned off.", "Sabit TTL, yazılımsal akış hızlandırmasıyla birlikte çalışır. IPv6 komşu keşfi ve diğer kontrol paketlerinin atlama sınırı korunur. Sabit TTL açıkken donanımsal akış hızlandırması duraklatılır; TTL kapatılınca geri yüklenir."],
+	"软件流量卸载": ["Software flow offloading", "Yazılımsal akış hızlandırma"],
+	"硬件流量卸载": ["Hardware flow offloading", "Donanımsal akış hızlandırma"],
+	"固定 TTL 期间暂停": ["Paused while fixed TTL is enabled", "Sabit TTL açıkken duraklatıldı"],
+	"等待蜂窝接口，出现后自动应用。": ["Waiting for a cellular interface; applies automatically when it appears.", "Hücresel arayüz bekleniyor; oluştuğunda otomatik uygulanır."],
+	"旧规则，请重新应用 TTL": ["Legacy rules; apply TTL again", "Eski kurallar; TTL ayarını yeniden uygulayın"],
 
     "自动模式兼容性": ["Automatic mode compatibility", "Otomatik mod uyumluluğu"],
     "机型默认": ["Model default", "Model varsayılanı"],
@@ -471,6 +483,8 @@ var DASH_I18N = {
 	'无效的网络设置': ['Invalid network setting', 'Geçersiz ağ ayarı'],
 	'频段设置未确认，请重试': ['Band setting was not acknowledged; retry', 'Bant ayarı onaylanmadı; tekrar deneyin'],
 	'模组拒绝了设置': ['The modem rejected the setting', 'Modem ayarı reddetti'],
+	'EN-DC 将在支持 5G 的网络模式下生效。': ['EN-DC takes effect in a network mode that supports 5G.', 'EN-DC, 5G destekleyen bir ağ modunda etkinleşir.'],
+	'EN-DC 设置已保存，将在支持 5G 的网络模式下生效。': ['EN-DC preference saved; it will take effect in a network mode that supports 5G.', 'EN-DC tercihi kaydedildi; 5G destekleyen bir ağ modunda etkinleşecek.'],
 	'设置保存失败': ['Could not save settings', 'Ayarlar kaydedilemedi'],
 	'无法读取当前 SIM 模式，未发送设置': ['Cannot read the current SIM mode; no settings sent', 'Mevcut SIM modu okunamıyor; ayar gönderilmedi'],
 	'无法读取当前小区锁定，未发送设置': ['Cannot read current cell locks; no settings sent', 'Mevcut hücre kilitleri okunamıyor; ayar gönderilmedi'],
@@ -2097,7 +2111,7 @@ return baseclass.extend({
 	callSmsList: callSmsList, callSmsShow: callSmsShow, callSmsSend: callSmsSend, callSmsJob: callSmsJob,
 	callSmsDel: callSmsDel, callSmsSync: callSmsSync,
 	callForwardGet: callForwardGet, callForwardStatus: callForwardStatus,
-	callSimGet: callSimGet, simSelector: simSelector, slotName: slotName, slotSupported: slotSupported, selectedSlot: selectedSlot, selectViewedSlot: selectViewedSlot,
+	callSimGet: callSimGet, simSelector: simSelector, slotName: slotName, slotSupported: slotSupported, selectedSlot: selectedSlot, resolveSelectedSlot: resolveSelectedSlot, selectViewedSlot: selectViewedSlot,
 	callForwardSet: callForwardSet, callForwardTest: callForwardTest, callForwardClear: callForwardClear,
 	callTrafficGet: callTrafficGet, callTrafficSet: callTrafficSet,
 	callTrafficClear: callTrafficClear,

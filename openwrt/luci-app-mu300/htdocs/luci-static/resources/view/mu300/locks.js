@@ -52,6 +52,7 @@ return view.extend({
     <button class="mud-btn" id="mud-lock-endc">EN-DC</button>
     <button class="mud-btn" id="mud-lock-refresh">刷新锁定状态</button>
   </div>
+  <div class="mud-note" id="mud-lock-endc-note" hidden></div>
   <div class="mud-ctl" style="margin-top:7px;max-width:340px">
     <button class="mud-btn" id="mud-lock-auto-apply">开机自动应用</button>
   </div>
@@ -205,7 +206,7 @@ return view.extend({
 			};
 		});
 		this.Q('lock-endc').onclick = function() {
-			var on = self.lastLock && self.lastLock.endc === '1';
+			var on = self.endcOn();
 			var btn = this;
 			apply('endc', on ? 'off' : 'on', on ? '关闭 EN-DC（NSA 锚点）' : '开启 EN-DC（NSA 锚点）',
 				{ btn: btn, noSfun: true, optimistic: function() {
@@ -512,7 +513,9 @@ return view.extend({
 			M.busy(btn, false); self.paintAutoMode();
 		}).then(function() {
 			if (self._disposed) return;
-			self.note(operation.kind === 'auto_apply' ? '开机自动应用设置已保存' :
+			self.note(operation.kind === 'endc' && self.lastLock && self.lastLock.endc_deferred ?
+				'EN-DC 设置已保存，将在支持 5G 的网络模式下生效。' :
+				operation.kind === 'auto_apply' ? '开机自动应用设置已保存' :
 				operation.kind === 'reset' ? '当前 SIM 的全部锁定已清除，已核对并清理保存配置' :
 				(operation.kind === 'lte' || operation.kind === 'nr') ? '频段设置已应用，实际频段以模组回读为准' : '已应用并核对模组状态', 'success');
 			return self.refresh();
@@ -561,6 +564,12 @@ return view.extend({
 	paintAutoMode: function() {
 		if (this.autoMode) this.autoMode.update((this.lastLock || {}).mode, !!this._applying);
 	},
+	endcOn: function() {
+		var l = this.lastLock || {};
+		if (l.endc_deferred && (l.endc_saved === 'on' || l.endc_saved === 'off'))
+			return l.endc_saved === 'on';
+		return l.endc === '1';
+	},
 
 	paint: function() {
 		this.paintAutoMode();
@@ -575,7 +584,9 @@ return view.extend({
 			b.classList.toggle('on', b.getAttribute('data-mode') === (l.mode && l.mode.label));
 		});
 		var eb = this.Q('lock-endc');
-		if (eb) { eb.className = 'mud-btn' + (l.endc === '1' ? ' on' : ''); eb.textContent = l.endc === '1' ? 'EN-DC' : 'EN-DC'; }
+		if (eb) { eb.className = 'mud-btn' + (this.endcOn() ? ' on' : ''); eb.textContent = 'EN-DC'; }
+		var en = this.Q('lock-endc-note');
+		if (en) { en.hidden = !l.endc_deferred; en.textContent = M.translate('EN-DC 将在支持 5G 的网络模式下生效。'); }
 		var ab = this.Q('lock-auto-apply'), autoApply = l.auto_apply !== 0;
 		if (ab) { ab.className = 'mud-btn' + (autoApply ? ' on' : ''); ab.textContent = M.translate(autoApply ? '开机自动应用 ✓' : '开机自动应用'); }
 
