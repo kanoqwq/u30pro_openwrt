@@ -22,11 +22,16 @@ def main():
     inputs = Path(layout['installer_artifacts'])
     pin = json.loads((TOP/'tools/public-inputs.lock.json').read_text())['installer_commit'][:7]
     selected = [('windows', 'windows-x64'), ('macos-arm64', 'macos-arm64'), ('android', 'android-aarch64')]
+    explicit = {'windows': 'OPENWRT_GUI_ARTIFACT',
+                'macos-arm64': 'OPENWRT_GUI_MACOS_ARTIFACT',
+                'android': 'OPENWRT_GUI_ANDROID_ARTIFACT'}
     output = work/'cache/u30pro-build-tools'
     output.mkdir(parents=True, exist_ok=True)
     result = {}
     for folder, platform in selected:
-        root = inputs/folder
+        # Match firmware packaging: archive the explicitly selected, verified
+        # native artifacts without copying another full tool environment.
+        root = Path(os.environ.get(explicit[folder], str(inputs/folder)))
         if folder == 'android':
             apk, metadata = mobile['artifact'](root)
             files = [apk, metadata]
