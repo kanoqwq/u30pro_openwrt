@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import subprocess
 import sys
 import tarfile
 
@@ -20,7 +21,12 @@ def main():
     gui = runpy.run_path(str(TOP/'installer/package_gui.py'))
     mobile = runpy.run_path(str(TOP/'installer/package_android.py'))
     inputs = Path(layout['installer_artifacts'])
-    pin = json.loads((TOP/'tools/public-inputs.lock.json').read_text())['installer_commit'][:7]
+    commit = json.loads((TOP/'tools/public-inputs.lock.json').read_text())['installer_commit']
+    actual = subprocess.check_output(['git', '-c', 'safe.directory='+str(TOP/'installer'),
+        '-C', str(TOP/'installer'), 'rev-parse', 'HEAD'], text=True).strip()
+    if actual != commit:
+        raise ValueError('Installer submodule differs from the build-input pin; do not publish mislabeled artifacts')
+    pin = commit[:7]
     selected = [('windows', 'windows-x64'), ('macos-arm64', 'macos-arm64'), ('android', 'android-aarch64')]
     explicit = {'windows': 'OPENWRT_GUI_ARTIFACT',
                 'macos-arm64': 'OPENWRT_GUI_MACOS_ARTIFACT',

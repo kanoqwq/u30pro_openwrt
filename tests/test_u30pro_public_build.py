@@ -9,6 +9,7 @@ import tarfile
 import tempfile
 import unittest
 import runpy
+import subprocess
 from unittest import mock
 
 TOP = Path(__file__).resolve().parents[1]
@@ -158,6 +159,18 @@ class PublicInputs(unittest.TestCase):
             self.assertNotIn(value, text)
         self.assertEqual(config['compiler']['kind'], 'toolchain')
         self.assertEqual(config['installer_artifacts_kind'], 'published')
+
+    def test_installer_cache_path_is_derived_from_the_single_version_pin(self):
+        settings = runpy.run_path(str(TOP/'tools/build-settings.py'))['settings']
+        _, _, layout = settings(workspace=TOP/'out/test-installer-lock-workspace')
+        pin = bootstrap.LOCK['installer_commit']
+        self.assertEqual(Path(layout['installer_artifacts']).name, pin[:7])
+        actual = subprocess.check_output(['git', '-C', str(TOP/'installer'), 'rev-parse', 'HEAD'], text=True).strip()
+        self.assertEqual(pin, actual)
+        for platform, asset in (('windows-x64', 'installer_windows'), ('macos-arm64', 'installer_macos'), ('android-aarch64', 'installer_android')):
+            url = bootstrap.LOCK['assets'][asset]['url']
+            self.assertIn('/build-tools-'+pin[:7]+'/', url)
+            self.assertTrue(url.endswith('/installer-'+platform+'-'+pin[:7]+'.tar.gz'))
 
     def test_public_lock_has_only_repository_files_or_anonymous_https_and_sha256(self):
         for name, entry in bootstrap.LOCK['assets'].items():

@@ -219,7 +219,8 @@ def provision(layout, work):
         record = LOCK['assets'][name]
         if 'path' in record:
             return repository_input(record, target)
-        return fetch(record, target or downloads/record['url'].rsplit('/', 1)[1])
+        cache = work/'cache/openwrt-tools-downloads' if name.startswith('installer_') else downloads
+        return fetch(record, target or cache/record['url'].rsplit('/', 1)[1])
     native = get('native', Path(layout['input_archive']))
     manifest = get('native_manifest', Path(layout['input_manifest']))
     public_native(native, manifest, layout)

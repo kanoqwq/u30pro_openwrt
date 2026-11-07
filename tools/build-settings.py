@@ -22,7 +22,12 @@ def settings(config=None, workspace=None):
     work = selected.resolve()
     if work in (Path('/'), Path.home().resolve()) or str(work).lower().startswith(('/mnt/c/', 'c:')):
         raise ValueError('Select a dedicated build workspace outside C:')
-    values = {'repo': str(TOP), 'workspace': str(work)}
+    lock = json.loads((TOP/'tools/public-inputs.lock.json').read_text())
+    installer = lock['installer_commit']
+    if len(installer) != 40 or any(c not in '0123456789abcdef' for c in installer):
+        raise ValueError('Expected a full pinned installer commit')
+    values = {'repo': str(TOP), 'workspace': str(work),
+              'installer_commit': installer, 'installer_revision': installer[:7]}
     def expand(value):
         if isinstance(value, str):
             return value.format(**values)
