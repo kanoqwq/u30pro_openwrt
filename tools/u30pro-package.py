@@ -390,6 +390,24 @@ def busybox_aliases(root, applets):
             (root/'bin'/applet).symlink_to('/opt/mu300/bin/busybox')
 
 
+def install_nft_builtins():
+    # Use the selected, receipt-verified UMS9632 config, never MU300's config.
+    verified_kernel()
+    output = STAGE / 'nft-builtins'
+    version = '2026.11.07-r1'
+    build = runpy.run_path(str(TOP/'openwrt/nft-builtins/build.py'))['build']
+    build(os.environ.get('MU300_APK_MKPKG'), [KERNEL/'.config'], output, version,
+          resolved=[KERNEL/'.config'])
+    packages = ['/nft-builtins/kmod-nft-' + name + '-' + version + '.apk'
+                for name in ('socket', 'tproxy')]
+    # No target service/pre-install hook may inspect the build host's kernel.
+    subprocess.run(['docker', 'run', '--rm', '--platform', 'linux/arm64',
+                    '-v', str(ROOT)+':/target', '-v', str(output)+':/nft-builtins:ro',
+                    '--entrypoint', '/usr/bin/apk', ROOT_IMAGE, '--root', '/target',
+                    '--no-network', 'add', '--allow-untrusted', '--scripts=no',
+                    '--commit-hooks=no', *packages], check=True)
+
+
 def finish():
     owned()
     if json.loads((STAGE/'state.json').read_text())['step'] != 'sources-installed':
@@ -474,6 +492,7 @@ def finish():
             subprocess.run(['patch','--batch','--fuzz=0','-d',str(ROOT),'-p1','-i',str(source)],check=True)
             applied[name]={'patch':digest(source),'result':digest(file)}
             patched.write_text(json.dumps(applied,indent=2)+'\n')
+    install_nft_builtins()
     baseline=target('MU300_LIB=1; export MU300_LIB; . /target/opt/mu300/bin/mu300-update; upk_manual /target openwrt')
     if not baseline.strip():raise ValueError('Image package baseline is empty')
     (etc/'image-packages').write_text(baseline)
