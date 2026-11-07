@@ -6,6 +6,7 @@
 *.bin binary
 *.gz binary
 *.tar binary
+*.xz binary
 *.lz4 binary
 *.ko binary
 # Patch files contain unified-diff context markers followed by source indentation.

@@ -3,6 +3,12 @@
 支持 Linux x86_64；Windows 可使用 WSL2 的 Ubuntu。构建不需要连接设备，
 不需要个人分区备份、NV、其他固件仓库或 GitHub 登录。
 
+当前原生硬件输入已随仓库提供。另有一项独立的安装器输入待刷新：
+下载清单仍固定 `eae5809`，而安装器子模块已更新为 `78cfdd3`。
+全量构建在版本核对处会拒绝这组不一致输入；需要重新构建对应原生安装器并更新
+下载清单和摘要，不能跳过指纹校验或用旧二进制冒充新版。
+本次纳入硬件输入的验证不代表已完成全量固件／原生安装器构建。
+
 ## 准备主机
 
 Ubuntu 22.04 / 24.04 安装依赖：
@@ -64,7 +70,7 @@ python3 tools/build-release.py status
 | json-c / libubox / ubus / UCI 开发库与头文件 | 从 OpenWrt 对应版本的公开源码归档编译，供链接使用；不替换系统运行库 |
 | BusyBox | busybox.net 官方源码，本仓库编译为静态 ARM64 程序 |
 | AT 传输和硬件服务、屏幕程序 | 本仓库和已固定的原生源码，现场编译 |
-| 启动模板、AIC 固件和基带 XML | 原作者公开的 `build-inputs-20261025` Release，按成员摘要提取 |
+| 启动模板、AIC 固件和基带 XML | 本仓库 `devices/u30pro/build-inputs/`，13 个必要文件的精简归档，按成员摘要提取 |
 | Aurora 主题 | 作者公开的固定版本 APK |
 | Windows / Mac / Android 安装器 | 本仓库 `build-tools-eae5809` 公开 Release，与安装器子模块提交及构建指纹绑定 |
 
@@ -73,6 +79,11 @@ python3 tools/build-release.py status
 安装器二进制来自对应原生平台的构建；Linux 不伪造 macOS App，APK 不包含私钥。
 安装器源码始终通过 `installer/` 子模块公开；需要修改安装器时，应在相应原生
 平台重编并更新所选构建输入的版本及校验值。
+
+原生输入已经纳入普通 Git 文件，不通过 Git LFS 或私有 Release 下载。
+原作者的 `u30pro-build-inputs-20261025.tar.xz` 仅是历史来源，已不是普通用户的构建依赖。
+精简包、来源和逐成员摘要见
+[`devices/u30pro/build-inputs/README.md`](../devices/u30pro/build-inputs/README.md)。
 
 公开启动模板只供构造通用分发载荷和离线测试。实际安装仍从**目标设备本身**读取
 Android 槽的 boot / vendor_boot / init_boot / dtbo，保留其 DTB、启动容器和槽位关系；

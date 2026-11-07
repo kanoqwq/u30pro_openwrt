@@ -1,0 +1,69 @@
+{
+  "format": 1,
+  "source_archive_sha256": "c8ebf96318436c7581d65676de0241c9cb401719484cdd118ccc079945dfb9ae",
+  "source_manifest_sha256": "f2d97092e63f7be9bebb855e48dc2ae8f689d6a0a0fe80d91d7042a66670c9d9",
+  "files": {
+    "build/kernel-port-20261017/p19-stock-mm-trial/boot.img": {
+      "sha256": "b5ec01ec1146f4d99c1629becca79c561127bbdd0efa3f1fd4d7be9e3414ce4b",
+      "bytes": 67108864
+    },
+    "build/kernel-port-20261017/p19-stock-mm-trial/init_boot.img": {
+      "sha256": "f843ce0bfd29d23071d11d34e3c6222b5cef1593707347ee5e034c0a1dc0871f",
+      "bytes": 8388608
+    },
+    "build/kernel-port-20261017/p19-stock-mm-trial/vendor_boot.img": {
+      "sha256": "02112d8fcca5d52a16875ff19482e0e0db572fbd8770ab60102d5fddce6dabc1",
+      "bytes": 104857600
+    },
+    "build/kernel-port-20261017/p127-modem-userspace/modem_ch_info.xml": {
+      "sha256": "806ca87587848c68d138ddad5be88ba41e85b31df9b23c5c2fc8549e4100e174",
+      "bytes": 1188
+    },
+    "build/kernel-port-20261017/p127-modem-userspace/modem_cp_info.xml": {
+      "sha256": "4d71787d05e1dbaf87e10d1e1de0d53bb1151824521b898c11954423017a8275",
+      "bytes": 1874
+    },
+    "build/kernel-port-20261017/p127-modem-userspace/modem_sp_info.xml": {
+      "sha256": "a8069642a6f5515a534927247cd3b87eca1ca0fe0354650968d614ccaa68df44",
+      "bytes": 944
+    },
+    "build/verified/erofs/odm/firmware/aic8800/aic_powerlimit_8800d80x2.txt": {
+      "sha256": "032c80ffebbcaa17e5ed25ff892843fc4c264832c3fbf3bc32d306cab07c7e11",
+      "bytes": 3421
+    },
+    "build/verified/erofs/odm/firmware/aic8800/aic_userconfig_8800d80x2.txt": {
+      "sha256": "97f0c3f50954bb61df586c906cd71fdd44940546f028fdaff5cff9c0b7f62e7c",
+      "bytes": 2860
+    },
+    "build/verified/erofs/odm/firmware/aic8800/fmacfw_8800d80x2.bin": {
+      "sha256": "bd46e58be122ce7c2ab099d599e09a1864acdabff36dba9cb54347742158a2f0",
+      "bytes": 403629
+    },
+    "build/verified/erofs/odm/firmware/aic8800/fw_adid_8800d80x2_u05.bin": {
+      "sha256": "da60347a3dee1f5a848e9543cd44cd114b36ab8b4fcc9e1ceebd4ece536ce69a",
+      "bytes": 1816
+    },
+    "build/verified/erofs/odm/firmware/aic8800/fw_patch_8800d80x2_u05.bin": {
+      "sha256": "24cd14c0d2f5447568300d30166b2f6201e814b7925428108ebd7316895e3971",
+      "bytes": 12428
+    },
+    "build/verified/erofs/odm/firmware/aic8800/fw_patch_table_8800d80x2_u05.bin": {
+      "sha256": "54a1015c98f095c7e177529a667fe4a2a702b9e120dc28157d24e843cc4ccda3",
+      "bytes": 584
+    },
+    "build/verified/erofs/odm/firmware/aic8800/lmacfw_rf_8800d80x2.bin": {
+      "sha256": "b9c53842d8b9cad95dedba6af6c27809174ce94c974bb9f90009b86ced010cc6",
+      "bytes": 317729
+    }
+  },
+  "assets": {
+    "u30pro-native-inputs-20261107.tar.xz": {
+      "sha256": "5178559fe39829f5265f6d0d12bc31c96697bb3f6a4f8c44b5c488d1ecce1ced",
+      "bytes": 7991636
+    },
+    "MANIFEST.sha256": {
+      "sha256": "76a581faaedf3d38ae1d586229660669ed910e17a8243d50ea2ab526239a5d90",
+      "bytes": 1716
+    }
+  }
+}

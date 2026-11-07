@@ -159,12 +159,40 @@ class PublicInputs(unittest.TestCase):
         self.assertEqual(config['compiler']['kind'], 'toolchain')
         self.assertEqual(config['installer_artifacts_kind'], 'published')
 
-    def test_public_lock_has_only_anonymous_https_and_sha256(self):
+    def test_public_lock_has_only_repository_files_or_anonymous_https_and_sha256(self):
         for name, entry in bootstrap.LOCK['assets'].items():
             with self.subTest(asset=name):
-                self.assertTrue(entry['url'].startswith('https://'))
-                self.assertNotIn('@', entry['url'])
                 self.assertRegex(entry['sha256'], r'^[0-9a-f]{64}$')
+                self.assertEqual(int('path' in entry)+int('url' in entry), 1)
+                if 'path' in entry:
+                    self.assertTrue(bootstrap.repository_input(entry).is_file())
+                else:
+                    self.assertTrue(entry['url'].startswith('https://'))
+                    self.assertNotIn('@', entry['url'])
+
+    def test_native_inputs_are_in_the_checkout_not_a_private_download(self):
+        for name in ('native', 'native_manifest'):
+            record = bootstrap.LOCK['assets'][name]
+            with mock.patch.object(bootstrap.urllib.request, 'urlopen', side_effect=AssertionError('network access')):
+                source = bootstrap.repository_input(record)
+            self.assertTrue(source.is_relative_to(TOP))
+        config = json.loads((TOP/'tools/build-layout.json').read_text())
+        for key, name in (('input_archive', 'native'), ('input_manifest', 'native_manifest')):
+            self.assertEqual(config[key], '{repo}/'+bootstrap.LOCK['assets'][name]['path'])
+
+    def test_repository_input_rejects_escape_corruption_and_stale_override(self):
+        with mock.patch.object(bootstrap, 'TOP', self.root):
+            record = {'path': 'input', 'sha256': hashlib.sha256(b'right').hexdigest()}
+            (self.root/'input').write_bytes(b'right')
+            self.assertEqual(bootstrap.repository_input(record), self.root/'input')
+            with self.assertRaisesRegex(ValueError, 'update explicit'):
+                bootstrap.repository_input(record, self.root/'old-private-cache')
+            (self.root/'input').write_bytes(b'wrong')
+            with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                bootstrap.repository_input(record)
+            for name in ('../outside', '/outside', r'..\outside'):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'Invalid repository'):
+                    bootstrap.repository_input(dict(record, path=name))
 
 
 @unittest.skipUnless(os.name == 'posix', 'target symlinks use Linux semantics')

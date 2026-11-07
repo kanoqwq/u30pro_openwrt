@@ -9,7 +9,7 @@
 - F50 Pro / MU3356 已有独立产品配置：`--profiles f50pro-6.12`。
   平台 ABI 仍为 u30pro，产品标记为 f50pro；不要把它当作旧 F50 的安装布局，
   不要复制另一套内核或 rootfs。两款共享内核对象，产品构建按顺序使用固定 staging。
-- `tools/build-layout.json` 默认只使用公开依赖；首次运行 `build` 会自动准备并校验。
+- `tools/build-layout.json` 从仓库 `devices/u30pro/build-inputs/` 读取已收录的 13 个必要原生输入，其他依赖固定公开下载；首次运行 `build` 会自动准备并校验。不要再访问原作者的私有 `build-inputs-20261025` Release。
 - 本机复用原有内核缓存时，显式传 `--config tools/build-layout.local.json --workspace /home/kano/openwrt-build`。
   这个被忽略的本机配置只覆盖缓存选择，不是其他用户的构建前提，也不自动搜索其他仓库。
 - 编译/测试通过 `tools/build-release.py run --label <名称> -- <真实命令>`；

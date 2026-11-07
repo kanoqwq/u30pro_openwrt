@@ -17,12 +17,12 @@
       "sha256": "65975c8d7f700aa0610ac65ea6c878be3446980b8fa6b7d6147023a0b3eb6c79"
     },
     "native": {
-      "url": "https://github.com/33333s/U30pro-openwrt/releases/download/build-inputs-20261025/u30pro-build-inputs-20261025.tar.xz",
-      "sha256": "c8ebf96318436c7581d65676de0241c9cb401719484cdd118ccc079945dfb9ae"
+      "path": "devices/u30pro/build-inputs/u30pro-native-inputs-20261107.tar.xz",
+      "sha256": "5178559fe39829f5265f6d0d12bc31c96697bb3f6a4f8c44b5c488d1ecce1ced"
     },
     "native_manifest": {
-      "url": "https://github.com/33333s/U30pro-openwrt/releases/download/build-inputs-20261025/MANIFEST.sha256",
-      "sha256": "f2d97092e63f7be9bebb855e48dc2ae8f689d6a0a0fe80d91d7042a66670c9d9"
+      "path": "devices/u30pro/build-inputs/MANIFEST.sha256",
+      "sha256": "76a581faaedf3d38ae1d586229660669ed910e17a8243d50ea2ab526239a5d90"
     },
     "busybox": {
       "url": "https://busybox.net/downloads/busybox-1.37.0.tar.bz2",

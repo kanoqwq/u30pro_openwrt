@@ -28,13 +28,14 @@ SC2355 固件或单 boot 安装布局。硬件代码来自 [移植记录](U30PRO
 | 已有独立对象缓存 | 工作区 objects/u30pro/release |
 | 默认公开输入登记 | tools/build-layout.json、tools/public-inputs.lock.json |
 | 本机缓存覆盖 | tools/build-layout.local.json（忽略，不自动选择） |
-| 原生输入与原厂模板 | 工作区 cache/u30pro-inputs/ |
+| 原生输入归档 | 仓库 devices/u30pro/build-inputs/（普通 Git 文件） |
+| 提取后的模板与板级资源 | 工作区 cache/u30pro-inputs/templates、artifacts/u30pro-board |
 | 固定版本原生安装器产物 | 工作区 artifacts/u30pro-installers/<固定提交>（公开 Release 下载并校验） |
 | 日志 / 状态 | out/build-logs/、out/build-state/ |
 | 后续正式交付 | release/ |
 
-通用启动模板和公开构建输入归档保存在工作区 `cache/u30pro-inputs/`，
-从原作者的公开 Release 获取，逐成员校验；不再依赖旧 U30 Pro 工作区或个人设备备份。
+原生构建输入归档随仓库提供，逐成员校验后将通用启动模板提取到
+工作区 `cache/u30pro-inputs/templates/`，不再访问原作者的私有 Release。
 安装器仍以目标设备自己的启动容器和槽位生成镜像。
 缺失输入必须报出，不能从 MU300 或 E5 包里补一个相似内核/根。
 登记的现成对象缓存不等于新源已编译；修改驱动后要重编 Image 和完整模块。

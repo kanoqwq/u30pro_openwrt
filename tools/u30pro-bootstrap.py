@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fetch pinned public inputs. No login, device, private dump or adjacent repo."""
+"""Verify repository inputs and fetch public dependencies without login."""
 import argparse
 import hashlib
 import json
@@ -26,6 +26,21 @@ def sha(path):
         for block in iter(lambda: f.read(1 << 20), b''):
             h.update(block)
     return h.hexdigest()
+
+
+def repository_input(record, configured=None):
+    """Native blobs are ordinary Git files, never an authenticated download."""
+    relative = PurePosixPath(record['path'])
+    if relative.is_absolute() or '..' in relative.parts or '\\' in record['path']:
+        raise ValueError('Invalid repository input path')
+    source = TOP.joinpath(*relative.parts)
+    if not source.resolve().is_relative_to(TOP.resolve()):
+        raise ValueError('Repository input escaped checkout')
+    if configured is not None and Path(configured).resolve() != source.resolve():
+        raise ValueError('Native inputs now live in this checkout; update explicit input_archive/input_manifest paths: '+str(configured))
+    if source.is_symlink() or not source.is_file() or sha(source) != record['sha256']:
+        raise ValueError('Repository input missing or checksum mismatch; verify the checkout: '+str(source))
+    return source
 
 
 def fetch(record, destination):
@@ -198,10 +213,12 @@ def public_native(archive, manifest_path, layout):
 
 
 def provision(layout, work):
-    """Only public, fixed URLs; existing valid downloads are reused in place."""
+    """Use tracked native inputs and pinned public URLs; no private fallback."""
     downloads = work/'cache/u30pro-downloads'
     def get(name, target=None):
         record = LOCK['assets'][name]
+        if 'path' in record:
+            return repository_input(record, target)
         return fetch(record, target or downloads/record['url'].rsplit('/', 1)[1])
     native = get('native', Path(layout['input_archive']))
     manifest = get('native_manifest', Path(layout['input_manifest']))
