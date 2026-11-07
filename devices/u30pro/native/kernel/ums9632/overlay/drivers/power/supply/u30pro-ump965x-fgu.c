@@ -24,6 +24,7 @@
 #include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/ktime.h>
+#include "u30pro-battery-profile.h"
 
 #define FGU_MODULE_EN 0x2008
 #define FGU_CLOCK_EN 0x2010
@@ -499,69 +500,13 @@ static int ump_calibration(struct ump_fgu *f)
 /* Real stock B logs prove the resistor-ID path, not GPIO_BATID_CHECK. */
 static int ump_battery_profile(struct ump_fgu *f)
 {
-	struct device_node *chosen, *first, *battery;
-	const char *cmdline, *id;
-	char text[16], name[32];
-	u32 pullup = 475, ref = 1850, target, v, t;
-	int i, len, ret, resistance, count, match = -1;
-	chosen = of_find_node_by_path("/chosen");
-	if (!chosen)
-		return -EINVAL;
-	ret = of_property_read_string(chosen, "bootargs", &cmdline);
-	of_node_put(chosen);
-	if (ret)
-		return ret;
-	id = cmdline;
-	while ((id = strstr(id, "bat.id="))) {
-		if (id == cmdline || id[-1] == ' ')
-			break;
-		id++;
-	}
-	if (!id)
-		return -ENODATA;
-	id += strlen("bat.id=");
-	len = strcspn(id, " \n\t");
-	if (!len || len >= sizeof(text))
-		return -EINVAL;
-	memcpy(text, id, len); text[len] = 0;
-	ret = kstrtoint(text, 10, &f->battery_id_mv);
-	if (ret)
-		return ret;
-	first = of_parse_phandle(f->dev->of_node, "monitored-battery-0", 0);
-	if (!first)
-		return -EINVAL;
-	of_property_read_u32(first, "batt-id-pullup-kohm", &pullup);
-	of_property_read_u32(first, "batt-id-ref-vol", &ref);
-	if (ref > 5000 || pullup > 10000 || f->battery_id_mv < 0 || f->battery_id_mv >= ref) {
-		ret = -EINVAL;
-		goto put_first;
-	}
-	resistance = DIV_ROUND_CLOSEST(f->battery_id_mv * pullup, ref - f->battery_id_mv);
-	count = of_property_count_u32_elems(first, "batt-id-list");
-	if (count <= 0 || count > 16) {
-		ret = -EINVAL;
-		goto put_first;
-	}
-	for (i = 0; i < count; i++) {
-		ret = of_property_read_u32_index(first, "batt-id-list", i, &target);
-		if (ret)
-			goto put_first;
-		if ((resistance < 10 && abs(resistance - (int)target) < 5) ||
-		    (resistance >= target * 80 / 100 && resistance <= target * 120 / 100)) {
-			match = i;
-			break;
-		}
-	}
-	ret = match < 0 ? -ENODATA : 0;
-put_first:
-	of_node_put(first);
-	if (ret)
-		return ret;
-	f->battery_index = match;
-	snprintf(name, sizeof(name), "monitored-battery-%d", match);
-	battery = of_parse_phandle(f->dev->of_node, name, 0);
-	if (!battery)
-		return -EINVAL;
+	struct device_node *battery;
+	u32 v, t;
+	int i, ret, count;
+
+	battery = u30pro_battery_profile(f->dev->of_node, &f->battery_index, &f->battery_id_mv);
+	if (IS_ERR(battery))
+		return PTR_ERR(battery);
 	ret = of_property_read_u32(battery, "charge-full-design-microamp-hours", &f->design_uah);
 	if (ret || !f->design_uah || f->design_uah > 20000000) {
 		ret = -EINVAL;

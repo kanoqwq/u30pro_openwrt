@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* Native U30 Pro master SGM41513. Identify the real fixed 0x1a device behind
- * the original ti,bq2560x_chg DT node. Preserve firmware charging settings;
+ * the original ti,bq2560x_chg DT node. Use the selected stock battery profile;
  * report measured status and programmed limits through power_supply.
  * OTG operations use the real hardware bit and reject sourcing onto live VBUS.
  * Charging policy (source tables, JEITA, bypass) is in sgm_policy() below; it only
  * changes input/charge current, lowers the charge voltage in the hot band and restores
- * the firmware value afterwards.  It does not invent battery measurements.
+ * the selected profile voltage afterwards. It does not invent battery measurements.
  */
 #include <linux/bitops.h>
 #include <linux/i2c.h>
@@ -20,6 +20,7 @@
 #include <linux/slab.h>
 #include <linux/usb/phy.h>
 #include "u30pro-sgm41513-values.h"
+#include "u30pro-battery-profile.h"
 
 #define SGM_CONTROL 0x01
 #define SGM_TIMER 0x05
@@ -58,7 +59,9 @@ struct u30_sgm {
  unsigned long poll_errors;
  /* charging policy */
  bool policy_on;
- u8 boot_vreg;			/* REG04 as left by the firmware: upper bound for the charge voltage */
+ u8 boot_vreg;			/* diagnostic only; may contain an earlier JEITA reduction */
+ u32 cv_max_uv;
+ int battery_index, battery_id_mv;
  u32 tbl_ichg[4], tbl_iin[4];	/* 0 SDP, 1 DCP, 2 CDP, 3 other */
  struct sgm_jeita jeita[8];
  int jeita_n, jeita_idx;
@@ -93,11 +96,12 @@ static int sgm_ichg_code(u32 ua)
 
 static int sgm_cv_code(u32 uv)
 {
- int code = (int)(uv / 1000 - 3856) / 32;
- if (code < 0) code = 0;
- if (code > 24) code = 24;
- if (code == 15) code = 14;	/* code 15 is the 4.35 V special value */
- return code;
+ int code, best = 0;
+ /* Code 15 is exactly 4.35 V, not the linear sequence's 4.336 V. */
+ for (code = 0; code <= 24; code++)
+  if (sgm41513_cv_uv(code << 3) <= uv)
+   best = code;
+ return best;
 }
 
 static int sgm_update_reg(struct u30_sgm *s, u8 reg, u8 mask, u8 value)
@@ -110,36 +114,49 @@ static int sgm_update_reg(struct u30_sgm *s, u8 reg, u8 mask, u8 value)
  return ret;
 }
 
-static void sgm_load_tables(struct u30_sgm *s)
+static int sgm_load_tables(struct u30_sgm *s)
 {
  static const char * const names[4] = {
   "charge-sdp-current-microamp", "charge-dcp-current-microamp",
   "charge-cdp-current-microamp", "charge-unknown-current-microamp" };
- struct device_node *bat = of_find_compatible_node(NULL, NULL, "simple-battery");
+ struct device_node *bat;
  u32 pair[2], row[4];
- int i, n;
- if (!bat) return;
+ int i, n, ret;
+ bat = u30pro_battery_profile(s->dev->of_node, &s->battery_index, &s->battery_id_mv);
+ if (IS_ERR(bat)) return PTR_ERR(bat);
+ ret = of_property_read_u32(bat, "constant-charge-voltage-max-microvolt", &s->cv_max_uv);
+ if (ret) goto out;
+ if (s->cv_max_uv < 3856000 || s->cv_max_uv > 4624000) { ret = -EINVAL; goto out; }
  for (i = 0; i < 4; i++) {
-  if (of_property_read_u32_array(bat, names[i], pair, 2)) goto out;
+  ret = of_property_read_u32_array(bat, names[i], pair, 2);
+  if (ret) goto out;
   s->tbl_ichg[i] = pair[0]; s->tbl_iin[i] = pair[1];
  }
  n = of_property_count_u32_elems(bat, "dcp-jeita-temp-table");
- if (n < 8 || n % 4 || n / 4 > ARRAY_SIZE(s->jeita)) goto out;
+ if (n < 8 || n % 4 || n / 4 > ARRAY_SIZE(s->jeita)) { ret = -EINVAL; goto out; }
  for (i = 0; i < n / 4; i++) {
   if (of_property_read_u32_index(bat, "dcp-jeita-temp-table", i * 4 + 0, &row[0]) ||
       of_property_read_u32_index(bat, "dcp-jeita-temp-table", i * 4 + 1, &row[1]) ||
       of_property_read_u32_index(bat, "dcp-jeita-temp-table", i * 4 + 2, &row[2]) ||
-      of_property_read_u32_index(bat, "dcp-jeita-temp-table", i * 4 + 3, &row[3]))
-   goto out;
+      of_property_read_u32_index(bat, "dcp-jeita-temp-table", i * 4 + 3, &row[3])) {
+   ret = -EINVAL; goto out;
+  }
+  if (row[0] > 2000 || row[1] > 2000) { ret = -EINVAL; goto out; }
   s->jeita[i].t_up = (int)row[0] - 1000;
   s->jeita[i].t_rec = (int)row[1] - 1000;
   s->jeita[i].ichg = row[2];
   s->jeita[i].cv = row[3];
+  if ((i && s->jeita[i].t_up <= s->jeita[i - 1].t_up) ||
+      (row[2] && (row[3] < 3856000 || row[3] > 4624000))) {
+   ret = -EINVAL; goto out;
+  }
  }
  s->jeita_n = n / 4;
  s->policy_on = true;
+ ret = 0;
 out:
  of_node_put(bat);
+ return ret;
 }
 
 /* index of the JEITA band for a temperature: band i covers [t_up[i-1], t_up[i]); i == n means too hot */
@@ -149,6 +166,26 @@ static int sgm_band(struct u30_sgm *s, int t)
  for (i = 0; i < s->jeita_n; i++)
   if (t < s->jeita[i].t_up) return i;
  return s->jeita_n;
+}
+
+/* Each boundary has its own stock recovery point. Walk crossed boundaries so
+ * cooling out of the stop band can enter the warm band before normal charging.
+ */
+static int sgm_jeita_band(struct u30_sgm *s, int t)
+{
+ int target = sgm_band(s, t), band = s->jeita_idx;
+ if (band < 0) return target;
+ while (band < target) {
+  struct sgm_jeita *edge = &s->jeita[band];
+  if (edge->t_rec > edge->t_up && t < edge->t_rec) break;
+  band++;
+ }
+ while (band > target) {
+  struct sgm_jeita *edge = &s->jeita[band - 1];
+  if (edge->t_rec < edge->t_up && t > edge->t_rec) break;
+  band--;
+ }
+ return band;
 }
 
 /* SGM41513 PN0's PSEL indication is not a BC1.2 DCP/CDP result. The stock
@@ -214,7 +251,7 @@ static void sgm_policy(struct u30_sgm *s)
  if (ichg > 3000000) ichg = 3000000;
 
  /* JEITA */
- cv = sgm41513_cv_uv(s->boot_vreg);
+ cv = s->cv_max_uv;
  bat = power_supply_get_by_name("u30pro-battery");
  if (bat) {
   if (!power_supply_get_property(bat, POWER_SUPPLY_PROP_TEMP, &v)) temp = v.intval;
@@ -223,17 +260,7 @@ static void sgm_policy(struct u30_sgm *s)
  if (temp == INT_MIN) {
   if (ichg > 1000000) ichg = 1000000;	/* no temperature: stay gentle */
  } else {
-  band = sgm_band(s, temp);
-  if (s->jeita_idx >= 0 && band != s->jeita_idx) {
-   /* leaving a band towards a less restrictive one needs a 3 degC margin */
-   u32 cur_i = s->jeita_idx < s->jeita_n ? s->jeita[s->jeita_idx].ichg : 0;
-   u32 new_i = band < s->jeita_n ? s->jeita[band].ichg : 0;
-   if (new_i > cur_i) {
-    int lo = band > 0 ? s->jeita[band - 1].t_up : INT_MIN + 30;
-    int hi = band < s->jeita_n ? s->jeita[band].t_up : INT_MAX - 30;
-    if (temp < lo + 30 || temp > hi - 30) band = s->jeita_idx;
-   }
-  }
+  band = sgm_jeita_band(s, temp);
   s->jeita_idx = band;
   if (band >= s->jeita_n) {
    ichg = 0;
@@ -502,13 +529,14 @@ static ssize_t native_state_show(struct device *dev,
  int len;
  mutex_lock(&s->lock);
  len = sysfs_emit(buf, "hw_address=%02x legacy_id_result=%d data_writes=%lu watchdog_pings=%lu poll_errors=%lu last_error=%d "
-                  "policy=%d type=%d temp_dC=%d band=%d pd_mA=%d iin_uA=%u ichg_uA=%u cv_uV=%u charge=%d behaviour=%d user_iin=%u user_ichg=%u phy_present=%d phy_type=%d\n",
+                  "policy=%d type=%d temp_dC=%d band=%d pd_mA=%d iin_uA=%u ichg_uA=%u cv_uV=%u charge=%d behaviour=%d user_iin=%u user_ichg=%u phy_present=%d phy_type=%d profile=%d battery_id_mV=%d cv_max_uV=%u boot_vreg=%02x\n",
                   s->hw->addr, s->legacy_id_result, s->data_writes,
                   s->watchdog_pings, s->poll_errors, s->last_error,
                   s->policy_on, s->pol_type, s->pol_temp, s->jeita_idx, s->pol_pd_ma,
                   s->pol_iin, s->pol_ichg, s->pol_cv, s->pol_charge, s->behaviour,
                   s->user_iin, s->user_ichg,
-                  READ_ONCE(s->usb_phy->chg_state), READ_ONCE(s->usb_phy->chg_type));
+                  READ_ONCE(s->usb_phy->chg_state), READ_ONCE(s->usb_phy->chg_type),
+                  s->battery_index, s->battery_id_mv, s->cv_max_uv, s->boot_vreg);
  mutex_unlock(&s->lock);return len;
 }
 static DEVICE_ATTR(register_snapshot, 0400, register_snapshot_show, NULL);
@@ -572,8 +600,11 @@ static int sgm_probe(struct i2c_client *client)
  s->jeita_idx = -1;
  ret = sgm_read(s, 0x04);
  if (ret < 0) return ret;
- s->boot_vreg = ret;		/* the firmware's charge voltage is the ceiling */
- if (battery_present) sgm_load_tables(s);
+ s->boot_vreg = ret;
+ if (battery_present) {
+  ret = sgm_load_tables(s);
+  if (ret) return dev_err_probe(dev, ret, "selected stock battery charge profile is invalid\n");
+ }
  psy_cfg.drv_data = s;psy_cfg.of_node = dev->of_node;
  s->psy = devm_power_supply_register(dev, &s->psy_desc, &psy_cfg);
  if (IS_ERR(s->psy)) return dev_err_probe(dev, PTR_ERR(s->psy), "power_supply registration failed\n");

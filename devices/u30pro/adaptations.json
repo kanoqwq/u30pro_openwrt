@@ -116,8 +116,8 @@
   },
   "kernel/ums9632/overlay/drivers/power/supply/u30pro-sgm41513.c": {
     "source_sha256": "604a09d3c82ecc46610dc401ca871045b23b90b905063e86ca56c367b6726d31",
-    "sha256": "21eec9fef063f34bc87bde479ddead83e119f8dde2ba3c44eb4e0b104975841a",
-    "reason": "Use the stock USB2 PHY/PMIC BC1.2 result, not SGM41513 PN0 PSEL bits, to select the existing stock SDP/DCP/CDP tables and report USB type. Atomic notifications queue process-context policy, probe defers for its provider and cleanup unregisters before cancelling workers. Preserve PD negotiation, user limits, JEITA, bypass, CV and OTG guards. 2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing."
+    "sha256": "cbdf9d5cf6a72cef4f694646eaea14a8d69f9efca6d161e996811d0ed555c7fd",
+    "reason": "Use the stock USB2 PHY/PMIC BC1.2 result, not SGM41513 PN0 PSEL bits, to select the existing stock SDP/DCP/CDP tables and report USB type. Atomic notifications queue process-context policy, probe defers for its provider and cleanup unregisters before cancelling workers. Preserve PD negotiation, user limits, JEITA, bypass, CV and OTG guards. 2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing. 2026-11-08: share stock bat.id resistor/profile selection between charger and FGU; obtain normal CV from the selected battery rather than an inherited warm register. Preserve 4.35 V special encoding and each JEITA recovery boundary; retain source limits, user pause, PD, OTG and no-battery exclusion. Evidence and validation boundaries: docs/U30PRO-CHARGE-PROFILE-20261108.zh-CN.md."
   },
   "kernel/ums9632/overlay/drivers/power/supply/Kconfig.u30pro": {
     "source_sha256": "32fbd94b6b7b90b08f53ead42fae22fb05eac04515dcb0c2e959fd0674ed39b1",
@@ -186,8 +186,8 @@
   },
   "kernel/ums9632/overlay/drivers/power/supply/u30pro-ump965x-fgu.c": {
     "source_sha256": "c30e0967b9b05a0c503bd6ff5b20a4665008afd013b9b4c9288dca87bd5b72d2",
-    "reason": "2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing.",
-    "sha256": "8487646c4018e9cfcf9c64e9f9124d2790040c261ee0670b6e51783f1999fe89"
+    "reason": "2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing. 2026-11-08: share stock bat.id resistor/profile selection between charger and FGU; obtain normal CV from the selected battery rather than an inherited warm register. Preserve 4.35 V special encoding and each JEITA recovery boundary; retain source limits, user pause, PD, OTG and no-battery exclusion. Evidence and validation boundaries: docs/U30PRO-CHARGE-PROFILE-20261108.zh-CN.md.",
+    "sha256": "1b96ee28c03015ad51ea2bbef0855bc4fbb7002ff9f659dbd268d7d2887eaa7c"
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/Kconfig": {
     "source_sha256": "be2eeea729c778ef8009779f8b378325f3f0ded2bb5796bad8a4c823a13007ff",

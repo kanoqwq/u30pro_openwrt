@@ -87,7 +87,7 @@ static void cancel_delayed_work_sync(struct delayed_work *w){(void)w;cancelled++
 FUNCTIONS
 int main(int argc,char **argv){
  assert(argc==2);struct usb_phy phy={USB_CHARGER_PRESENT,SDP_TYPE};
- struct u30_sgm s={.usb_phy=&phy,.psy=&battery,.policy_on=true,.boot_vreg=0x88,
+ struct u30_sgm s={.usb_phy=&phy,.psy=&battery,.policy_on=true,.boot_vreg=0x88,.cv_max_uv=4400000,
   .jeita_n=1,.jeita_idx=-1,.tbl_iin={500000,3000000,1500000,1000000},
   .tbl_ichg={700000,2000000,1500000,1000000}};
  s.jeita[0]=(struct sgm_jeita){.t_up=1000,.t_rec=970,.ichg=3000000,.cv=4400000};
@@ -130,6 +130,50 @@ int main(int argc,char **argv){
  case 6:
   sgm_cancel_poll(&s);assert(s.stopping && cancelled==2);
   assert(sgm_source_notify(&s.usb_nb,0,&phy)==NOTIFY_DONE && !queued);break;
+ case 7:
+  for (unsigned uv=3856000;uv<=4624000;uv+=1000) {
+   unsigned code=sgm_cv_code(uv),actual=sgm41513_cv_uv(code<<3);
+   assert(actual<=uv);
+   for (unsigned candidate=0;candidate<=24;candidate++)
+    assert(sgm41513_cv_uv(candidate<<3)>uv || sgm41513_cv_uv(candidate<<3)<=actual);
+  }
+  for (int code=0;code<=24;code++)
+   assert(sgm_cv_code(sgm41513_cv_uv(code<<3))==code);
+  break;
+ case 8:
+  phy.chg_type=DCP_TYPE;
+  s.boot_vreg=0x38; // Previous warm CV was 4.08 V; current stock profile is 4.4 V.
+  sgm_policy(&s);assert(s.pol_cv==4400000 && sgm41513_cv_uv(regs[4])==4400000);
+  s.cv_max_uv=4200000;sgm_policy(&s);
+  assert(s.pol_cv==4200000 && sgm41513_cv_uv(regs[4])<=4200000);
+  s.cv_max_uv=4350000;sgm_policy(&s);
+  assert(sgm41513_cv_uv(regs[4])==4350000);
+  break;
+ case 9:
+  phy.chg_type=DCP_TYPE;s.jeita_n=5;
+  s.jeita[0]=(struct sgm_jeita){0,30,0,4400000};
+  s.jeita[1]=(struct sgm_jeita){50,80,490000,4400000};
+  s.jeita[2]=(struct sgm_jeita){150,180,1400000,4400000};
+  s.jeita[3]=(struct sgm_jeita){450,420,3400000,4400000};
+  s.jeita[4]=(struct sgm_jeita){500,480,2400000,4100000};
+  temp=460;sgm_policy(&s);assert(s.jeita_idx==4 && s.pol_cv==4100000);
+  temp=430;sgm_policy(&s);assert(s.jeita_idx==4 && s.pol_cv==4100000);
+  temp=420;sgm_policy(&s);assert(s.jeita_idx==3 && s.pol_cv==4400000);
+  temp=501;sgm_policy(&s);assert(s.jeita_idx==5 && !s.pol_charge);
+  temp=481;sgm_policy(&s);assert(s.jeita_idx==5 && !s.pol_charge);
+  temp=480;sgm_policy(&s);assert(s.jeita_idx==4 && s.pol_charge && s.pol_cv==4100000);
+  temp=330;sgm_policy(&s);assert(s.jeita_idx==3 && s.pol_cv==4400000);
+  temp=-1;sgm_policy(&s);assert(s.jeita_idx==0 && !s.pol_charge);
+  temp=29;sgm_policy(&s);assert(s.jeita_idx==0 && !s.pol_charge);
+  temp=30;sgm_policy(&s);assert(s.jeita_idx==1 && s.pol_ichg==490000);
+  temp=79;sgm_policy(&s);assert(s.jeita_idx==1);
+  temp=80;sgm_policy(&s);assert(s.jeita_idx==2 && s.pol_ichg==1400000);
+  temp=179;sgm_policy(&s);assert(s.jeita_idx==2);
+  temp=180;sgm_policy(&s);assert(s.jeita_idx==3);
+  temp=149;sgm_policy(&s);assert(s.jeita_idx==2);
+  s.jeita_idx=5;temp=440;sgm_policy(&s);
+  assert(s.jeita_idx==4 && s.pol_charge); // Cross two boundaries, only one recovered.
+  break;
  default:assert(0);
  }
  return 0;
@@ -138,7 +182,7 @@ int main(int argc,char **argv){
         structs = '\n'.join(declaration(r'^struct '+name+r'\s*\{')+';'
                             for name in ('sgm_jeita','u30_sgm'))
         functions = '\n'.join(declaration(r'^static (?:int|void) '+name+r'\([^;{}]*\)\s*\{')
-            for name in ('sgm_ichg_code','sgm_cv_code','sgm_band','sgm_source_type',
+            for name in ('sgm_ichg_code','sgm_cv_code','sgm_band','sgm_jeita_band','sgm_source_type',
                          'sgm_usb_type','sgm_policy','sgm_source_work','sgm_source_notify','sgm_cancel_poll'))
         (base/'test.c').write_text(model.replace('STRUCTS',structs).replace('FUNCTIONS',functions))
         cls.binary=base/'sources'
@@ -156,6 +200,9 @@ int main(int argc,char **argv){
     def test_bypass_jeita_and_factory_voltage_remain_in_force(self):self.case(4)
     def test_atomic_notification_only_queues_process_context_policy(self):self.case(5)
     def test_shutdown_cancels_both_workers_and_blocks_further_events(self):self.case(6)
+    def test_every_cv_code_and_special_4350_value_roundtrip_without_overshoot(self):self.case(7)
+    def test_selected_profile_recovers_from_inherited_warm_cv_and_preserves_lower_cv(self):self.case(8)
+    def test_stock_jeita_recovery_edges_and_multiband_transitions(self):self.case(9)
 
 
 if __name__=='__main__':unittest.main(verbosity=2)
