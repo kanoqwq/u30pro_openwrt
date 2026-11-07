@@ -54,6 +54,14 @@ def digest(path):
     return h.hexdigest()
 
 
+def normalize_zip_timestamp(path):
+    """Clamp archive-inherited dates in owned package staging, not input caches."""
+    saved = path.stat()
+    if not 1980 <= time.localtime(saved.st_mtime).tm_year <= 2107:
+        stamp = time.mktime((1980, 1, 1, 0, 0, 0, 0, 1, -1))
+        os.utime(path, (saved.st_atime, stamp))
+
+
 def verified_kernel():
     report = json.loads((KERNEL/'u30pro-build.json').read_text())
     overlay = NATIVE/'kernel/ums9632/overlay'
@@ -688,7 +696,9 @@ def package():
     candidate=output.with_suffix('.zip.pending')
     with zipfile.ZipFile(candidate,'x',zipfile.ZIP_DEFLATED,compresslevel=3) as archive:
         for path in sorted(package_root.rglob('*')):
-            if path.is_file(): write_member(archive,path,path.relative_to(package_root).as_posix())
+            if path.is_file():
+                normalize_zip_timestamp(path)
+                write_member(archive,path,path.relative_to(package_root).as_posix())
     runpy.run_path(str(TOP/'tools/build-release.py'))['verify_archive'](
         candidate,require_diff=True,require_android=True)
     candidate.rename(output)

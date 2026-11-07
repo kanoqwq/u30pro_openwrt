@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import zipfile
 from unittest import mock
 
 
@@ -45,6 +46,31 @@ class RetainedRoot(unittest.TestCase):
 
     def save(self):
         (self.stage/'state.json').write_text(json.dumps(self.state))
+
+    def test_epoch_dated_native_file_can_be_archived_without_changing_payload(self):
+        source = self.work/'native.apk'
+        source.write_bytes(b'verified native artifact')
+        source.chmod(0o755)
+        os.utime(source, (0, 0))
+        staged = self.stage/'OpenWrt-Tools.apk'
+        package.shutil.copy2(source, staged)
+        package.normalize_zip_timestamp(staged)
+        output = self.work/'package.zip'
+        with zipfile.ZipFile(output, 'w') as archive:
+            archive.write(staged, staged.name)
+        with zipfile.ZipFile(output) as archive:
+            self.assertEqual(archive.read(staged.name), source.read_bytes())
+            self.assertEqual(archive.getinfo(staged.name).date_time, (1980, 1, 1, 0, 0, 0))
+        self.assertEqual(source.stat().st_mtime, 0)
+        self.assertEqual(staged.stat().st_mode, source.stat().st_mode)
+
+    def test_valid_native_timestamp_is_preserved(self):
+        staged = self.stage/'valid.exe'
+        staged.write_bytes(b'fixture')
+        stamp = 1700000000
+        os.utime(staged, (stamp, stamp))
+        package.normalize_zip_timestamp(staged)
+        self.assertEqual(staged.stat().st_mtime, stamp)
 
     def test_missing_previous_archive_does_not_block_current_source_copy(self):
         self.assertFalse(Path(self.state['release']).exists())
