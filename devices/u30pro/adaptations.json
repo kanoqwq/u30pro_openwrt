@@ -273,5 +273,10 @@
     "source_sha256": "68c00c89e9e323b351aa3d4d53caa29e04e3f57b3645f087ad68643f208115f5",
     "sha256": "0fca04995d00954ec0cf174a86de8895b533dcbe1dc29231c3ce8607b98b1cd4",
     "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/thermal_sensor/u30pro_sprd_shell_thm.c": {
+    "source_sha256": "68c7482bd49864a495a2c5c1b95528cf3ae3216a66d9ac635e371d6bb39769a9",
+    "sha256": "64c90ee71466857542fa0b1067aea272391fd51e624263b4df7ed351e9529a36",
+    "reason": "Quiet only WCN thermal read errors at the shell estimator debug level. Retain abnormal-temperature warnings, other sensor warnings, stock retry count, history and board-temperature fallback; do not change thermal protection."
   }
 }

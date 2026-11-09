@@ -27,6 +27,7 @@
 #include <linux/platform_device.h>
 #include <linux/pm.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 #include <linux/thermal.h>
 #include <linux/workqueue.h>
 
@@ -107,7 +108,11 @@ static void shell_update(struct shell_sensor *s)
 				break;
 		}
 		if (tries == SHELL_THM_READ_TRIES) {
-			pr_warn_ratelimited("reading %s failed\n", s->sensor_names[i]);
+			/* WCN read errors are debug-only; retain abnormal temperature warnings. */
+			if (ret && !strcmp(s->sensor_names[i], "wcn-thmzone"))
+				dev_dbg_ratelimited(s->dev, "reading %s failed\n", s->sensor_names[i]);
+			else
+				pr_warn_ratelimited("reading %s failed\n", s->sensor_names[i]);
 			goto fallback;
 		}
 

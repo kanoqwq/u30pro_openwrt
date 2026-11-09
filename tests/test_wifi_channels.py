@@ -22,6 +22,7 @@ from helpers import BIN, TOP, ShellTest
 
 LIB = TOP / 'rootfs' / 'overlay' / 'opt' / 'mu300' / 'lib' / 'wifi-channels.sh'
 PATCH = TOP / 'openwrt' / 'patches' / 'wifi-scripts-no-dfs.patch'
+BAND_PATCH = PATCH.with_name('wifi-scripts-chanlist-band.patch')
 FIXTURES = TOP / 'tests' / 'fixtures' / 'wifi-scripts'
 FIVE = [36, 40, 44, 48, 52, 56, 60, 64, 100, 104, 108, 112, 116, 120, 124, 128, 132, 136, 140, 144,
         149, 153, 157, 161, 165]
@@ -382,6 +383,10 @@ class WifiScriptsPatch(unittest.TestCase):
         self.assertIn('-v "$TOP/openwrt/patches/wifi-scripts-no-dfs.patch":/in/wifi-scripts-no-dfs.patch:ro', text)
         apply = 'patch --batch --fuzz=0 -d $R -p1 -i /in/wifi-scripts-no-dfs.patch'
         self.assertIn(apply, text)
+        band_apply = 'patch --batch --fuzz=0 -d $R -p1 -i /in/wifi-scripts-chanlist-band.patch'
+        self.assertIn('-v "$TOP/openwrt/patches/wifi-scripts-chanlist-band.patch":/in/wifi-scripts-chanlist-band.patch:ro', text)
+        self.assertIn(band_apply, text)
+        self.assertLess(text.index(apply), text.index(band_apply))
         self.assertIn('grep -q "device_no_dfs(config);" $R/usr/share/ucode/wifi/hostapd.uc || {', text)
         # in every OpenWrt system (outside the panel block), after the copy into $R, before the patch tool goes
         self.assertLess(text.index('cp -a /in/overlay/. $R/'), text.index(apply))
@@ -389,7 +394,7 @@ class WifiScriptsPatch(unittest.TestCase):
         self.assertLess(text.index(apply), text.index('cd $R && tar -czf'))
 
     def test_patch(self):
-        p = PATCH.read_text()
+        p = PATCH.read_text()+BAND_PATCH.read_text()
         self.assertTrue(p.startswith('--- a/usr/share/ucode/wifi/hostapd.uc\n+++ b/usr/share/ucode/wifi/hostapd.uc\n'))
         added = '\n'.join(l[1:] for l in p.splitlines() if l.startswith('+') and not l.startswith('+++'))
         # the capability is read from the driver, not assumed: radar_detect_widths in an interface combination
@@ -397,6 +402,7 @@ class WifiScriptsPatch(unittest.TestCase):
         self.assertIn('c.radar_detect_widths', added)
         self.assertIn('config.acs_exclude_dfs = true;', added)
         self.assertIn('device_no_dfs(config);', added)
+        self.assertIn('device_chanlist_band(config);', added)
         self.assertNotRegex(added, r'config\.htmode\s*=(?!=)')
 
 
@@ -416,7 +422,7 @@ class WifiScriptsInOpenWrt(unittest.TestCase):
             e.update(flags.get(c, {'radar': True, 'no_ir': True} if 52 <= c <= 144 else {}))
             freqs.append(e)
         return {'extended_features': [0] * 16, 'cipher_suites': [], 'interface_combinations': [comb],
-                'wiphy_bands': [{'freqs': [{'freq': 2412}]}, {'freqs': freqs, 'ht_capa': 0x1fe,
+                'wiphy_bands': [{'freqs': [{'freq': 2407 + 5 * c} for c in range(1, 14)], 'ht_capa': 0x1fe}, {'freqs': freqs, 'ht_capa': 0x1fe,
                                                                'vht_capa': 0x339071b2}]}
 
     @staticmethod
@@ -442,6 +448,11 @@ class WifiScriptsInOpenWrt(unittest.TestCase):
             'auto': (False, {}, 'auto', 'VHT80', None),
             'auto-radar': (True, {}, 'auto', 'VHT80', None),
             'auto-list': (False, {}, 'auto', 'VHT80', {'channels': '36 40 44 48 149 153 157 161 165'}),
+            '2g-auto-5glist': (False, {}, 'auto', 'HT20', {'band':'2g','channels':'36 40 44 48'}),
+            '2g-auto-mixed': (False, {}, 'auto', 'HT40', {'band':'2g','channels':['1 6', '36', '1-11', '1-36']}),
+            '2g-auto-list': (False, {}, 'auto', 'HT20', {'band':'2g','channels':'1 6 11'}),
+            '5g-auto-2glist': (False, {}, 'auto', 'VHT80', {'channels':'1 6 11'}),
+            '2g-auto-invalid': (False, {}, 'auto', 'HT20', {'band':'2g','channels':['1-6-11', '11-1', '0x6', '6']}),
             'no36-60': (False, no36, 60, 'VHT80', None),
             'partial36-60': (False, {48: {'disabled': True}}, 60, 'VHT80', None),
             'only40-60': (False, {c: {'disabled': True} for c in FIVE if c not in (36, 40, 60)}, 60, 'VHT80', None),
@@ -461,6 +472,7 @@ class WifiScriptsInOpenWrt(unittest.TestCase):
 mkdir -p /var/lock /var/run /tmp /fake/wifi
 apk update >/dev/null && apk add wifi-scripts patch >/dev/null 2>&1 || exit 1
 patch --batch --fuzz=0 -p1 -d / -i /in/wifi-scripts-no-dfs.patch || exit 1
+patch --batch --fuzz=0 -p1 -d / -i /in/wifi-scripts-chanlist-band.patch || exit 1
 grep -q "device_no_dfs(config);" /usr/share/ucode/wifi/hostapd.uc || exit 1
 sed -e "s/^export function wiphy_info(phy) {/function nl_wiphy_info(phy) {/" /usr/share/ucode/wifi/common.uc > /fake/wifi/common.uc
 grep -q "^function nl_wiphy_info" /fake/wifi/common.uc || exit 1
@@ -512,6 +524,21 @@ done
             self.assertEqual((c['channel'], c['acs_exclude_dfs']), ('0', '0'))
             _, c = conf('auto-list')
             self.assertEqual((c['acs_exclude_dfs'], c['chanlist']), ('1', '36 40 44 48 149 153 157 161 165'))
+            text,c=conf('2g-auto-5glist')
+            self.assertEqual((c['hw_mode'],c['channel']),('g','0'))
+            self.assertNotIn('chanlist',c)
+            self.assertIn('channel list: 36 40 44 48 not on the 2g band or invalid, left out',text)
+            _,c=conf('2g-auto-mixed')
+            self.assertEqual(c['chanlist'],'1 6 1-11')
+            self.assertIn('HT40',c['ht_capab'])
+            text,c=conf('2g-auto-list')
+            self.assertEqual(c['chanlist'],'1 6 11')
+            self.assertNotIn('channel list:',text)
+            _,c=conf('5g-auto-2glist')
+            self.assertEqual((c['channel'],c['acs_exclude_dfs']),('0','1'))
+            self.assertNotIn('chanlist',c)
+            _,c=conf('2g-auto-invalid')
+            self.assertEqual(c['chanlist'],'6')
             _, c = conf('only40-60-vht40')
             self.assertEqual((c['channel'], c['vht_oper_chwidth']), ('36', '0'))
             # Cannot fit the requested width on 36: error, not 149 or narrower.

@@ -51,6 +51,22 @@ def kernel_checks():
     print(f'Matched Image/config/source receipt and {count} installed modules')
 
 
+def wifi_checks():
+    """Check already-staged output without patching or refreshing receipts."""
+    scope=runpy.run_path(str(TOP/'tools/stage-wifi-patches.py'))
+    target=ROOT/scope['RELATIVE']
+    records=json.loads((ROOT.parent/'shared-patches.json').read_text())
+    for name in scope['PATCHES']:
+        assert records.get(name)=={'patch':scope['digest'](TOP/'openwrt/patches'/name),
+                                   'result':scope['digest'](target)}, 'Stale composed Wi-Fi policy: '+name
+    text=target.read_text()
+    for function in ('device_no_dfs','device_chanlist_band'):
+        assert text.count(function+'(config);')==1, 'Missing or duplicate Wi-Fi policy: '+function
+    view=(ROOT/'www/luci-static/resources/view/network/wireless.js').read_text()
+    assert 'unisoc-wifi-width-options:v1' in view, 'Missing unsupported-width UI policy'
+    print('Matched shared DFS/band-list source receipts and composed hostapd generator')
+
+
 def modem_checks(include_dashboard=True):
     if os.environ.get('U30PRO_BUILD_LOCKED')!='1':raise ValueError('Use build-release.py run')
     assert (ROOT/'etc/mu300/model').read_text().strip()==MODEL['id']
@@ -78,7 +94,9 @@ def modem_checks(include_dashboard=True):
                'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/apn.uc',
                'openwrt/luci-app-mu300/root/usr/share/rpcd/acl.d/luci-app-mu300.json']
         names += ['tests/test_cellular_mobility.py','tests/test_data_events.py',
-                  'tests/test_sms_events.py','tests/test_registration_scope.py',
+                  'tests/test_sms_events.py','tests/test_sms_slot_receive.py','tests/test_registration_scope.py',
+                  'rootfs/overlay/opt/mu300/bin/mu300-sms','rootfs/overlay/opt/mu300/bin/mu300-cmt-spool',
+                  'rootfs/overlay/opt/mu300/lib/sms-pdu.awk',
                   'rootfs/overlay/opt/mu300/bin/mobile-data',
                   'rootfs/overlay/opt/mu300/bin/mu300-smsd',
                   'rootfs/overlay/opt/mu300/bin/mu300-sim-env',
@@ -91,6 +109,10 @@ def modem_checks(include_dashboard=True):
         for name in names:
             dest=snapshot/name;dest.parent.mkdir(parents=True,exist_ok=True)
             dest.write_bytes((TOP/name).read_bytes())
+            # Stored-SMS tests execute the actual importer as a child. A fresh
+            # fixture defaults to 0644, unlike the installed /opt entry points.
+            if name.startswith('rootfs/overlay/opt/mu300/bin/'):
+                dest.chmod(0o755)
         if include_dashboard:
             print(run('chroot /target /bin/sh -ec "cd /tmp/u30pro-snapshot-test/tests; '
                       'python3 -m unittest test_native_dashboard.NativeSnapshot"'),end='')
@@ -102,7 +124,7 @@ def modem_checks(include_dashboard=True):
                   'test_modemd.ModemdUbus.test_full_round_publishes_serving_and_neighbors_while_identity_is_pending '
                   'test_modemd.ModemdUbus.test_unanswered_core_publishes_error_without_identity_or_number_reads '
                   'test_modemd.ModemdUbus.test_at_status_and_events '
-                  'test_cellular_mobility test_data_events test_sms_events test_registration_scope"',platform_fixture),end='')
+                  'test_cellular_mobility test_data_events test_sms_events test_sms_slot_receive test_registration_scope"',platform_fixture),end='')
         print(run('chroot /target /bin/sh -ec "mkdir -p /var/run/ubus; cd /tmp/u30pro-snapshot-test/tests; '
                   'MU300_TEST_SHELLS=sh MU300_TEST_UBUSD=/sbin/ubusd MU300_TEST_UBUS=/bin/ubus python3 -m unittest -v '
                   'test_modemd.ModemdUbus.test_pro_shared_pool_publishes_the_requested_card '
@@ -117,6 +139,7 @@ def modem_checks(include_dashboard=True):
 def main():
     if os.environ.get('U30PRO_BUILD_LOCKED')!='1':raise ValueError('Use build-release.py run')
     kernel_checks()
+    wifi_checks()
     flow=runpy.run_path(str(TOP/'tools/stage-flow-offload.py'))
     assert flow['FIXED'] in (ROOT/'usr/share/ucode/fw4.uc').read_text(), 'Stale fw4 topology discovery in prepared root'
     # These are production inputs, never files recovered from a hotfixed device.
@@ -144,6 +167,9 @@ def main():
         'opt/mu300/bin/mu300-dual-radio':'rootfs/overlay/opt/mu300/bin/mu300-dual-radio',
         'opt/mu300/bin/mu300-sim-env':'rootfs/overlay/opt/mu300/bin/mu300-sim-env',
         'opt/mu300/bin/mu300-smsd':'rootfs/overlay/opt/mu300/bin/mu300-smsd',
+        'opt/mu300/bin/mu300-sms':'rootfs/overlay/opt/mu300/bin/mu300-sms',
+        'opt/mu300/bin/mu300-cmt-spool':'rootfs/overlay/opt/mu300/bin/mu300-cmt-spool',
+        'usr/libexec/unisoc-modem/sms-forward':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/sms-forward',
         'opt/mu300/bin/mu300-usb':'rootfs/overlay/opt/mu300/bin/mu300-usb',
         'opt/mu300/bin/mu300-physical-sim':'rootfs/overlay/opt/mu300/bin/mu300-physical-sim',
         'opt/mu300/bin/mu300-v50-sim':'rootfs/overlay/opt/mu300/bin/mu300-v50-sim',

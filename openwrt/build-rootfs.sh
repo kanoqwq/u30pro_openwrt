@@ -135,6 +135,7 @@ docker run --rm --platform linux/arm64 \
   -v "$TOP/rootfs/overlay/opt/mu300":/in/opt-mu300:ro -v "$TOP/rootfs/overlay/usr/share/ucode/mu300":/in/ucode-mu300:ro -v "$TOP/openwrt/overlay":/in/overlay:ro \
   -v "$TOP/tools/stage-flow-offload.py":/in/stage-flow-offload.py:ro \
   -v "$TOP/openwrt/patches/wifi-scripts-no-dfs.patch":/in/wifi-scripts-no-dfs.patch:ro \
+  -v "$TOP/openwrt/patches/wifi-scripts-chanlist-band.patch":/in/wifi-scripts-chanlist-band.patch:ro \
   -v "$TOP/boot/module-order.txt":/in/module-order.txt:ro -v "$IN/out/modules":/in/modules:ro \
   $(opt out/modules.builtin modules.builtin) $(opt out/modules.builtin.modinfo modules.builtin.modinfo) \
   $(opt firmware firmware) $(opt android-subset android-subset) $(opt android-gpu-subset android-gpu-subset) \
@@ -243,12 +244,15 @@ python3 /in/stage-flow-offload.py --root $R
 apk_retry add patch >/dev/null
 patch --batch --fuzz=0 -d $R -p1 -i /in/wifi-scripts-no-dfs.patch
 grep -q "device_no_dfs(config);" $R/usr/share/ucode/wifi/hostapd.uc || { echo "wifi-scripts DFS patch not applied" >&2; exit 1; }
+patch --batch --fuzz=0 -d $R -p1 -i /in/wifi-scripts-chanlist-band.patch
+grep -q "device_chanlist_band(config);" $R/usr/share/ucode/wifi/hostapd.uc || { echo "wifi-scripts channel-list band patch not applied" >&2; exit 1; }
 if [ -d /in/luci-plugin ]; then
     cp -a /in/luci-plugin/root/. $R/
     cp -a /in/luci-plugin/htdocs/. $R/www/
     chmod 0600 $R/etc/config/mu300-charge
     chmod 0755 $R/etc/init.d/mu300-charge $R/etc/hotplug.d/power_supply/75-mu300-charge $R/usr/libexec/rpcd/mu300-charge
     ucode $R/usr/libexec/unisoc-modem/disable-channel-analysis $R
+    ucode $R/usr/libexec/unisoc-modem/limit-wifi-widths $R
     ucode $R/usr/libexec/unisoc-modem/filter-wifi-ciphers $R
     chmod 0755 $R/etc/init.d/unisoc-cpu $R/etc/init.d/unisoc-cpu-cores $R/usr/libexec/rpcd/unisoc-cpu-cores
     chmod 0755 $R/etc/init.d/unisoc-cpu-idle $R/usr/libexec/rpcd/unisoc-cpu-idle
@@ -257,7 +261,7 @@ if [ -d /in/luci-plugin ]; then
     chmod 0755 $R/usr/libexec/rpcd/unisoc-roaming
     chmod 0600 $R/etc/config/unisoc_apn
     chmod 0755 $R/etc/init.d/unisoc-ttl $R/etc/hotplug.d/iface/92-unisoc-ttl $R/etc/hotplug.d/net/92-unisoc-ttl $R/etc/uci-defaults/98-unisoc-ttl
-    chmod 0755 $R/etc/uci-defaults/97-unisoc-upgrade-policy
+    chmod 0755 $R/etc/uci-defaults/97-unisoc-upgrade-policy $R/etc/uci-defaults/99-unisoc-wifi-widths
     chmod 0755 $R/etc/init.d/unisoc-modem-ui $R/etc/init.d/unisoc-sms-forward $R/etc/init.d/unisoc-traffic $R/etc/hotplug.d/net/90-unisoc-usb-host $R/etc/hotplug.d/iface/90-unisoc-usb-host $R/usr/libexec/rpcd/mu300dash $R/usr/libexec/unisoc-modem/*
     # rpcd refuses world-writable plugins from a Windows bind mount.
     chmod 0644 $R/usr/share/rpcd/ucode/*.uc $R/usr/share/ucode/mu300/*.uc

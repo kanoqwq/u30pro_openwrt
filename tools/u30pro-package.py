@@ -466,22 +466,14 @@ def finish():
         '--scripts=no','--commit-hooks=no','/theme.apk'],check=True)
     defaults.write_text(defaults.read_text().replace('exit 0\n',
         "uci set luci.main.mediaurlbase='/luci-static/aurora'\nuci commit luci\nexit 0\n"))
+    target('ucode /target/usr/libexec/unisoc-modem/limit-wifi-widths /target')
     patched=STAGE/'shared-patches.json'
     applied=json.loads(patched.read_text()) if patched.is_file() else {}
     # Migrate the previous fixed-SIPA patch through the reviewed source transform.
     runpy.run_path(str(TOP/'tools/stage-flow-offload.py'))['stage'](ROOT)
     if applied.pop('fw4-sipa-offload.patch', None) is not None:
         patched.write_text(json.dumps(applied,indent=2)+'\n')
-    for name, relative in (('wifi-scripts-no-dfs.patch','usr/share/ucode/wifi/hostapd.uc'),):
-        source=TOP/'openwrt/patches'/name; file=ROOT/relative
-        before=applied.get(name)
-        if before:
-            if before!={'patch':digest(source),'result':digest(file)}:
-                raise ValueError('Shared root patch source/result changed: '+name)
-        else:
-            subprocess.run(['patch','--batch','--fuzz=0','-d',str(ROOT),'-p1','-i',str(source)],check=True)
-            applied[name]={'patch':digest(source),'result':digest(file)}
-            patched.write_text(json.dumps(applied,indent=2)+'\n')
+    runpy.run_path(str(TOP/'tools/stage-wifi-patches.py'))['stage'](ROOT,TOP/'openwrt/patches',patched)
     baseline=target('MU300_LIB=1; export MU300_LIB; . /target/opt/mu300/bin/mu300-update; upk_manual /target openwrt')
     if not baseline.strip():raise ValueError('Image package baseline is empty')
     (etc/'image-packages').write_text(baseline)
