@@ -1482,18 +1482,25 @@ static int toast_moving(void) { return g_ms < toast.until && (g_ms - toast.start
  * real full-screen refresh: a still screen is rewritten once a second even when the frame did not change. */
 static long frame_interval(void);
 
+static int charging_animation_visible(void)
+{
+	if (asleep || !D.bat_ok || D.bat_pct <= 0 || !D.charging || notice[0] || power_menu || incoming_visible()) return 0;
+	if (pin_mode) return pin_mode == PIN_LOCKSCR;
+	if (ov != OV_NONE || sheet_is_open()) return 0;
+	return page == PG_HOME || (page == PG_FUNC && fn_sub >= 0 && fn_sub < nfn_entries &&
+		fn_entries[fn_sub].plugin < 0 && fn_entries[fn_sub].fn == FN_POWER);
+}
+
 static int fast_frames(void)
 {
-	int power_page = fn_sub >= 0 && fn_sub < nfn_entries && fn_entries[fn_sub].plugin < 0 && fn_entries[fn_sub].fn == FN_POWER;
-
 	return anim_on || dragging || sheet_anim || tc.sdrag || fling.on || scroll_moving || press_busy() || smooth_busy() || tile_moving || hold_pct > 0 ||
 	       g_ms < toast.until || g_ms < wifi_busy_until || g_ms < recon_busy_until || g_ms < relay_busy_until || g_ms < bypass_busy_until || g_ms < splash_until || marquee_on ||
-	       ((page == PG_HOME || power_page || pin_mode == PIN_LOCKSCR) && D.charging);
+	       charging_animation_visible();
 }
 
 static long frame_interval(void)
 {
-	if (anim_on || dragging || sheet_anim || tc.sdrag || fling.on) return 16;
+	if (anim_on || dragging || sheet_anim || tc.sdrag || fling.on || charging_animation_visible()) return 16;
 	if (notice[0]) return 33;
 	if (press_busy() || smooth_busy() || tile_moving || toast_moving() || hold_pct > 0 || marquee_moving) return 33;
 	return fast_frames() ? 110 : 1000;

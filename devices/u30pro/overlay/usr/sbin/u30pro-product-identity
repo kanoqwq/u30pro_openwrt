@@ -1,0 +1,79 @@
+#!/usr/bin/python3
+"""Restore only a missing legacy Pro product marker before CP startup.
+
+An existing valid marker keeps its original interpretation. For reconstruction,
+the installed release and native mux must agree: platform u30pro alone cannot
+distinguish MU5358 from MU3356. No card, GPIO or AT action is performed here.
+"""
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+
+
+def prepare(root, restore=False):
+    base = root / 'etc/mu300'
+    layouts = {'u30pro': 'mu5358', 'f50pro': 'mu3356'}
+    marker = base / 'model'
+    # Do not add requirements to working installations or replace a user's
+    # existing marker. The extra evidence below is only for recreating a file.
+    if marker.exists() or marker.is_symlink():
+        if not marker.is_file():
+            raise ValueError('product marker must resolve to a regular file')
+        profile = marker.read_text().strip()
+        if profile not in layouts:
+            raise ValueError('unsupported product marker')
+        return profile
+    if not restore:
+        raise ValueError('product marker is missing')
+    profile = json.loads((base / 'release.json').read_text())['profile']
+    if profile not in layouts:
+        raise ValueError('unsupported release product')
+    if (base / 'platform').read_text().strip() != 'u30pro':
+        raise ValueError('unexpected platform')
+    layout = (root / 'sys/bus/platform/devices/sim_gpio_ctl/layout').read_text().strip()
+    if layout != layouts[profile]:
+        raise ValueError('release product and native SIM layout disagree')
+    # Older live installations may lack this file even though both full
+    # releases contain identical bytes, so a file diff cannot recreate it.
+    temp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', dir=base, prefix='.model-',
+                                         delete=False) as output:
+            temp = Path(output.name)
+            output.write(profile + '\n')
+            output.flush()
+            os.fsync(output.fileno())
+        temp.chmod(0o644)
+        # Never replace an identity created by another caller.
+        try:
+            os.link(temp, marker)
+        except FileExistsError:
+            if marker.is_symlink() or marker.read_text().strip() != profile:
+                raise ValueError('product marker changed during restoration')
+        directory = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if temp is not None:
+            temp.unlink(missing_ok=True)
+    return profile
+
+
+def main():
+    if sys.argv[1:] not in (['--check'], ['--restore']):
+        print('usage: u30pro-product-identity --check|--restore', file=sys.stderr)
+        return 2
+    try:
+        prepare(Path(os.environ.get('MU300_SYSROOT') or '/'), sys.argv[1] == '--restore')
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        print('u30pro-product-identity: ' + str(error), file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

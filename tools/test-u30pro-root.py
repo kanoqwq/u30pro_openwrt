@@ -243,6 +243,7 @@ def main(include_modem=True):
         'opt/mu300/bin/mu300-network-recovery':'openwrt/overlay/opt/mu300/bin/mu300-network-recovery',
         'usr/libexec/unisoc-modem/roaming':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/roaming',
         'usr/libexec/rpcd/unisoc-roaming':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/unisoc-roaming',
+        'usr/sbin/u30pro-product-identity':'devices/u30pro/overlay/usr/sbin/u30pro-product-identity',
         'usr/libexec/unisoc-modem/product-form':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/product-form',
         'usr/libexec/rpcd/unisoc-product-form':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/unisoc-product-form',
         'usr/share/rpcd/acl.d/unisoc-product-form.json':'openwrt/luci-app-mu300/root/usr/share/rpcd/acl.d/unisoc-product-form.json',
@@ -413,6 +414,7 @@ def main(include_modem=True):
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_bus_lifetime.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_display_handoff.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_screen_bandwidth.py')],check=True)
+    subprocess.run([sys.executable,str(TOP/'tests/u30pro_charging_animation.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_sim_status.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_power_menu.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_screen_charge.py')],check=True)

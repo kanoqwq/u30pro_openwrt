@@ -18,6 +18,9 @@ start_service() {
             logger -t u30pro "Native partition is not on the verified internal disk: $name"; return 1;
         }
     done
+    /usr/sbin/u30pro-product-identity --restore || {
+        logger -t u30pro 'Cannot verify the installed product identity'; return 1;
+    }
     /usr/libexec/unisoc-modem/product-form boot || {
         logger -t u30pro 'Cannot prepare the configured product SIM form'; return 1;
     }

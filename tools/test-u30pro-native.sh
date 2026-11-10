@@ -28,6 +28,7 @@ python3 "$top/tests/u30pro_screen_data_sim.py"
 python3 "$top/tests/u30pro_wallpaper_scenes.py"
 python3 "$top/tests/u30pro_wallpaper_tiles.py"
 python3 "$top/tests/u30pro_high_refresh.py"
+python3 "$top/tests/u30pro_charging_animation.py"
 python3 "$top/tests/u30pro_glass_colour.py"
 python3 "$top/tests/u30pro_uninstall_storage.py"
 test_busybox=$(python3 -c 'import runpy,sys; print(runpy.run_path(sys.argv[1])["settings"]()[2]["busybox"])' "$top/tools/build-settings.py")
@@ -42,6 +43,10 @@ python3 -m unittest discover -s "$top/tests" -p test_u30pro_nfc.py
 python3 -m unittest discover -s "$top/tests" -p test_nfc_dashboard.py
 python3 -m unittest discover -s "$top/tests" -p test_v50_sim.py
 python3 -m unittest discover -s "$top/tests" -p test_u30pro_cards.py
+python3 -m unittest discover -s "$top/tests" -p test_u30pro_product_identity.py
+python3 -m unittest discover -s "$top/tests" -p test_product_form.py
+python3 -m unittest discover -s "$top/tests" -p test_wifi_config_preserve.py
+python3 -m unittest discover -s "$top/tests" -p test_wifi_diff_preserve.py
 python3 -m unittest discover -s "$top/tests" -p test_f50pro_cards.py
 PYTHONPATH="$top/tests" python3 -m unittest test_sim_radio test_u30_dsds test_data_sim test_dual_radio
 # The production native tools use Zig/Clang, not GCC-specific diagnostics.
