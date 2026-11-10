@@ -37,6 +37,26 @@ case ${1:-} in
     relay-off) exec /opt/mu300/bin/wifi-client disconnect ;;
     charge-pause) charge_action pause "${2:-}" ;;
     charge-resume) charge_action resume "${2:-}" ;;
+    data-sim)
+        target=${2:-}; token=${3:-}
+        case $target in 0|1|2|3) ;; *) exit 2;; esac
+        case $token in ''|*[!0-9]*) exit 2;; esac
+        [ ${#token} -le 10 ] || exit 2
+        # The same validated transaction as the dashboard job, in this action's
+        # async child. Existing card-source/radio/eUICC locks stay authoritative.
+        output=$(mktemp /run/u30pro-data-sim.XXXXXX)
+        trap 'rm -f "$output"' EXIT
+        ok=false; error=switch_failed
+        if /usr/libexec/unisoc-modem/data-sim apply data "u30pro-card-$target" >"$output" 2>&1; then
+            ok=true; error=
+        else
+            case $(head -n 1 "$output") in
+                modem_busy|operation_busy|sim_not_ready) error=$(head -n 1 "$output");;
+            esac
+        fi
+        ubus call u30pro.panel data_sim_result "{\"token\":\"$token\",\"result\":{\"ok\":$ok,\"target\":$target,\"error\":\"$error\"}}" >/dev/null || true
+        ubus send u30pro.panel.request '{"request":"kick"}' || true
+        [ "$ok" = true ] ;;
     reconnect) exec /usr/sbin/u30pro-celld --ctl reconnect ;;
     reboot) exec reboot ;;
     poweroff) exec poweroff ;;

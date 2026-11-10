@@ -38,7 +38,7 @@ for(let row in cases) for(let selected in [0,1]) {
    wan:{up:row[2],ip4:'stale-ip',device:'sipa_eth0'},wifi:{},net:{},kernel:'fixture'};
  view.modem.sims[selected].state=row[0];
  let cell={cfun:row[1],lte:{band:3,rsrp:-90},nr:{band:78,rsrp:-80},operator:'stale-operator'};
- let sig={},relay={};
+ let sig={},relay={},charge={};
  BODY
  if(data.cell_state!==row[5] || data.cell_connected!==(row[5]=='connected'))
     die(sprintf('Bad selected SIM state: %J',data));

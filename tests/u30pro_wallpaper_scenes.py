@@ -82,6 +82,14 @@ int main(void) {
         with tempfile.TemporaryDirectory() as directory:
             base = Path(directory)
             (base/'config').mkdir()
+            # Exercise the real copy/rename/RPC path in this disposable host.
+            # Disk durability is not this scene-policy fixture's subject; real
+            # global sync can flush the entire Docker/WSL build filesystem.
+            (base/'bin').mkdir()
+            sync=base/'bin/sync'
+            sync.write_text('#!/bin/sh\nprintf called\\n >> /fixture/sync-calls\n')
+            sync.chmod(0o755)
+
             config = base/'config/u30pro_native_control'
             config.write_text("config display 'display'\noption wp_live '2'\n")
             module = (NATIVE/'ui/native-control/overlay/usr/share/u30pro/wallpaper.uc').read_text()
@@ -91,7 +99,7 @@ int main(void) {
                 (NATIVE/'ui/native-control/overlay/usr/libexec/rpcd/u30pro-wallpaper').read_bytes())
             name = 'wallpaper-scenes-'+uuid.uuid4().hex[:8]
             subprocess.run(['docker','run','-d','--network','none','--platform','linux/arm64',
-                            '--name',name,'-v',str(base)+':/fixture',
+                            '--name',name,'-v',str(base)+':/fixture','-e','PATH=/fixture/bin:/usr/sbin:/usr/bin:/sbin:/bin',
                             os.environ.get('FLOW_TEST_IMAGE','mu300-openwrt-base:25.12.5'),
                             '/bin/sleep','180'],check=True,stdout=subprocess.DEVNULL)
             try:
@@ -148,6 +156,7 @@ int main(void) {
                     upload(clip(version))
                     value=rpc('install')['wallpaper']
                     self.assertTrue(value['live']);self.assertEqual(value['live_version'],version)
+                self.assertTrue((base/'sync-calls').exists())
                 before=rpc('get')['live_version']
                 for fps in (50,60):
                     upload(clip(2,fps=fps))

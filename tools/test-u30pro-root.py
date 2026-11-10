@@ -34,10 +34,13 @@ def run(command, platform_fixture=None):
 
 
 def kernel_checks():
+    runpy.run_path(str(TOP/'openwrt/stage-lpac.py'))['audit'](ROOT)
     """A refreshed root must contain the exact reviewed kernel's modules."""
     package=runpy.run_path(str(TOP/'tools/u30pro-package.py'))
     report=package['verified_kernel']()
     objects=Path(LAYOUT['kernel_objects'])
+    abi=runpy.run_path(str(TOP/'tools/kernel-abi.py'))['receipt'](Path(LAYOUT['kernel_source']),objects)
+    assert json.loads((ROOT/'usr/share/mu300/kernel-abi.json').read_text())==abi, 'External-module ABI receipt is stale or missing'
     module_root=ROOT/'lib/modules'/report['version']
     count=0
     for name in (objects/'modules.order').read_text().splitlines():
@@ -87,6 +90,7 @@ def modem_checks(include_dashboard=True):
     try:
         names=['tests/helpers.py','tests/native_dashboard_fixture.py','tests/test_native_dashboard.py','tests/test_modemd.py',
                'rootfs/overlay/opt/mu300/bin/mu300-modemd',
+               'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/call-notify',
                'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/cell',
                'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/dashboard-network.sh',
                'openwrt/luci-app-mu300/root/usr/share/ucode/mu300/dash.uc',
@@ -128,7 +132,8 @@ def modem_checks(include_dashboard=True):
         print(run('chroot /target /bin/sh -ec "mkdir -p /var/run/ubus; cd /tmp/u30pro-snapshot-test/tests; '
                   'MU300_TEST_SHELLS=sh MU300_TEST_UBUSD=/sbin/ubusd MU300_TEST_UBUS=/bin/ubus python3 -m unittest -v '
                   'test_modemd.ModemdUbus.test_pro_shared_pool_publishes_the_requested_card '
-                  'test_modemd.ModemdUbus.test_pro_bearer_events_during_commands_and_idle"'),end='')
+                  'test_modemd.ModemdUbus.test_pro_bearer_events_during_commands_and_idle '
+                  'test_modemd.ModemdUbus.test_pro_nr0_voice_reaches_forwarding_and_screen_through_owner"'),end='')
     finally:
         shutil.rmtree(snapshot)
         # These unbooted-test directories are empty; never remove live files.
@@ -136,7 +141,38 @@ def modem_checks(include_dashboard=True):
             try:path.rmdir()
             except OSError:pass
 
-def main():
+def incoming_checks():
+    """Real owner/event/CLCC path with a fake bridge and private ubus only."""
+    if os.environ.get('U30PRO_BUILD_LOCKED') != '1':
+        raise ValueError('Use build-release.py run')
+    names = ['tests/helpers.py', 'tests/test_modemd.py',
+             'rootfs/overlay/opt/mu300/bin/mu300-modemd',
+             'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/call-notify']
+    for target, source in (
+        ('opt/mu300/bin/mu300-modemd', names[2]),
+        ('usr/libexec/unisoc-modem/call-notify', names[3]),
+        ('usr/libexec/unisoc-modem/call-notify-events.uc',
+         'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/call-notify-events.uc')):
+        assert (ROOT/target).read_bytes() == (TOP/source).read_bytes(), 'Stale incoming source: '+source
+    fixture = ROOT/'tmp/u30pro-incoming-owner-test'
+    fixture.mkdir(exist_ok=False)
+    try:
+        for name in names:
+            dest = fixture/name
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes((TOP/name).read_bytes())
+        print(run('chroot /target /bin/sh -ec "mkdir -p /var/run/ubus; '
+                  'cd /tmp/u30pro-incoming-owner-test/tests; '
+                  'MU300_TEST_SHELLS=sh MU300_TEST_UBUSD=/sbin/ubusd MU300_TEST_UBUS=/bin/ubus '
+                  'python3 -m unittest -v '
+                  'test_modemd.ModemdUbus.test_pro_bearer_events_during_commands_and_idle '
+                  'test_modemd.ModemdUbus.test_pro_nr0_voice_reaches_forwarding_and_screen_through_owner"'), end='')
+    finally:
+        shutil.rmtree(fixture)
+    print('PASS: real NR0 owner -> ubus -> both scoped CLCC queues -> forwarding/screen snapshots; no hardware')
+
+
+def main(include_modem=True):
     if os.environ.get('U30PRO_BUILD_LOCKED')!='1':raise ValueError('Use build-release.py run')
     kernel_checks()
     wifi_checks()
@@ -169,7 +205,10 @@ def main():
         'opt/mu300/bin/mu300-smsd':'rootfs/overlay/opt/mu300/bin/mu300-smsd',
         'opt/mu300/bin/mu300-sms':'rootfs/overlay/opt/mu300/bin/mu300-sms',
         'opt/mu300/bin/mu300-cmt-spool':'rootfs/overlay/opt/mu300/bin/mu300-cmt-spool',
+        'usr/libexec/unisoc-modem/call-notify-events.uc':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/call-notify-events.uc',
+        'usr/libexec/unisoc-modem/call-notify':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/call-notify',
         'usr/libexec/unisoc-modem/sms-forward':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/sms-forward',
+        'usr/libexec/unisoc-modem/power-supply.sh':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/power-supply.sh',
         'opt/mu300/bin/mu300-usb':'rootfs/overlay/opt/mu300/bin/mu300-usb',
         'opt/mu300/bin/mu300-physical-sim':'rootfs/overlay/opt/mu300/bin/mu300-physical-sim',
         'opt/mu300/bin/mu300-v50-sim':'rootfs/overlay/opt/mu300/bin/mu300-v50-sim',
@@ -204,6 +243,11 @@ def main():
         'opt/mu300/bin/mu300-network-recovery':'openwrt/overlay/opt/mu300/bin/mu300-network-recovery',
         'usr/libexec/unisoc-modem/roaming':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/roaming',
         'usr/libexec/rpcd/unisoc-roaming':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/unisoc-roaming',
+        'usr/libexec/unisoc-modem/product-form':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/product-form',
+        'usr/libexec/rpcd/unisoc-product-form':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/unisoc-product-form',
+        'usr/share/rpcd/acl.d/unisoc-product-form.json':'openwrt/luci-app-mu300/root/usr/share/rpcd/acl.d/unisoc-product-form.json',
+        'www/luci-static/resources/mu300/product-form.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/product-form.js',
+        'www/luci-static/resources/view/mu300/settings.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/settings.js',
         'usr/libexec/unisoc-modem/nfc':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/nfc',
         'usr/libexec/rpcd/unisoc-nfc':'openwrt/luci-app-mu300/root/usr/libexec/rpcd/unisoc-nfc',
         'usr/share/rpcd/acl.d/luci-app-mu300.json':'openwrt/luci-app-mu300/root/usr/share/rpcd/acl.d/luci-app-mu300.json',
@@ -283,6 +327,12 @@ def main():
         run('chroot /target /bin/sh -n '+script)
     run('chroot /target /bin/sh -n /opt/mu300/bin/cpu-voltage-platform')
     run('chroot /target /bin/sh -n /opt/mu300/bin/f50pro-card-pair')
+    assert os.access(ROOT/'usr/libexec/unisoc-modem/product-form', os.X_OK)
+    assert os.access(ROOT/'usr/libexec/rpcd/unisoc-product-form', os.X_OK)
+    run('chroot /target /bin/sh -n /usr/libexec/rpcd/unisoc-product-form')
+    run('chroot /target python3 -c "import ast; ast.parse(open(\'/usr/libexec/unisoc-modem/product-form\').read())"')
+    schema=json.loads(run('chroot /target /usr/libexec/rpcd/unisoc-product-form list'))
+    assert schema=={'get':{},'set':{'model':'String','mode':'String'}}
     assert (ROOT/'etc/rc.d/S14u30pro-panel').is_symlink()==MODEL['screen']
     assert (ROOT/'etc/rc.d/S11f50pro-leds').is_symlink()==(MODEL['id']=='f50pro')
     assert (ROOT/'etc/rc.d/S99f50pro-led-ready').is_symlink()==(MODEL['id']=='f50pro')
@@ -358,7 +408,7 @@ def main():
     run('chroot /target /usr/bin/python3 -c "import os,time; fd=os.timerfd_create(time.CLOCK_BOOTTIME, flags=os.TFD_NONBLOCK); os.close(fd)"')
     assert 'mu300cellv6' not in (ROOT/'etc/config/network').read_text()
     assert '/dev/stty_nr0' in (ROOT/'opt/mu300/lib/modemd-service.sh').read_text()
-    modem_checks()
+    if include_modem:modem_checks()
     # Repeated snapshots must not exhaust ubusd in the persistent screen feed.
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_bus_lifetime.py')],check=True)
     subprocess.run([sys.executable,str(TOP/'tests/u30pro_display_handoff.py')],check=True)
@@ -423,7 +473,9 @@ def main():
 
 
 if __name__=='__main__':
-    if sys.argv[1:]==['--modem-only']:modem_checks(include_dashboard=False)
+    if sys.argv[1:]==['--incoming-only']:incoming_checks()
+    elif sys.argv[1:]==['--modem-only']:modem_checks(include_dashboard=False)
     elif sys.argv[1:]==['--kernel-only']:kernel_checks()
+    elif sys.argv[1:]==['--components-only']:main(include_modem=False)
     elif len(sys.argv)==1:main()
-    else:raise SystemExit('Usage: test-u30pro-root.py [--modem-only|--kernel-only]')
+    else:raise SystemExit('Usage: test-u30pro-root.py [--incoming-only|--modem-only|--kernel-only|--components-only]')

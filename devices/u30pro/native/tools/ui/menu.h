@@ -114,6 +114,11 @@ static void fn_icon(Cv *c, const char *name, const char *glyph, const char *ttl,
 	else if (!strcmp(name, "info")) ic_info(c, cx, cy, 11.f, col);
 	else if (!strcmp(name, "app")) ic_app(c, cx, cy, 11.f, col);
 	else if (!strcmp(name, "lock")) ic_lock(c, cx, cy, 12.f, col);
+	else if (!strcmp(name, "sim")) {
+        gx_rrect_line(c, cx - 7, cy - 10, 14, 20, 3, 1.6f, col, 255);
+        gx_rrect_line(c, cx - 4, cy - 1, 8, 7, 1, 1.2f, col, 255);
+        gx_line(c, cx, cy - 1, cx, cy + 6, 1.2f, col, 255);
+    }
 	else if (!strcmp(name, "battery")) ic_battery(c, cx - 10.f, cy - 6.f, 21.f, 12.f, 60, col);
 	else {
 		const char *src = glyph && glyph[0] ? glyph : ttl;
@@ -126,7 +131,7 @@ static void fn_icon(Cv *c, const char *name, const char *glyph, const char *ttl,
 	}
 }
 
-static const char *const fn_builtin_icons[NFN_BUILTIN] = { "wifi", "bolt", "battery", "chart", "sun", "info", "lock" };
+static const char *const fn_builtin_icons[NFN_BUILTIN] = { "wifi", "bolt", "battery", "chart", "sun", "info", "lock", "sim" };
 
 /* the function list (watch style): full-width rows of 46 px with 8 px between them, the icon in a disc on the left, the name in 16 px, and on
  * the right a switch (a toggle plugin) or a chevron (opens a page); the list scrolls with the finger */
@@ -158,6 +163,21 @@ static void page_func(Cv *c)
 		else if (!pl || pl->type != PT_ACTION) chevron_r(c, ROW_X + ROW_W - 18.f, cy);
 	}
 	scroll_end(c, 0, 50 + nfn_entries * 54 - 8);
+}
+
+static void page_data_sim(Cv *c)
+{
+    title_sub(c, "切换上网卡");
+    int row = 0, off = scroll_begin(1);
+    for (int card = 0; card < 4; card++) {
+        if (!(D.data_card_mask & (1 << card))) continue;
+        const char *state = data_sim_busy_until && card == data_sim_target ? "切换中…" :
+            D.data_card_ready && card == D.data_card_current ? "使用中" : "";
+        setting_row(c, 52 + row++ * 48 - off, H_DATA_SIM0 + card, data_card_names[card], state);
+    }
+    if (!row) TXTC(c, FN14, 120, 118, "卡槽信息暂不可用", C_DIM);
+    else TXTC(c, FN12, 120, 64 + row * 48 - off, D.data_card_ready ? "切换时网络将短暂中断" : "基带尚未就绪", C_DIM);
+    scroll_end(c, 1, 84 + row * 48);
 }
 
 static void page_display(Cv *c)
@@ -489,6 +509,7 @@ static void draw_sub(Cv *c)
 	case FN_SYSTEM: page_system(c); break;
 	case FN_DISPLAY: page_display(c); break;
 	case FN_LOCK: page_lock(c); break;
+	case FN_DATA_SIM: page_data_sim(c); break;
 	default: page_about(c); break;
 	}
 }

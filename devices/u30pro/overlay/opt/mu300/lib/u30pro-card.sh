@@ -1,7 +1,7 @@
 #!/bin/sh
 # MU5358 / MU5358D / MU5358E BoardIdConfigEnum and VendorSubInfoUpdater.
 # IDs identify hardware positions, never an operator account or an AT slot.
-u30pro_board_id() {
+u30pro_detected_board_id() {
     local root=${MU300_SYSROOT:-} value token path
     if [ -r "$root/proc/driver/board_id" ]; then
         value=$(cat "$root/proc/driver/board_id")
@@ -17,6 +17,18 @@ u30pro_board_id() {
         done
     done
     return 1
+}
+u30pro_board_id() {
+    local value marker=${MU300_U30PRO_RUN:-/run}/mu300-product-form-u30pro
+    # Freeze the effective form for this boot. Saving an override must not
+    # reinterpret a running CP's card sources before the next startup.
+    if [ -r "$marker" ]; then value=$(cat "$marker");
+    else value=$(uci -q get unisoc_modem.main.u30pro_board_override 2>/dev/null || true); fi
+    case $value in
+        ''|auto) u30pro_detected_board_id;;
+        0|1|2|3|4|5|6) printf '%s\n' "$value";;
+        *) return 1;;
+    esac
 }
 u30pro_cards() {
     case $1 in

@@ -42,6 +42,7 @@ typedef struct {
 	/* cellular */
 	char cell_state[24], op[32], rat[8], ip[48], iface[16];
 	int cell_connected, csq, have_sig, band, pci, earfcn;
+	int data_card_mask, data_card_current, data_card_ready;
 	char lte_bw[48];	/* MU300 parsed downlink component widths, with unit */
 	int bw_idx;		/* downlink bandwidth index 0..5 = 1.4/3/5/10/15/20 MHz, -1 unknown */
 	int sinr_ok;		/* sinr is only fed while the signal page is on screen */

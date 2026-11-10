@@ -6,6 +6,14 @@ from helpers import ShellTest, BIN
 
 
 class ScopedStoredReceive(ShellTest):
+    def setUp(self):
+        super().setUp()
+        # These fixtures prove slot attribution and archive-before-delete order,
+        # not disk durability. A real sync in ARM emulation flushes the shared
+        # build filesystem and can exceed the transport fixture's 60 s limit.
+        # Keep production sync calls intact and record them in the fake host.
+        self.stub('sync', 'printf \'%s\\n\' "$*" >> "$STUBLOG/sync-calls"')
+
     def test_unassigned_direct_retries_preserve_one_raw_copy_without_inbox_or_ack(self):
         for shell in self.each_shell():
             pool=self.tmp/('unassigned-'+shell[0].split('/')[-1])
@@ -77,7 +85,7 @@ print('OK')
                     for slot in (0,1):
                         scoped=pool/('sim1' if slot else '')
                         result=self.script(shell,BIN/'mu300-smsd',
-                            PATH=str(base)+':'+os.environ['PATH'],TEST_BASE=base,TARGET_SLOT=target,TEST_PDU=pdu,
+                            PATH=str(base)+':'+str(self.stubs)+':'+os.environ['PATH'],TEST_BASE=base,TARGET_SLOT=target,TEST_PDU=pdu,
                             MU300_SMS_POOL=scoped,MU300_AT_DIR=at,MU300_SIM_SLOT=slot,
                             MU300_SMS_LOCK=base/('receiver-'+str(slot)),MU300_SMS_OP_LOCK=base/('operation-'+str(slot)),
                             MU300_SMS_BIN=BIN/'mu300-sms',MU300_SMS_PDU_AWK=BIN.parent/'lib/sms-pdu.awk',
@@ -93,6 +101,7 @@ print('OK')
                         if receives:
                             self.assertIn('source: '+('stored-live' if slot==0 else 'sim'),messages[0].read_text())
                     self.assertTrue(legacy.exists())
+                    self.assertTrue((self.tmp/'sync-calls').exists())
                     queries=[json.loads(line) for line in (base/'commands').read_text().splitlines()]
                     for slot in (0,1):
                         setup=[cmd for owner,cmd in queries if owner==slot]
@@ -104,7 +113,7 @@ print('OK')
                     expected=pool/('sim1' if target else '')/'msg'
                     before=len(queries)
                     result=self.script(shell,BIN/'mu300-sms','sync',
-                        PATH=str(base)+':'+os.environ['PATH'],TEST_BASE=base,TARGET_SLOT=target,TEST_PDU=pdu,
+                        PATH=str(base)+':'+str(self.stubs)+':'+os.environ['PATH'],TEST_BASE=base,TARGET_SLOT=target,TEST_PDU=pdu,
                         MU300_SMS_POOL=expected.parent,MU300_AT_DIR=at,MU300_SIM_SLOT=target,
                         MU300_SMS_OP_LOCK=base/'manual-operation',MU300_SMS_DIRECT_FLAG=base/'no-marker')
                     self.assertEqual(result.returncode,0,result.stderr)

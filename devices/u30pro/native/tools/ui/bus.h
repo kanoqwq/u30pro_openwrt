@@ -131,6 +131,75 @@ static void bus_sms_read(const char *id, int slot)
 	ubus_send_event(bus, "u30pro.panel.request", bus_b.head);
 }
 
+static void incoming_replace(const IncomingCall *calls, int count);
+static void bus_call_hangup(const char *id)
+{
+	if (!bus) return;
+	blob_buf_init(&bus_b, 0);
+	blobmsg_add_string(&bus_b, "request", "call_hangup");
+	blobmsg_add_string(&bus_b, "id", id);
+	ubus_send_event(bus, "u30pro.panel.request", bus_b.head);
+}
+
+enum { IC_CALLS, __IC_MAX };
+static const struct blobmsg_policy incoming_policy[__IC_MAX] = {
+	[IC_CALLS] = { "calls", BLOBMSG_TYPE_ARRAY }
+};
+enum { IC_ID, IC_NUMBER, IC_LABEL, __IC_ROW_MAX };
+static const struct blobmsg_policy incoming_row_policy[__IC_ROW_MAX] = {
+	[IC_ID] = { "id", BLOBMSG_TYPE_STRING }, [IC_NUMBER] = { "number", BLOBMSG_TYPE_STRING },
+	[IC_LABEL] = { "label", BLOBMSG_TYPE_STRING }
+};
+static int m_incoming(struct ubus_context *c, struct ubus_object *o,
+        struct ubus_request_data *req, const char *method, struct blob_attr *msg)
+{
+	struct blob_attr *tb[__IC_MAX], *row[__IC_ROW_MAX], *cur;
+	IncomingCall calls[8] = {0};
+	int count = 0;
+	size_t rem;
+	(void)c; (void)o; (void)req; (void)method;
+	blobmsg_parse(incoming_policy, __IC_MAX, tb, blob_data(msg), blob_len(msg));
+	if (!tb[IC_CALLS]) return UBUS_STATUS_INVALID_ARGUMENT;
+	blobmsg_for_each_attr(cur, tb[IC_CALLS], rem) {
+		if (count == 8 || blobmsg_type(cur) != BLOBMSG_TYPE_TABLE) return UBUS_STATUS_INVALID_ARGUMENT;
+		blobmsg_parse(incoming_row_policy, __IC_ROW_MAX, row, blobmsg_data(cur), blobmsg_data_len(cur));
+		if (!row[IC_ID] || !row[IC_NUMBER] || !row[IC_LABEL]) return UBUS_STATUS_INVALID_ARGUMENT;
+		const char *id = blobmsg_get_string(row[IC_ID]), *number = blobmsg_get_string(row[IC_NUMBER]), *label = blobmsg_get_string(row[IC_LABEL]);
+		if (strlen(id) != 32 || strspn(id, "0123456789abcdef") != 32 || strlen(number) >= sizeof calls[0].number ||
+		    strspn(number, "+0123456789*#") != strlen(number) || strlen(label) >= sizeof calls[0].label || strpbrk(label, "\r\n\t"))
+			return UBUS_STATUS_INVALID_ARGUMENT;
+		for (int i = 0; i < count; i++) if (!strcmp(calls[i].id, id)) return UBUS_STATUS_INVALID_ARGUMENT;
+		snprintf(calls[count].id, sizeof calls[count].id, "%s", id);
+		snprintf(calls[count].number, sizeof calls[count].number, "%s", number);
+		snprintf(calls[count].label, sizeof calls[count].label, "%s", label);
+		count++;
+	}
+	incoming_replace(calls, count);
+	return 0;
+}
+
+enum { IR_ID, IR_OK, __IR_MAX };
+static const struct blobmsg_policy incoming_result_policy[__IR_MAX] = {
+	[IR_ID] = { "id", BLOBMSG_TYPE_STRING }, [IR_OK] = { "ok", BLOBMSG_TYPE_BOOL }
+};
+static int m_incoming_result(struct ubus_context *c, struct ubus_object *o,
+        struct ubus_request_data *req, const char *method, struct blob_attr *msg)
+{
+	struct blob_attr *tb[__IR_MAX];
+	(void)c; (void)o; (void)req; (void)method;
+	blobmsg_parse(incoming_result_policy, __IR_MAX, tb, blob_data(msg), blob_len(msg));
+	if (!tb[IR_ID] || !tb[IR_OK]) return UBUS_STATUS_INVALID_ARGUMENT;
+	const IncomingCall *v = incoming_visible();
+	if (v && !strcmp(v->id, blobmsg_get_string(tb[IR_ID]))) {
+		incoming_busy = 0;
+		if (blobmsg_get_bool(tb[IR_OK])) {
+			for (int i = 0; i < incoming_count; i++) if (!strcmp(incoming_calls[i].id, blobmsg_get_string(tb[IR_ID]))) incoming_calls[i].ignored = 1;
+		} else toast_show("挂断失败，请重试", C_WARN, 3000);
+		dirty = 1;
+	}
+	return 0;
+}
+
 /* ------------------------------------------------------------------ the object */
 static void settings_apply(void);
 static void ui_cmd_line(const char *line);
@@ -270,12 +339,35 @@ static int m_charge_result(struct ubus_context *c, struct ubus_object *o,
 	return 0;
 }
 
+enum { SIM_OK, SIM_TARGET, SIM_ERROR, __SIM_RESULT_MAX };
+static const struct blobmsg_policy sim_result_policy[__SIM_RESULT_MAX] = {
+    [SIM_OK] = {"ok", BLOBMSG_TYPE_BOOL}, [SIM_TARGET] = {"target", BLOBMSG_TYPE_INT32},
+    [SIM_ERROR] = {"error", BLOBMSG_TYPE_STRING}
+};
+static int m_data_sim_result(struct ubus_context *c, struct ubus_object *o,
+    struct ubus_request_data *req, const char *method, struct blob_attr *msg)
+{
+    struct blob_attr *tb[__Q_MAX], *r[__SIM_RESULT_MAX];
+    blobmsg_parse(charge_policy, __Q_MAX, tb, blob_data(msg), blob_len(msg));
+    if (!tb[Q_TOKEN] || !tb[Q_RESULT]) return UBUS_STATUS_INVALID_ARGUMENT;
+    const char *token = blobmsg_get_string(tb[Q_TOKEN]);
+    if (!token[0] || strlen(token) > 10 || strspn(token, "0123456789") != strlen(token)) return UBUS_STATUS_INVALID_ARGUMENT;
+    blobmsg_parse(sim_result_policy, __SIM_RESULT_MAX, r, blobmsg_data(tb[Q_RESULT]), blobmsg_data_len(tb[Q_RESULT]));
+    if (!r[SIM_OK] || !r[SIM_TARGET]) return UBUS_STATUS_INVALID_ARGUMENT;
+    data_sim_complete((unsigned)strtoul(token, NULL, 10), blobmsg_get_u32(r[SIM_TARGET]),
+        blobmsg_get_bool(r[SIM_OK]), r[SIM_ERROR] ? blobmsg_get_string(r[SIM_ERROR]) : "");
+    return 0;
+}
+
 static const struct ubus_method bus_methods[] = {
 	UBUS_METHOD_NOARG("status", m_status),
 	UBUS_METHOD("screen", m_screen, screen_policy),
 	UBUS_METHOD("command", m_command, command_policy),
 	UBUS_METHOD("feed", m_feed, feed_policy),
 	UBUS_METHOD("charge_result", m_charge_result, charge_policy),
+	UBUS_METHOD("data_sim_result", m_data_sim_result, charge_policy),
+	UBUS_METHOD("incoming", m_incoming, incoming_policy),
+	UBUS_METHOD("incoming_result", m_incoming_result, incoming_result_policy),
 	UBUS_METHOD_NOARG("reload", m_reload),
 };
 static struct ubus_object_type bus_type = UBUS_OBJECT_TYPE("u30pro.panel", bus_methods);
@@ -297,7 +389,7 @@ static int bus_fd(long now)
 			ubus_free(bus);
 			bus = NULL;
 		}
-		if (bus) bus_request("kick");
+		if (bus) { bus_request("kick"); bus_request("call_refresh"); }
 	}
 	return bus ? bus->sock.fd : -1;
 }

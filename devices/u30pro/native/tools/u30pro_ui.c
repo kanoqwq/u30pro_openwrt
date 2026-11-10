@@ -95,6 +95,7 @@ static int pin_hash_ok(const char *s)
 }
 
 /* Completion comes from the same charge owner as LuCI; no optimistic success. */
+static void data_sim_complete(unsigned token, int target, int ok, const char *error);
 static void bypass_complete(unsigned token, int ok, int available, int paused,
                             int limited, int pending, const char *error)
 {
@@ -466,6 +467,7 @@ static void settings_check(void)
 static void apply_idle(long now)
 {
 	int secs = OFF_SECS[off_idx % NOFF];
+	if (incoming_visible()) return;
 
 	/* an unlock pad left alone for 10 s goes back to the lock screen */
 	if (pin_mode == PIN_UNLOCK && !tc.down && now - last_act >= 10000 && now >= pin_wait_until) pin_open(PIN_LOCKSCR);
@@ -712,6 +714,54 @@ static void power_menu_open(void)
 	dirty = 1;
 }
 
+/* Snapshot replacement preserves dismissals by lifetime ID, including a number
+ * arriving after RING. It never changes PIN/lock state or the underlying page. */
+static void incoming_replace(const IncomingCall *calls, int count)
+{
+	IncomingCall next[8] = {0};
+	char previous[40] = "";
+	if (incoming_visible()) snprintf(previous, sizeof previous, "%s", incoming_visible()->id);
+	int fresh = 0;
+	if (count > 8) count = 8;
+	for (int i = 0; i < count; i++) {
+		next[i] = calls[i]; next[i].ignored = 0;
+		int known = 0;
+		for (int j = 0; j < incoming_count; j++) if (!strcmp(next[i].id, incoming_calls[j].id)) {
+			next[i].ignored = incoming_calls[j].ignored; known = 1; break;
+		}
+		fresh |= !known;
+	}
+	memcpy(incoming_calls, next, sizeof next); incoming_count = count;
+	int changed = !incoming_visible() ? previous[0] != 0 : strcmp(previous, incoming_visible()->id) != 0;
+	if (changed) incoming_busy = 0;
+	if (fresh || changed) {
+		memset(&tc, 0, sizeof tc); press_kill(); hold_id = hold_pct = 0;
+	}
+	if (fresh) {
+		if (asleep) wake();
+		last_act = now_ms();
+	}
+	if (!incoming_visible()) incoming_busy = 0;
+	dirty = 1;
+}
+
+static void incoming_action(int hangup)
+{
+	const IncomingCall *call = incoming_visible();
+	if (!call) return;
+	if (hangup) {
+#ifdef UI_HOST
+		printf("CALL_HANGUP %s\n", call->id);
+#else
+		bus_call_hangup(call->id);
+#endif
+		incoming_busy = 1;
+	} else {
+		for (int i = 0; i < incoming_count; i++) if (!strcmp(incoming_calls[i].id, call->id)) incoming_calls[i].ignored = 1;
+	}
+	dirty = 1;
+}
+
 /* ------------------------------------------------------------------ actions */
 static int hit_at(int x, int y)
 {
@@ -751,6 +801,17 @@ static void sms_detail_close(void)
 	bus_request("sms_close");
 #endif
 	dirty = 1;
+}
+
+static void data_sim_complete(unsigned token, int target, int ok, const char *error)
+{
+    if (!data_sim_busy_until || token != data_sim_request || target != data_sim_target) return;
+    data_sim_busy_until = 0;
+    const char *message = ok ? "上网卡已切换" : "切换失败，请稍后重试";
+    if (!ok && (!strcmp(error, "modem_busy") || !strcmp(error, "operation_busy"))) message = "基带正忙，请稍后重试";
+    if (!ok && !strcmp(error, "sim_not_ready")) message = "目标卡未就绪";
+    toast_show(message, ok ? C_OK : C_BAD, 3500);
+    dirty = 1;
 }
 
 static void do_action(int id)
@@ -793,6 +854,21 @@ static void do_action(int id)
 		if (D.ssid[0] && D.wifi_active) { ov = OV_QR; ov_arg = 0; }
 		else toast_show(D.ssid[0] ? "热点未开启" : "尚无热点配置", C_WARN, 2000);
 		break;
+    case H_DATA_SIM0: case H_DATA_SIM1: case H_DATA_SIM2: case H_DATA_SIM3: {
+        int target = id - H_DATA_SIM0;
+        if (data_sim_busy_until) break;
+        if (!D.data_card_ready || !(D.data_card_mask & (1 << target))) {
+            toast_show("卡槽信息暂不可用", C_WARN, 2500); break;
+        }
+        if (target == D.data_card_current) { toast_show("已是当前上网卡", C_DIM, 2000); break; }
+        char command[160];
+        data_sim_target = target; data_sim_request++;
+        data_sim_busy_until = g_ms + 180000;
+        snprintf(command, sizeof command, "/usr/sbin/u30pro-panel-control data-sim %d %u", target, data_sim_request);
+        toast_show("正在切换上网卡…", C_DIM, 2500);
+        run_async(command);
+        break;
+    }
 	case H_RECONNECT:
 		if (g_ms < recon_busy_until) break;
 		recon_busy_until = g_ms + 6000;
@@ -939,7 +1015,7 @@ static void ui_touch(int type, int x, int y, long ms)
 			 * destination before resolving a tap, scroll or another swipe. */
 			compose();
 		}
-		if (pin_mode && !power_menu) {
+		if (pin_mode && !power_menu && !incoming_visible()) {
 			/* the ring pad has wedge-shaped keys: found by angle and radius, not by the rectangle hits */
 			int k = pin_mode == PIN_LOCKSCR ? -1 : pin_hit(x, y);
 
@@ -977,7 +1053,7 @@ static void ui_touch(int type, int x, int y, long ms)
 		if (press_on && (abs(dx) > 6 || abs(dy) > 6)) press_end(now, 0);
 		if (!tc.dir && (abs(dx) > 12 || abs(dy) > 12)) tc.dir = abs(dx) * 10 > abs(dy) * 13 ? 1 : 2;
 		if (tc.dir && hold_id) { hold_id = 0; hold_pct = 0; }
-		if (power_menu) return;
+		if (power_menu || incoming_visible()) return;
 		/* the lock screen opens the unlock pad on a swipe in any direction (the soft lock only on a long press); the pad itself takes
 		   taps only */
 		if (pin_mode == PIN_LOCKSCR && !lock_soft && (abs(dx) > 30 || abs(dy) > 30)) { pin_open(PIN_UNLOCK); tc.swallow = 1; last_gesture = "swipe-unlock"; }
@@ -999,6 +1075,14 @@ static void ui_touch(int type, int x, int y, long ms)
 	press_end(now, !tc.dir && !tc.swallow && !tc.hold_fired);
 	dirty = 1;
 	if (tc.swallow) return;
+	if (incoming_visible() && !notice[0]) {
+		if (!tc.dir && !tc.hold_fired) {
+			int h = hit_at(tc.x0, tc.y0);
+			if (h >= 0 && hits[h].id == H_CALL_IGNORE) incoming_action(0);
+			else if (h >= 0 && hits[h].id == H_CALL_HANGUP) incoming_action(1);
+		}
+		return;
+	}
 	if (power_menu) {
 		if (!tc.dir && !tc.hold_fired) {
 			int h = hit_at(tc.x0, tc.y0);
@@ -1068,7 +1152,7 @@ static void ui_touch(int type, int x, int y, long ms)
 
 static void touch_tick(long now)
 {
-	if (!tc.down || tc.swallow || tc.dir || tc.hold_fired || power_menu) return;
+	if (!tc.down || tc.swallow || tc.dir || tc.hold_fired || power_menu || incoming_visible()) return;
 	if (pin_mode) {
 		/* a long press on the lock screen opens the unlock pad, or the soft lock itself; a finger that moved does not count */
 		if (pin_mode == PIN_LOCKSCR && lock_soft && now - tc.t0 >= SOFT_HOLD_MS && abs(tc.x - tc.x0) <= 12 && abs(tc.y - tc.y0) <= 12) {
@@ -1108,6 +1192,11 @@ static void ui_key(int code, long duration_ms)
 
 	key_count++;
 	last_key = (unsigned)code;
+	/* Physical keys cannot navigate or run unrelated actions through the popup. */
+	if (incoming_visible() && !notice[0]) {
+		if (code == 116 && duration_ms < POWER_HOLD_MS) incoming_action(0);
+		return;
+	}
 	/* a long press of the Wi-Fi key runs its long action, also on the dark screen, but not past a PIN lock */
 	if (home && duration_ms >= key_long_ms && !power_menu) {
 		if (key_long != KA_NONE && !(pin_mode && !lock_soft)) { if (!asleep) last_act = now_ms(); key_run(key_long, 1); }
@@ -1247,7 +1336,7 @@ static void compose(void)
 	lw_sync();
 	wp_shifted = 0;
 	gx_shadow = wp_on ? 136 : 0;
-	if (g_ms < splash_until && !D.feed_ok) {
+	if (g_ms < splash_until && !D.feed_ok && !incoming_visible()) {
 		bg_fill(&scr, 0, 0, 0);
 		draw_splash(&scr);
 		return;
@@ -1255,6 +1344,12 @@ static void compose(void)
 	if (notice[0]) {
 		bg_fill(&scr, 0, 0, 1);
 		draw_notice(&scr);
+		return;
+	}
+	if (incoming_visible()) {
+		bg_fill(&scr, 0, 0, 1);
+		g_reg = 1; draw_incoming(&scr); g_reg = 0;
+		draw_press(&scr); draw_toast(&scr);
 		return;
 	}
 	if (power_menu) {
@@ -1313,6 +1408,8 @@ static void detect_events(void)
 {
 	if (bypass_busy_until && g_ms >= bypass_busy_until)
 		bypass_complete(bypass_request, 0, 0, 0, 0, 0, "charge_timeout");
+	if (data_sim_busy_until && g_ms >= data_sim_busy_until)
+		data_sim_complete(data_sim_request, data_sim_target, 0, "timeout");
 	static struct { int init, conn, low, clients, unread, relay; } p;
 
 	if (!D.feed_ok) return;

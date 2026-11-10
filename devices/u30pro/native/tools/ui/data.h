@@ -221,6 +221,7 @@ static void feed_set(const char *k, char *v)
 	if (!strcmp(k, "nr_rsrp")) { D.nr_rsrp = (float)atof(v); D.nr_rsrp_ok = 1; return; }
 	if (!strcmp(k, "nr_sinr")) { D.nr_sinr = (float)atof(v); D.nr_sinr_ok = 1; return; }
 	I("sms_slot", D.sms_slot);
+	I("data_card_mask", D.data_card_mask); I("data_card_current", D.data_card_current); I("data_card_ready", D.data_card_ready);
 	if (!strncmp(k, "sms_id.", 7)) {
 		int i = atoi(k + 7);
 		if (i >= 0 && i < 6) snprintf(D.sms[i].id, sizeof D.sms[i].id, "%s", v);

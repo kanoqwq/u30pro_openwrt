@@ -69,6 +69,7 @@ def main():
         raise ValueError('Initialize the pinned installer submodule before building')
     load('u30pro-bootstrap.py')['provision'](layout, work)
     root_image(work, layout)
+    call('sh', TOP/'openwrt/build-lpac.sh', layout['lpac_apks'])
     package = load('u30pro-package.py')
     if not package['STAGE'].exists():
         package['bootstrap']()

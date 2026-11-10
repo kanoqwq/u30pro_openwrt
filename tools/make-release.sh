@@ -88,6 +88,9 @@ for f in ./opt/mu300/bin/mu300-at ./opt/mu300/bin/mobile-data \
     ./etc/mu300/wifi-sae.build-id \
     ./opt/mu300/bin/mu300-smsd ./opt/mu300/bin/mu300-sms ./etc/init.d/mu300-smsd \
     ./www/luci-static/resources/mu300/refresh.js ./www/luci-static/resources/view/mu300/sms.css \
+    ./www/luci-static/resources/view/mu300/settings.js ./www/luci-static/resources/mu300/product-form.js \
+    ./usr/libexec/unisoc-modem/product-form ./usr/libexec/rpcd/unisoc-product-form \
+    ./usr/share/rpcd/acl.d/unisoc-product-form.json ./etc/init.d/mu300-vendor ./opt/mu300/lib/v50-card.sh \
     ./usr/libexec/unisoc-modem/dashboard-rates ./usr/libexec/unisoc-modem/dashboard-network.sh ./usr/share/ucode/mu300/dash.uc ./usr/share/rpcd/ucode/mu300status.uc ./opt/mu300/bin/mu300-service-cpus ./usr/share/ucode/mu300/service-cpus.uc ./opt/mu300/bin/wifi-ready ./usr/libexec/unisoc-modem/operator.uc \
     ./usr/libexec/unisoc-modem/refresh-config \
     ./usr/libexec/unisoc-modem/lock ./usr/libexec/unisoc-modem/boot-replay ./usr/libexec/unisoc-modem/sim-scope.sh \
@@ -111,7 +114,7 @@ for f in ./opt/mu300/bin/mu300-at ./opt/mu300/bin/mobile-data \
     ./usr/libexec/unisoc-modem/cpu-voltage ./usr/libexec/unisoc-modem/cpu-voltage.uc \
     ./opt/mu300/bin/cpu-voltage-platform ./opt/mu300/bin/sml-voltage-check ./etc/init.d/mu300-cpu-driver \
     ./etc/rc.d/S08mu300-cpu-driver ./etc/rc.d/K89unisoc-cpu \
-    ./usr/libexec/unisoc-modem/sms-forward ./usr/libexec/unisoc-modem/power-supply.sh ./usr/libexec/unisoc-modem/forward-template.uc \
+    ./usr/libexec/unisoc-modem/call-notify ./usr/libexec/unisoc-modem/call-notify-events.uc ./usr/libexec/unisoc-modem/sms-forward ./usr/libexec/unisoc-modem/power-supply.sh ./usr/libexec/unisoc-modem/forward-template.uc \
     ./www/luci-static/resources/view/mu300/forward.js ./etc/init.d/unisoc-sms-forward \
     ./usr/libexec/unisoc-modem/data-sim ./www/luci-static/resources/view/mu300/sim.js \
     ./www/luci-static/resources/view/mu300/device.js ./usr/libexec/unisoc-modem/device-usb \

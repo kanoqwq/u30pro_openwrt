@@ -95,6 +95,11 @@ this option unavailable rather than forwarding the SC27xx fuel gauge's
 unreliable phantom reading. The local SMS path is limited to one 70-unit
 UCS-2 part by the existing MU300 adapter. There is no daily forwarding quota.
 
+On U30 Pro, capacity comes from `u30pro-battery` and the notification charge
+state comes from its paired `u30pro-charger-master`, matching the dashboard.
+Missing or unknown master state stays unavailable; other USB supplies are
+never substituted. An absent battery still disables power notifications.
+
 Network interface and state paths are also configured in the same UCI section;
 none of the web code requires `sipa_eth0`, `wan`, `br-lan` or `/opt/mu300` from
 the host firmware.

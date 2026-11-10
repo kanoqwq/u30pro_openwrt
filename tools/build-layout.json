@@ -1,5 +1,6 @@
 {
   "format": 1,
+  "lpac_apks": "{workspace}/artifacts/lpac",
   "family": "u30pro",
   "workspace": "~/openwrt-build",
   "kernel_source_kind": "downloaded",

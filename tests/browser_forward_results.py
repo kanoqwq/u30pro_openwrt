@@ -57,6 +57,19 @@ def main():
         saved=page.evaluate("JSON.parse(calls.find(c=>c.method==='forward_set').args[0])")
         assert saved['profile']=='sim1' and saved['mode']=='per_sim'
         assert saved['webhook_expect']=='ok=true'
+        assert saved['call_forward_enabled']==0
+        page.locator('#mud-fwd-call_forward_enabled').check()
+        page.locator('#mud-fwd-save').click()
+        page.get_by_role('dialog').get_by_role('button',name='保存',exact=True).click()
+        page.wait_for_function("configs.sim1.call_forward_enabled===1&&!fwd.q('save').disabled")
+        page.evaluate("()=>tick()")
+        assert page.locator('#mud-fwd-call_forward_enabled').is_checked()
+        page.locator('#mud-fwd-call_forward_enabled').uncheck()
+        page.locator('#mud-fwd-save').click()
+        page.get_by_role('dialog').get_by_role('button',name='保存',exact=True).click()
+        page.wait_for_function("configs.sim1.call_forward_enabled===0&&!fwd.q('save').disabled")
+        page.evaluate("()=>tick()")
+        assert not page.locator('#mud-fwd-call_forward_enabled').is_checked()
         for language in ['en','tr']:
             page.evaluate("lang=>{L.env.lang=lang;document.documentElement.lang=lang;fwd.root.remove();document.body.append(fwd.render(state('sim1')))}",language)
             untranslated=page.evaluate(r"fwd.root.innerText.split('\n').filter(s=>/[\u3400-\u9fff]/.test(s))")

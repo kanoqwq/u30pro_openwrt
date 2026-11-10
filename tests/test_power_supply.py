@@ -87,6 +87,36 @@ class PowerSupply(ShellTest):
             self.assertTrue(self.snapshot(shell).stdout.startswith('1|81|Not charging|'))
             self.assertEqual(self.notification(shell).stdout, '1|81|Not charging')
 
+    def test_u30pro_separate_gauge_and_master_status_match_dashboard(self):
+        self.native.write('etc/mu300/platform', 'u30pro')
+        self.supply('u30pro-battery', type='Battery', present=1, capacity=98,
+                    voltage_now=4397989, current_now=516758)
+        master = self.supply('u30pro-charger-master', type='USB', status='Charging')
+        self.supply('sprd-tcpm-source-psy-sc27xx-pd', type='Unknown', status='Discharging')
+        for status in ('Charging', 'Full', 'Discharging', 'Not charging'):
+            (master/'status').write_text(status+'\n')
+            for shell in self.each_shell():
+                self.assertEqual(self.notification(shell, MU300_POWER_DEVICE='u30pro').stdout,
+                                 f'1|98|{status}')
+                self.assertTrue(self.snapshot(shell).stdout.startswith(f'1|98|{status}|'))
+
+    def test_native_master_is_required_and_other_battery_never_borrows_it(self):
+        self.supply('u30pro-battery', type='Battery', present=1, capacity=98)
+        self.supply('unrelated-charger', type='USB', status='Charging', online=1)
+        for shell in self.each_shell():
+            self.assertEqual(self.notification(shell).stdout, '0|98|none')
+        master = self.supply('u30pro-charger-master', type='USB', status='Unknown')
+        for shell in self.each_shell():
+            self.assertEqual(self.notification(shell).stdout, '0|98|none')
+        (master/'status').write_text('Charging\n')
+        other = self.supply('another-battery', type='Battery', present=1, capacity=42)
+        for shell in self.each_shell():
+            self.assertEqual(self.notification(shell, MU300_FORWARD_BATTERY=other).stdout, '0|42|none')
+        (self.root/'u30pro-battery/present').write_text('0\n')
+        (other/'present').write_text('0\n')
+        for shell in self.each_shell():
+            self.assertEqual(self.notification(shell).stdout, '0|-1|none')
+
     def test_explicit_notification_override_is_respected_without_fallback(self):
         path = self.supply('private-battery', type='Battery', capacity=42, status='Full')
         self.supply('sc27xx-fgu', present=1, capacity=100, status='Charging')

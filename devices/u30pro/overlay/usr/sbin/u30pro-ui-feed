@@ -61,12 +61,24 @@ function screen_sms(slot,bus,ack_visible) {
     }
     return out;
 }
+function screen_data_cards(physical) {
+    let mask=0;
+    // Use only the current board owner's supported IDs, not its saved override.
+    if(physical?.model=='u30pro' && physical.supported && type(physical.cards)=='array')
+        for(let card in physical.cards)if(type(card)=='int' && card>=0 && card<4)mask |= 1<<card;
+    let active=physical?.active_card;
+    let known=type(active)=='int' && active>=0 && active<4 && (mask & (1<<active));
+    return {data_card_mask:mask,data_card_current:known?active:-1,
+        data_card_ready:physical?.ready && known?1:0};
+}
 function run() {
     let screen=bus.call('u30pro.panel','status',{}) || {}, req=requested;
     requested={};
     for(let name in ['wireless','unisoc_modem','network']) {config.unload(name);config.load(name);}
     let slot=config.get('unisoc_modem','main','data_sim')=='1'?'1':'0';
     let view=info(slot,bus,config), cached=status(slot,true,bus,config), cell=cached.cell || {}, sig=cached.sig || {};
+    let sim={};
+    try {sim=bus.call('mu300dash','sim_get',{}) || {};} catch(e) {}
     let relay=client.status(config,bus);
     let charge={};
     try { charge=bus.call('mu300-charge','get',{}) || {}; } catch(e) {}
@@ -116,6 +128,8 @@ function run() {
     for(let i=0;i<min(6,length(view.wifi.clients || []));i++) {
         let c=view.wifi.clients[i];data['cl.'+i]=join('\t',map([c.host || c.mac,c.ip,c.signal],clean));
     }
+    let cards=screen_data_cards(sim.physical || {});
+    for(let key in keys(cards))data[key]=cards[key];
     let sms=screen_sms(slot,bus,req.sms_ack);
     for(let key in keys(sms))data[key]=sms[key];
     // List fields are already sanitized individually; keep their TAB framing.

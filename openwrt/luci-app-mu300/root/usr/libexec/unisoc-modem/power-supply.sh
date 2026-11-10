@@ -31,3 +31,16 @@ power_battery_dir() {
     done
     return 1
 }
+power_battery_status() {
+    local path=$1 status
+    # Native U30 Pro separates FGU accounting from the charger status.
+    # Pair only this battery with its own master, never an arbitrary USB supply.
+    case "${path##*/}" in
+        u30pro-battery) status=$(power_supply_read "${path%/*}/u30pro-charger-master/status") ;;
+        *) status=$(power_supply_read "$path/status") ;;
+    esac
+    case "$status" in
+        Charging|Discharging|Not\ charging|Full) printf '%s\n' "$status" ;;
+        *) return 1 ;;
+    esac
+}

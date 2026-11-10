@@ -508,8 +508,10 @@ function cmd_line(b, c, line) {
 	// Native firmware can announce either SIM's bearer on nr0, including
 	// while a command is collecting. These are unsolicited-only grammars:
 	// publish hints without changing the command response or its ordering.
+	// Voice notices also arrive on this command-owned NR0. Do not publish
+	// solicited +CLCC rows or infer their SIM from the ingress port.
 	if (trim(fs.readfile('/etc/mu300/platform') || '') == 'u30pro' &&
-	    match(line, /^(\+CGEV:|\+SPPCODATA:|NO CARRIER$)/))
+	    match(line, /^(\+CGEV:|\+SPPCODATA:|NO CARRIER$|RING$|BUSY$|NO ANSWER$|\+CRING:|\+CLIP:|\+CCWA:|\+CLCCS:|\^ORIG:|\^CONF:|\^CONN:|\^CEND:|\^DSCI:)/))
 		urc_event(c.name, line);
 	if (b.phase == 'collect') {
 		if (line == '')

@@ -151,6 +151,7 @@ def dependencies():
     subprocess.run(command + ['update'], check=True)
     subprocess.run(command + ['add', '--scripts=no', '--commit-hooks=no', *PACKAGES], check=True)
     # Materialize only package user declarations; never start target services.
+    runpy.run_path(str(TOP/'openwrt/stage-lpac.py'))['install'](ROOT, LAYOUT['lpac_apks'], ROOT_IMAGE)
     subprocess.run(['docker', 'run', '--rm', '--platform', 'linux/arm64',
                     '-v', str(ROOT) + ':/target', '--entrypoint', '/bin/sh',
                     ROOT_IMAGE, '-ec',
@@ -198,6 +199,7 @@ def sources(refresh=False):
     if state['step'] in ('root-ready', 'packaged'):
         if (ROOT/'etc/mu300/platform').read_text().strip()!='u30pro':
             raise ValueError('Retained root is not the registered U30 Pro profile')
+    runpy.run_path(str(TOP/'openwrt/stage-lpac.py'))['install'](ROOT, LAYOUT['lpac_apks'], ROOT_IMAGE)
     # The prepared root belongs to this workspace, not to the previous ZIP's
     # checkout location. Archives may be moved/deleted after publication.
     # Reapply current sources, then verify kernel/runtime and the resulting root
@@ -287,6 +289,10 @@ def sources(refresh=False):
     (ROOT / 'usr/sbin/u30pro-usb').chmod(0o755)
     # Install exactly the modules selected by this kernel's modules.order.
     report = verified_kernel()
+    # Generic external-module ABI metadata only; no DSP/audio startup in firmware.
+    abi = runpy.run_path(str(TOP/'tools/kernel-abi.py'))['receipt'](Path(LAYOUT['kernel_source']), KERNEL)
+    (ROOT/'usr/share/mu300').mkdir(parents=True,exist_ok=True)
+    (ROOT/'usr/share/mu300/kernel-abi.json').write_text(json.dumps(abi,sort_keys=True)+'\n')
     module_root = ROOT / 'lib/modules' / report['version']
     module_root.mkdir(parents=True, exist_ok=True)
     old_order=set((module_root/'modules.order').read_text().splitlines()) if (module_root/'modules.order').is_file() else set()
@@ -665,6 +671,8 @@ def package():
                     package_root/'docs/U30PRO-NFC-20261103.zh-CN.md')
     shutil.copyfile(TOP/'docs/DATA-ROAMING-20261103.zh-CN.md',
                     package_root/'docs/DATA-ROAMING-20261103.zh-CN.md')
+    for name in ('EUICC.zh-CN.md', 'PRODUCT-FORM.zh-CN.md', 'INCOMING-CALL-ALERTS.zh-CN.md', 'U30PRO-SCREEN-DATA-SIM.zh-CN.md'):
+        shutil.copyfile(TOP/'docs'/name, package_root/'docs'/name)
     shutil.copyfile(STAGE/'Image.manifest.json',package_root/'docs/KERNEL-WRAPPER.json')
     shutil.copyfile(KERNEL/'u30pro-build.json',package_root/'docs/KERNEL-BUILD.json')
     shutil.copyfile(RUNTIME/'runtime.json',package_root/'docs/HARDWARE-RUNTIME.json')

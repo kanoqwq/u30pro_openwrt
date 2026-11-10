@@ -2,6 +2,9 @@
 # Two independent physical sources; data SIM and RF intent remain independent.
 # Only the existing broker/RF owner may perform the actual GPIO transaction.
 set -eu
+if [ "${1:-}" != validate ] && [ "${UNISOC_EUICC_GUARDED:-0}" != 1 ]; then
+    exec "${MU300_EUICC_TOOL:-/usr/libexec/unisoc-modem/euicc}" --guard /bin/sh "$0" "$@"
+fi
 export PATH="$PATH:/opt/mu300/bin:/opt/mu300/busybox-bin:/usr/sbin:/sbin"
 BIN=${MU300_BIN:-/opt/mu300/bin}
 R=${MU300_U30PRO_RUN:-/run}

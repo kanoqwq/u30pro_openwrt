@@ -87,7 +87,7 @@ def load_layout(config, workspace=None):
     paths = {}
     for key in ('kernel_source', 'kernel_objects', 'input_archive', 'input_manifest',
                 'boot_templates', 'busybox', 'at_transport',
-                'maintenance', 'theme', 'installer_artifacts'):
+                'maintenance', 'theme', 'installer_artifacts', 'lpac_apks'):
         path = Path(data[key]).expanduser()
         if not path.is_absolute():
             raise ValueError('Registered path must be absolute: ' + key)
@@ -117,6 +117,7 @@ def check_inputs(paths):
     if missing:
         raise ValueError('Missing registered inputs (nothing downloaded/copied):\n' + '\n'.join(missing))
     source = paths['kernel_source']
+    runpy.run_path(str(TOP/'openwrt/lpac-state.py'))['inspect'](paths['lpac_apks'])
     makefile = (source / 'Makefile').read_text(encoding='utf-8')
     version = [re.search(r'^' + key + r'\s*=\s*(\d+)\s*$', makefile, re.M) for key in ('VERSION', 'PATCHLEVEL', 'SUBLEVEL')]
     if not all(version) or '.'.join(m[1] for m in version) != '6.12.94':

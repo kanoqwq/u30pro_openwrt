@@ -19,14 +19,14 @@
 enum { PG_HOME, PG_SIGNAL, PG_TRAFFIC, PG_FUNC, NPAGES };
 static const char *const page_names[NPAGES] = { "主页", "信号", "流量", "功能" };
 
-enum { FN_WIFI, FN_POWER, FN_BATLOG, FN_SYSTEM, FN_DISPLAY, FN_ABOUT, FN_LOCK, NFN_BUILTIN };
+enum { FN_WIFI, FN_POWER, FN_BATLOG, FN_SYSTEM, FN_DISPLAY, FN_ABOUT, FN_LOCK, FN_DATA_SIM, NFN_BUILTIN };
 enum { SH_NONE, SH_CTRL, SH_SMS };
 
 enum { OV_NONE, OV_QR, OV_SMS };
 enum { H_NONE, H_WIFI_TOGGLE, H_QR, H_RECONNECT, H_SLEEP, H_THEME, H_REBOOT, H_CLOSE,
        H_SMS_REFRESH, H_QR_ADMIN, H_BACK, H_SHEET_CLOSE, H_OPEN_SMS, H_OPEN_POWER, H_WAKE, H_LOCK_TOGGLE, H_PIN_SET, H_RELAY_TOGGLE, H_BYPASS,
        H_SIG_RAT, H_OPEN_BATLOG, H_GLASS, H_GLASS_BLUR, H_GLASS_TINT, H_WP_DIM, H_WP_LIVE,
-       H_POWER_OFF, H_POWER_RESTART, H_POWER_CANCEL, H_POWER_CONFIRM,
+       H_POWER_OFF, H_POWER_RESTART, H_POWER_CANCEL, H_POWER_CONFIRM, H_CALL_IGNORE, H_CALL_HANGUP, H_DATA_SIM0, H_DATA_SIM1, H_DATA_SIM2, H_DATA_SIM3,
        H_SMS_ROW = 100, H_GOTO = 200, H_FN = 300, H_PIN = 500, H_BH_RANGE = 600 };
 /* keys of the PIN pad: H_PIN + 0..9 digits, then delete, confirm and cancel (setting a new PIN), back (unlock pad -> lock screen) */
 enum { PIN_DEL = 10, PIN_OK, PIN_CANCEL, PIN_BACK };
@@ -49,7 +49,19 @@ static int theme_idx, ov, ov_arg, sms_scroll, sms_lines_n;
 static Sms sms_detail;
 static int sms_detail_slot, sms_list_scroll;
 static int power_menu, power_choice;
+typedef struct { char id[40], number[48], label[80]; int ignored; } IncomingCall;
+static IncomingCall incoming_calls[8];
+static int incoming_count, incoming_busy;
+static const IncomingCall *incoming_visible(void)
+{
+	for (int i = 0; i < incoming_count; i++) if (!incoming_calls[i].ignored) return &incoming_calls[i];
+	return NULL;
+}
 #define POWER_HOLD_MS 1500
+static const char *const data_card_names[] = {"内置卡1", "内置卡2", "内置卡3", "外置卡"};
+static long data_sim_busy_until;
+static unsigned data_sim_request;
+static int data_sim_target = -1;
 static int sheet = SH_NONE, fn_sub = -1;
 static float sheet_pos;
 static int bright_max = 1024, off_idx = 2;	/* bright_max: the "on" level of the backlight (it cannot dim) */
@@ -175,7 +187,7 @@ static int nfn_entries;
 
 static void fn_build(void)
 {
-	static const char *const names[NFN_BUILTIN] = { "Wi-Fi", "电源", "电池记录", "系统", "显示", "关于", "锁屏" };
+	static const char *const names[NFN_BUILTIN] = { "Wi-Fi", "电源", "电池记录", "系统", "显示", "关于", "锁屏", "切换上网卡" };
 
 	nfn_entries = 0;
 	for (int i = 0; i < NFN_BUILTIN; i++) {
@@ -1336,6 +1348,90 @@ static void draw_power_menu(Cv *c)
 		hit_add(77, 181, 86, 32, H_POWER_CANCEL, 0, 0);
 		TXTC(c, FN14, 120, 202, "取消", C_DIM);
 	}
+}
+
+/* One closed Bezier silhouette, rather than separately joined icon strokes.
+ * Cache 4x4 coverage once at native size; subsequent frames only tint the mask. */
+static void incoming_handset(Cv *c, uint32_t col)
+{
+	static unsigned char coverage[44 * 44];
+	static int ready;
+	if (!ready) {
+		static const float curves[][6] = {
+			{6.4f,2.4f, 5.6f,2.3f, 5.f,2.6f},
+			{4.4f,2.96f, 3.8f,3.34f, 3.2f,3.7f},
+			{2.5f,4.1f, 2.2f,4.8f, 2.3f,5.6f},
+			{2.9f,13.8f, 10.2f,21.1f, 18.4f,21.7f},
+			{19.2f,21.8f, 19.9f,21.5f, 20.3f,20.8f},
+			{20.66f,20.2f, 21.04f,19.6f, 21.4f,19.f},
+			{21.7f,18.4f, 21.6f,17.6f, 21.1f,17.1f},
+			{20.2f,16.3f, 19.3f,15.5f, 18.4f,14.7f},
+			{17.9f,14.3f, 17.2f,14.2f, 16.7f,14.6f},
+			{16.14f,15.f, 15.56f,15.4f, 15.f,15.8f},
+			{14.6f,16.1f, 14.1f,16.1f, 13.7f,15.9f},
+			{11.3f,14.6f, 9.4f,12.7f, 8.1f,10.3f},
+			{7.9f,9.9f, 7.9f,9.4f, 8.2f,9.f},
+			{8.6f,8.44f, 9.f,7.86f, 9.4f,7.3f},
+			{9.8f,6.8f, 9.7f,6.1f, 9.3f,5.6f},
+			{8.5f,4.7f, 7.7f,3.8f, 6.9f,2.9f}
+		};
+		float px[193], py[193], x = 6.9f, y = 2.9f;
+		int n = 1;
+		px[0] = 2.8f + x * 1.6f; py[0] = 2.8f + y * 1.6f;
+		for (unsigned k = 0; k < sizeof curves / sizeof *curves; k++) {
+			const float *b = curves[k];
+			for (int j = 1; j <= 12; j++) {
+				float t = j / 12.f, u = 1.f - t;
+				px[n] = 2.8f + 1.6f * (u*u*u*x + 3*u*u*t*b[0] + 3*u*t*t*b[2] + t*t*t*b[4]);
+				py[n++] = 2.8f + 1.6f * (u*u*u*y + 3*u*u*t*b[1] + 3*u*t*t*b[3] + t*t*t*b[5]);
+			}
+			x = b[4]; y = b[5];
+		}
+		for (int sy = 0; sy < 176; sy++) {
+			float scan = (sy + .5f) * .25f, cuts[16];
+			int count = 0;
+			for (int i = 1; i < n; i++) {
+				if ((py[i-1] > scan) == (py[i] > scan)) continue;
+				float cut = px[i-1] + (scan-py[i-1]) * (px[i]-px[i-1]) / (py[i]-py[i-1]);
+				int j = count++;
+				while (j && cuts[j-1] > cut) { cuts[j] = cuts[j-1]; j--; }
+				cuts[j] = cut;
+			}
+			for (int i = 0; i + 1 < count; i += 2) {
+				int left = (int)ceilf(cuts[i]*4.f-.5f), right = (int)ceilf(cuts[i+1]*4.f-.5f);
+				if (left < 0) left = 0;
+				if (right > 176) right = 176;
+				for (int sx = left; sx < right; sx++) coverage[(sy/4)*44+sx/4]++;
+			}
+		}
+		ready = 1;
+	}
+	for (int y = 0; y < 44; y++) for (int x = 0; x < 44; x++)
+		gx_put(c, 98+x, 28+y, col, (coverage[y*44+x]*255+8)/16);
+}
+
+/* No answer action: the normal phone/SIP owner retains the live call. */
+static void draw_incoming(Cv *c)
+{
+	const IncomingCall *call = incoming_visible();
+	char fit[96];
+	if (!call) return;
+	gx_circle(c, 120, 50, 26, TH()->a, 28);
+	incoming_handset(c, TH()->a);
+	/* Body CJK carries GB2312; the compact bold title subset lacks 来. */
+	TXTC(c, FN16, 120, 99, "来电", C_TXT);
+	gx_fit(FN14, call->label, 180, fit, sizeof fit);
+	TXTC(c, FN14, 120, 123, fit, C_DIM);
+	gx_fit(FN16, call->number[0] ? call->number : "未知号码", 198, fit, sizeof fit);
+	TXTC(c, FN16, 120, 148, fit, C_TXT);
+	card_p(c, 40, 164, 76, 40, 16, H_CALL_IGNORE);
+	hit_add(40, 164, 76, 40, H_CALL_IGNORE, 0, 0);
+	hit_fb(FB_BG, 0, 0, 0, 0, 0);
+	TXTC(c, FN14, 78, 190, "忽略", C_TXT);
+	card_p(c, 124, 164, 76, 40, 16, H_CALL_HANGUP);
+	if (!incoming_busy) hit_add(124, 164, 76, 40, H_CALL_HANGUP, 0, 0);
+	hit_fb(FB_BG, 0, 0, 0, 0, 0);
+	TXTC(c, FN14, 162, 190, incoming_busy ? "处理中" : "挂断", C_BAD);
 }
 
 /* the two sheets: the control centre (from the top) and the SMS list (from the bottom) */

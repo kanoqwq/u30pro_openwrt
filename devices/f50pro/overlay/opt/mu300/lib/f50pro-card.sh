@@ -1,7 +1,7 @@
 #!/bin/sh
 # MU3356 factory wiring positions, not the operator of the installed SIM.
 # Selectors are physical levels exposed by the native kernel mux driver.
-f50pro_board_id() {
+f50pro_detected_board_id() {
     local root=${MU300_SYSROOT:-} value token path
     if [ -r "$root/proc/driver/board_id" ]; then
         value=$(cat "$root/proc/driver/board_id")
@@ -17,6 +17,16 @@ f50pro_board_id() {
         done
     done
     return 1
+}
+f50pro_board_id() {
+    local value marker=${MU300_U30PRO_RUN:-/run}/mu300-product-form-f50pro
+    if [ -r "$marker" ]; then value=$(cat "$marker");
+    else value=$(uci -q get unisoc_modem.main.f50pro_board_override 2>/dev/null || true); fi
+    case $value in
+        ''|auto) f50pro_detected_board_id;;
+        0|1|2|3|4|5) printf '%s\n' "$value";;
+        *) return 1;;
+    esac
 }
 f50pro_cards() {
     case $1 in

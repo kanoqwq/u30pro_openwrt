@@ -101,6 +101,8 @@ class FakeBridge:
         self.stop = False
         self.connections = 0
         self.state_delay = 0.0
+        self.fifo_requests = False
+        self.fifo_fds = []
         self.thread = threading.Thread(target=self.run, daemon=True)
         self.thread.start()
 
@@ -161,6 +163,23 @@ class FakeBridge:
         if kind in ('OPEN', 'FIFO'):
             name, rest = parts[1], parts[2]
             dev = rest.split(' ')[0]
+            if kind == 'FIFO' and self.fifo_requests:
+                import select
+                os.mkfifo(dev)
+                fd = os.open(dev, os.O_RDWR | os.O_NONBLOCK)
+                self.fifo_fds.append(fd)
+                def receive(fd=fd, name=name):
+                    pending = b''
+                    while not self.stop:
+                        try:
+                            if not select.select([fd], [], [], .2)[0]: continue
+                            pending += os.read(fd, 8192)
+                            while b'\n' in pending:
+                                line, pending = pending.split(b'\n', 1)
+                                self.req(name, line.decode())
+                        except (OSError, ValueError):
+                            return
+                threading.Thread(target=receive, daemon=True).start()
             if self.state_delay:
                 time.sleep(self.state_delay)
             self.send(f'STATE {name} {dev} open')
@@ -185,6 +204,9 @@ class FakeBridge:
 
     def close(self):
         self.stop = True
+        for fd in self.fifo_fds:
+            os.close(fd)
+        self.fifo_fds = []
         try:
             self.srv.close()
         except OSError:
@@ -707,6 +729,118 @@ class ModemdUbus(Base):
         self.assertIn({'channel':'stty_nr0','line':collecting},events)
         self.assertNotIn('+CGACT:',out)
         self.assertNotIn('private-apn',out)
+
+    def test_pro_nr0_voice_reaches_forwarding_and_screen_through_owner(self):
+        """Bridge RX -> real owner -> ubus -> scoped CLCC -> both consumers."""
+        import importlib.machinery
+        import importlib.util
+        import select
+        from unittest.mock import patch
+        profile = Path('/etc/mu300/platform')
+        if not profile.exists() or profile.read_text().strip() != 'u30pro':
+            self.skipTest('U30 Pro target profile required')
+        source = TOP/'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/call-notify'
+        loader = importlib.machinery.SourceFileLoader('tested_call_notify', str(source))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        notify = importlib.util.module_from_spec(spec)
+        loader.exec_module(notify)
+        # Production accepts only owner-registered runtime directories.
+        self.run_root = Path(tempfile.mkdtemp(prefix='incoming-owner-', dir='/var/run'))
+        self.addCleanup(shutil.rmtree, self.run_root)
+        self.bridge.fifo_requests = True
+        self.start(*(f'name=atd{nr},dev=/dev/stty_nr{nr},dir={self.run_root}/at{nr}'
+                     for nr in (0, 2, 5, 3)))
+        self.ready('stty_nr0'); self.wait_object()
+        listener = subprocess.Popen([UBUS, '-s', str(self.ubus_sock), 'listen', 'mu300.modem.urc'],
+                                    stdout=subprocess.PIPE, text=True, bufsize=1)
+        self.procs.append(listener)
+        time.sleep(.3)
+        alerts, views = [], []
+        calls = notify.Calls(lambda item: alerts.append(dict(item)) or True,
+                             lambda rows: views.append(rows), lambda: {})
+        owner = notify.ModemOwner(True)
+        results = []
+        hangups = notify.Hangups(owner, calls, lambda *v: results.append(v))
+
+        def rpc(obj, method, data=None):
+            return self.ubus('call', obj, method, json.dumps(data or {}))
+
+        def observe(expected):
+            self.assertTrue(select.select([listener.stdout], [], [], 4)[0],
+                            'real NR0 owner did not publish the call event')
+            event = json.loads(listener.stdout.readline())
+            self.assertEqual(event['mu300.modem.urc'], {'channel':'stty_nr0','line':expected})
+            self.assertTrue(notify.voice_hint(event))
+            for slot in (0, 1):
+                calls.update(owner.snapshot(slot), (slot,))
+
+        def snapshot(target):
+            for slot in (0, 1):
+                self.table[f'AT+SPACTCARD={slot};+CLCC'] = (
+                    [f'+CLCC: 1,1,4,0,0,"sip:+1234{slot}@example.test;user=phone",145','OK']
+                    if slot == target else ['OK'])
+
+        with patch.object(notify, 'call', rpc):
+            # The established client waits for admission instead of losing a
+            # last incoming/end event when the existing owner is occupied.
+            held = self.run_root/'at2/lock'
+            held.mkdir()
+            (held/'pid').write_text(str(os.getpid()))
+            (held/'until').write_text(str(int(time.time()) + 30))
+            release = threading.Timer(.4, lambda: shutil.rmtree(held))
+            release.start()
+            before = time.monotonic()
+            self.assertEqual(owner.snapshot(0), [])
+            self.assertGreaterEqual(time.monotonic() - before, .3)
+            release.join()
+            for slot, hint in ((0, '+CRING: VOICE'), (1, 'RING')):
+                snapshot(slot)
+                self.bridge.rx('stty_nr0', hint)
+                observe(hint)
+                self.assertEqual(alerts[-1]['card'], slot)
+                self.assertEqual(views[-1][0]['number'], f'+1234{slot}')
+                count = len(alerts)
+                self.bridge.rx('stty_nr0', hint); observe(hint)
+                self.assertEqual(len(alerts), count, 'repeated ring sent a duplicate alert')
+                identifier = calls.items[f'{slot}:1']['id']
+                hangups.request(identifier)
+                self.assertIn(identifier, hangups.pending)
+                self.assertEqual(len(results), slot)
+                hangups.request(identifier)
+                snapshot(None)
+                end_lock = self.run_root/('at2' if slot == 0 else 'at5')/'lock'
+                end_lock.mkdir()
+                (end_lock/'pid').write_text(str(os.getpid()))
+                (end_lock/'until').write_text(str(int(time.time()) + 30))
+                unlock = threading.Timer(.4, lambda path=end_lock: shutil.rmtree(path))
+                unlock.start()
+                self.bridge.rx('stty_nr0', '^CEND: 1,0,0,16'); observe('^CEND: 1,0,0,16')
+                unlock.join()
+                hangups.settle()
+                self.assertEqual(results[-1], (identifier, True))
+                self.assertEqual(views[-1], [])
+                self.assertEqual(sum(cmd == f'AT+SPACTCARD={slot};+CHUP\r'
+                                     for _, cmd in self.bridge.tx), 1)
+            # An unsolicited call during an existing NR0 data query must also
+            # publish, without changing the command's response or AT owner.
+            snapshot(1)
+            hint = '+CLIP: "+12341",145'
+            self.table['AT+CGACT?'] = [hint, '+CGACT: 1,1', 'OK']
+            reply = self.ubus('call','mu300.modem','at',json.dumps({
+                'channel':'atd0','cmd':'AT+CGACT?','timeout':2}))
+            self.assertEqual(reply['reply'], hint+'\n+CGACT: 1,1\nOK')
+            observe(hint)
+            self.assertEqual(alerts[-1]['card'], 1)
+            self.assertEqual(views[-1][0]['number'], '+12341')
+        # Other ports, solicited CLCC rows and command echoes are not call URCs.
+        self.bridge.rx('stty_nr3', 'RING')
+        self.bridge.rx('stty_nr0', '+CLCC: 1,1,4,0,0,"12345",129')
+        self.bridge.rx('stty_nr0', 'AT+PRIVATE=secret')
+        self.assertFalse(select.select([listener.stdout], [], [], .3)[0])
+        reads = [(port, cmd) for port, cmd in self.bridge.tx if cmd.endswith(';+CLCC\r')]
+        self.assertTrue(reads)
+        self.assertTrue(all(port == ('stty_nr2' if 'SPACTCARD=0;' in cmd else 'stty_nr5')
+                            for port, cmd in reads), reads)
 
     def test_collect_rejects_unavailable_slot_custom_backend_and_switching(self):
         self.start();self.ready();self.wait_object();self.bridge.tx.clear()
