@@ -522,7 +522,8 @@ struct sprd_tcpm_sysfs {
 	struct device_attribute attr_vbus_wait_ctl;
 	struct device_attribute attr_tcc_debounce_ctl;
 	struct device_attribute attr_first_pd_cap_delay_ctl;
-	struct attribute *attrs[5];
+	struct device_attribute attr_sink_pdos_ctl;
+	struct attribute *attrs[6];
 
 	struct sprd_tcpm_port *port;
 };

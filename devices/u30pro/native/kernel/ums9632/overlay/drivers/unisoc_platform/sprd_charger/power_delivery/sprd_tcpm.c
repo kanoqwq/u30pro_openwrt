@@ -781,8 +781,81 @@ static ssize_t sprd_tcpm_first_pd_cap_delay_store(struct device *dev,
 }
 
 /*
+ * The sink PDO set is board policy, but on this platform it is baked into the
+ * vendor DTB, which the installation never rewrites. Expose it so a board that
+ * can take more than the vendor declared (U30 Pro: variable 5-9V instead of a
+ * bare 5V fixed object) can extend it without rebuilding the DTB.
+ */
+static ssize_t sprd_tcpm_sink_pdos_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct sprd_tcpm_sysfs *tcpm_sysfs =
+		container_of(attr, struct sprd_tcpm_sysfs, attr_sink_pdos_ctl);
+	struct sprd_tcpm_port *port = tcpm_sysfs->port;
+	ssize_t len = 0;
+	unsigned int i;
+
+	if (!port)
+		return snprintf(buf, PAGE_SIZE, "%s tcpm_sysfs->port is null\n", __func__);
+
+	mutex_lock(&port->lock);
+	for (i = 0; i < port->nr_snk_pdo && len < PAGE_SIZE - 12; i++)
+		len += scnprintf(buf + len, PAGE_SIZE - len, "0x%08x ", port->snk_pdo[i]);
+	mutex_unlock(&port->lock);
+
+	if (len)
+		buf[len - 1] = '\n';
+
+	return len;
+}
+
+static ssize_t sprd_tcpm_sink_pdos_store(struct device *dev,
+					 struct device_attribute *attr, const char *buf,
+					 size_t count)
+{
+	struct sprd_tcpm_sysfs *tcpm_sysfs =
+		container_of(attr, struct sprd_tcpm_sysfs, attr_sink_pdos_ctl);
+	struct sprd_tcpm_port *port = tcpm_sysfs->port;
+	u32 pdos[SPRD_PDO_MAX_OBJECTS];
+	unsigned int nr = 0, val;
+	const char *p = buf;
+	int used, ret;
+
+	if (!port)
+		return -ENODEV;
+
+	if (!strncmp(buf, "default", 7)) {
+		ret = sprd_tcpm_update_sink_capabilities(port, port->snk_default_pdo,
+							 port->nr_snk_default_pdo,
+							 port->operating_snk_default_mw);
+		if (ret)
+			return ret;
+		dev_info(dev, "sink pdos restored to the DTB defaults\n");
+		return count;
+	}
+
+	while (nr < SPRD_PDO_MAX_OBJECTS && sscanf(p, " %8x%n", &val, &used) == 1) {
+		pdos[nr++] = val;
+		p += used;
+	}
+
+	if (!nr)
+		return -EINVAL;
+
+	ret = sprd_tcpm_update_sink_capabilities(port, pdos, nr, port->operating_snk_mw);
+	if (ret) {
+		dev_err(dev, "cannot apply %u sink pdos: %d\n", nr, ret);
+		return ret;
+	}
+
+	dev_info(dev, "sink pdos updated to %u objects\n", nr);
+	return count;
+}
+
+/*
  * SYSFS interfaces:
  * /sys/class/power_supply/sprd-tcpm-source-psy-sc27xx-pd/debug/log_ctl       [rw]     [debug]
+ * /sys/class/power_supply/sprd-tcpm-source-psy-sc27xx-pd/debug/sink_pdos     [rw]
  */
 static int sprd_tcpm_debug_log_register_sysfs(struct sprd_tcpm_port *port)
 {
@@ -800,7 +873,8 @@ static int sprd_tcpm_debug_log_register_sysfs(struct sprd_tcpm_port *port)
 	tcpm_sysfs->attrs[1] = &tcpm_sysfs->attr_vbus_wait_ctl.attr;
 	tcpm_sysfs->attrs[2] = &tcpm_sysfs->attr_tcc_debounce_ctl.attr;
 	tcpm_sysfs->attrs[3] = &tcpm_sysfs->attr_first_pd_cap_delay_ctl.attr;
-	tcpm_sysfs->attrs[4] = NULL;
+	tcpm_sysfs->attrs[4] = &tcpm_sysfs->attr_sink_pdos_ctl.attr;
+	tcpm_sysfs->attrs[5] = NULL;
 	tcpm_sysfs->attr_g.name = "debug";
 	tcpm_sysfs->attr_g.attrs = tcpm_sysfs->attrs;
 
@@ -827,6 +901,12 @@ static int sprd_tcpm_debug_log_register_sysfs(struct sprd_tcpm_port *port)
 	tcpm_sysfs->attr_first_pd_cap_delay_ctl.attr.mode = 0644;
 	tcpm_sysfs->attr_first_pd_cap_delay_ctl.show = sprd_tcpm_first_pd_cap_delay_show;
 	tcpm_sysfs->attr_first_pd_cap_delay_ctl.store = sprd_tcpm_first_pd_cap_delay_store;
+
+	sysfs_attr_init(&tcpm_sysfs->attr_sink_pdos_ctl.attr);
+	tcpm_sysfs->attr_sink_pdos_ctl.attr.name = "sink_pdos";
+	tcpm_sysfs->attr_sink_pdos_ctl.attr.mode = 0644;
+	tcpm_sysfs->attr_sink_pdos_ctl.show = sprd_tcpm_sink_pdos_show;
+	tcpm_sysfs->attr_sink_pdos_ctl.store = sprd_tcpm_sink_pdos_store;
 
 	/* file node: /sys/class/power_supply/sprd-tcpm-source-psy-sc27xx-pd/debug */
 	ret = sysfs_create_group(&port->psy->dev.kobj, &tcpm_sysfs->attr_g);

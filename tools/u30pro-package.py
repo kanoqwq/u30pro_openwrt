@@ -227,6 +227,9 @@ def sources(refresh=False):
     # early hotplug refresh which races AP startup.
     (ROOT/'etc/hotplug.d/net/96-f50pro-leds').unlink(missing_ok=True)
     (ROOT/'etc/mu300/model').write_text(MODEL['id']+'\n')
+    if not MODEL['battery']:
+        # No battery to charge on f50pro, so keep the vendor sink PDO policy.
+        (ROOT/'etc/init.d/u30pro-pd').unlink(missing_ok=True)
     if not MODEL['screen']:
         (ROOT/'usr/share/luci/menu.d/u30pro-wallpaper.json').unlink(missing_ok=True)
     if MODEL['id']!='f50pro':
@@ -436,7 +439,7 @@ def finish():
         'network','dnsmasq','odhcpd','firewall','dropbear','rpcd','uhttpd','wpad',
         'cron','sysntpd','done','umount','u30pro-watchdog','u30pro-factory','mu300-cpu-driver','mu300-vendor','mu300-hw',
         'mu300-atd','mu300-smsd','mu300-network-recovery','mu300-accounts','mu300-user-packages','ttyd',
-        'mu300-ndp','mu300-charge','u30pro-battlog','u30pro-panel','mu300-post','unisoc-modem-ui',
+        'mu300-ndp','mu300-charge','u30pro-battlog','u30pro-pd','u30pro-panel','mu300-post','unisoc-modem-ui',
         'unisoc-cpu','unisoc-cpu-cores','unisoc-network-performance','unisoc-sms-forward',
         'unisoc-traffic','unisoc-ttl','u30pro-nfc','unisoc-ra-renew')
     rc = ROOT/'etc/rc.d'; rc.mkdir(exist_ok=True)
@@ -449,7 +452,7 @@ def finish():
     if not MODEL['screen'] or not MODEL['battery']:
         disabled=set()
         if not MODEL['screen']: disabled.add('u30pro-panel')
-        if not MODEL['battery']: disabled.update(('u30pro-battlog','mu300-charge'))
+        if not MODEL['battery']: disabled.update(('u30pro-battlog','mu300-charge','u30pro-pd'))
         selected=tuple(name for name in selected if name not in disabled)
         for service in disabled:
             for link in rc.glob('[SK][0-9][0-9]'+service):

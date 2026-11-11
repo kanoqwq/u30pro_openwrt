@@ -1,0 +1,30 @@
+#!/bin/sh /etc/rc.common
+# The U30 Pro vendor DTB advertises a single 5 V / 3 A sink PDO, so PD settles
+# at 5 V whatever the source can actually deliver. The SGM41513 charger takes
+# up to 9 V without trouble, and at 9 V the input current for the same battery
+# charge current is nearly halved, which cuts cable drop and heat.
+#
+# The PDO set is baked into the DTB and the installer never rewrites it, so
+# extend it from userspace through the tcpm sink_pdos attribute. Only the
+# u30pro profile ships (and enables) this service; f50pro has no battery and
+# keeps the vendor policy untouched.
+START=99
+
+# Variable supply: 5 V .. 9 V, 2 A max.
+PDO_9V=0x8b4190c8
+
+start() {
+	local sysfs
+
+	for sysfs in /sys/class/power_supply/sprd-tcpm-source-psy-*/debug/sink_pdos; do
+		[ -w "$sysfs" ] || continue
+
+		# Never fight a DTB that already advertises more than vSafe5V.
+		set -- $(cat "$sysfs")
+		[ $# -eq 1 ] || continue
+
+		echo "$1 $PDO_9V" > "$sysfs" && logger -t u30pro-pd "sink pdos extended with $PDO_9V"
+	done
+}
+
+boot() { start; }

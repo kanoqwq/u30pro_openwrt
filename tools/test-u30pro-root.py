@@ -340,7 +340,7 @@ def main(include_modem=True):
     assert (ROOT/'etc/rc.d/S95f50pro-buttons').is_symlink()==(MODEL['id']=='f50pro')
     assert not (ROOT/'etc/hotplug.d/net/96-f50pro-leds').exists(), 'Retired early Wi-Fi hotplug refresh remains'
     assert not (ROOT/'etc/rc.d/S96f50pro-leds').exists()
-    for name in ('mu300-charge','u30pro-battlog'):
+    for name in ('mu300-charge','u30pro-battlog','u30pro-pd'):
         active=any((ROOT/'etc/rc.d').glob('S[0-9][0-9]'+name))
         assert active==MODEL['battery'], 'Wrong battery service policy: '+name
     assert not (ROOT/'etc/rc.d/S95u30pro-panel').is_symlink()
