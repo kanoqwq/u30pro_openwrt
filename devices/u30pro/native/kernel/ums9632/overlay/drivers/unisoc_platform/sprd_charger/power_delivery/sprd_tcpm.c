@@ -21,6 +21,7 @@
 #include <linux/of.h>
 #include <linux/proc_fs.h>
 #include <linux/property.h>
+#include <linux/power/u30pro-pd9.h>
 #include <linux/sched/clock.h>
 #include <linux/seq_file.h>
 #include <linux/slab.h>
@@ -2602,6 +2603,14 @@ static void sprd_tcpm_pd_ctrl_request(struct sprd_tcpm_port *port,
 	case SPRD_PD_CTRL_REJECT:
 	case SPRD_PD_CTRL_WAIT:
 	case SPRD_PD_CTRL_NOT_SUPP:
+		if (port->u30pro_pd9_active && port->supply_voltage <= 5000 &&
+		    (port->state == SNK_NEGOTIATE_CAPABILITIES ||
+		     port->state == SNK_NEGOTIATE_PPS_CAPABILITIES)) {
+			port->u30pro_pd9_active = false;
+			port->snk_pdo[0] = port->snk_default_pdo[0];
+			port->nr_snk_pdo = 1;
+			/* Keep attempted set: no repeated 9 V attempts after rejection. */
+		}
 		switch (port->state) {
 		case SNK_NEGOTIATE_CAPABILITIES:
 			/* USB PD specification, Figure 8-43 */
@@ -3236,8 +3245,10 @@ static unsigned int sprd_tcpm_pd_select_pps_apdo(struct sprd_tcpm_port *port)
 			 * PPS APDO. Again skip the first sink PDO as this will
 			 * always be 5V 3A.
 			 */
-			for (j = 1; j < port->nr_snk_default_pdo; j++) {
-				pdo = port->snk_default_pdo[j];
+			for (j = 1; j < (port->u30pro_pd9_active ? port->nr_snk_pdo :
+					port->nr_snk_default_pdo); j++) {
+				pdo = port->u30pro_pd9_active ? port->snk_pdo[j] :
+					port->snk_default_pdo[j];
 
 				switch (sprd_pdo_type(pdo)) {
 				case SPRD_PDO_TYPE_APDO:
@@ -3282,7 +3293,8 @@ static unsigned int sprd_tcpm_pd_select_pps_apdo(struct sprd_tcpm_port *port)
 
 	if (src_pdo) {
 		src = port->source_caps[src_pdo];
-		snk = port->snk_default_pdo[snk_pdo];
+		snk = port->u30pro_pd9_active ? port->snk_pdo[snk_pdo] :
+			port->snk_default_pdo[snk_pdo];
 
 		port->pps_data.req_min_volt = max(sprd_pdo_pps_apdo_min_voltage(src),
 						  sprd_pdo_pps_apdo_min_voltage(snk));
@@ -3662,6 +3674,8 @@ static int sprd_tcpm_src_attach(struct sprd_tcpm_port *port)
 		goto out_disable_vconn;
 
 	port->pd_capable = false;
+	port->u30pro_pd9_active = false;
+	port->u30pro_pd9_attempted = false;
 	sprd_tcpm_log(port, "%s:line%d pd_capable flase", __func__, __LINE__);
 
 	port->partner = NULL;
@@ -3708,6 +3722,9 @@ static void sprd_tcpm_unregister_altmodes(struct sprd_tcpm_port *port)
 
 static void sprd_tcpm_reset_port(struct sprd_tcpm_port *port)
 {
+	port->u30pro_pd9_active = false;
+	port->u30pro_pd9_attempted = false;
+	port->u30pro_pd9_exit_retry = 0;
 	sprd_tcpm_log_force(port, "%s:line%d", __func__, __LINE__);
 	sprd_tcpm_unregister_altmodes(port);
 	sprd_tcpm_typec_disconnect(port);
@@ -4527,6 +4544,12 @@ static void handle_snk_negotiate_pps_capabilities(struct sprd_tcpm_port *port)
 	ret = sprd_tcpm_pd_send_pps_request(port);
 	if (ret < 0) {
 		port->pps_status = ret;
+		if (port->u30pro_pd9_active && !port->pps_data.active) {
+			port->u30pro_pd9_active = false;
+			port->snk_pdo[0] = port->snk_default_pdo[0];
+			port->nr_snk_pdo = 1;
+			port->operating_snk_mw = port->operating_snk_default_mw;
+		}
 		/*
 		 * If this was called due to updates to sink
 		 * capabilities, and pps is no longer valid, we should
@@ -4594,7 +4617,8 @@ static void handle_snk_ready(struct sprd_tcpm_port *port)
 	 * When avoiding PPS charging, the upper layer is notified
 	 * repeatedly if the USB type is changed.
 	 */
-	if (port->usb_type != port->last_usb_type || port->power_role_swap) {
+	if (port->usb_type != port->last_usb_type || port->power_role_swap ||
+	    port->u30pro_pd9_active || port->u30pro_pd9_attempted) {
 		port->last_usb_type = port->usb_type;
 		port->power_role_swap = false;
 		power_supply_changed(port->psy);
@@ -4691,6 +4715,7 @@ static void handle_snk_hard_reset_sink_off(struct sprd_tcpm_port *port)
 {
 	port->sink_in_hard_reset = true;
 	memset(&port->pps_data, 0, sizeof(port->pps_data));
+	port->u30pro_pd9_active = false;
 	sprd_tcpm_set_vconn(port, false);
 	if (port->pd_capable)
 		sprd_tcpm_set_charge(port, false);
@@ -6498,7 +6523,9 @@ static int sprd_tcpm_psy_get_voltage_min(struct sprd_tcpm_port *port,
 static int sprd_tcpm_psy_get_voltage_max(struct sprd_tcpm_port *port,
 					 union power_supply_propval *val)
 {
-	if (port->pps_data.active)
+	if (port->u30pro_pd9_active)
+		val->intval = 9000000;
+	else if (port->pps_data.active)
 		val->intval = port->pps_data.max_volt * 1000;
 	else
 		val->intval = port->supply_voltage * 1000;
@@ -6590,6 +6617,116 @@ static int sprd_tcpm_psy_set_online(struct sprd_tcpm_port *port,
 	return ret;
 }
 
+/* Invoked by the native charger's existing source worker after a settled
+ * 5 V contract. Keep all message generation, ACK handling and PPS refresh in
+ * TCPM. Dedicated-adapter admission deliberately excludes powered USB docks.
+ * No role switch, VBUS sourcing, DP/DM access or forced adapter voltage here.
+ */
+static int sprd_tcpm_u30pro_voltage_limit(struct sprd_tcpm_port *port, int uv)
+{
+	struct u30pro_pd9_choice choice;
+	struct power_supply *charger;
+	struct device_node *config;
+	union power_supply_propval value;
+	u32 fixed_max_uw = 0;
+	bool allow_pps;
+	int i, ret = 0;
+
+	if (uv != 5000000 && uv != 9000000)
+		return -EINVAL;
+	mutex_lock(&port->lock);
+	if (port->state != SNK_READY || !port->explicit_contract ||
+	    port->pwr_role != TYPEC_SINK || port->vbus_source ||
+	    port->power_role_swap || port->data_role_swap) {
+		ret = -EAGAIN;
+		goto out;
+	}
+	if (uv == 5000000) {
+		if (!port->u30pro_pd9_active &&
+		    !(port->u30pro_pd9_exit_retry && port->supply_voltage > 5000))
+			goto out;
+		/* A rejected downshift still leaves a live high-voltage contract.
+		 * Retry from the existing 5 s charger worker, not a notification loop. */
+		if (port->u30pro_pd9_exit_retry &&
+		    time_before(jiffies, port->u30pro_pd9_exit_retry))
+			goto out;
+		port->u30pro_pd9_exit_retry = jiffies + msecs_to_jiffies(5000);
+		/* Return to the board's fixed 5 V PDO using the normal PD exchange. */
+		port->snk_pdo[0] = port->snk_default_pdo[0];
+		port->nr_snk_pdo = 1;
+		port->u30pro_pd9_active = false;
+		port->u30pro_pd9_attempted = false;
+		port->operating_snk_mw = port->operating_snk_default_mw;
+		sprd_tcpm_set_state(port, SNK_NEGOTIATE_CAPABILITIES, 0);
+		goto out;
+	}
+	if (port->u30pro_pd9_attempted || port->data_role != TYPEC_DEVICE)
+		goto out;
+	if (port->u30pro_pd9_exit_retry && port->supply_voltage > 5000)
+		goto out;
+	config = of_find_node_by_path("/charger-manager");
+	if (!config) { ret = -ENODEV; goto out; }
+	allow_pps = of_property_read_bool(config, "sprd,support-pd-pps");
+	ret = of_property_read_u32(config, "sprd,pd-fixed-max-microwatt", &fixed_max_uw);
+	if (!of_property_read_bool(config, "sprd,support-fchg") || ret ||
+	    fixed_max_uw < 1000000 || fixed_max_uw > 30000000)
+		ret = -EOPNOTSUPP;
+	of_node_put(config);
+	if (ret) goto out;
+	choice = u30pro_pd9_select(port->source_caps, port->nr_source_caps, allow_pps);
+	if (!choice.kind)
+		goto out;
+	if (choice.kind == 2 && 9 * choice.ma < port->operating_snk_default_mw) {
+		ret = -EOPNOTSUPP;
+		goto out;
+	}
+	if (choice.kind == 1) {
+		choice.ma = min(choice.ma, fixed_max_uw / 9000);
+		choice.ma -= choice.ma % 10;
+		if (choice.ma < 100) { ret = -EINVAL; goto out; }
+	}
+	charger = power_supply_get_by_name("u30pro-charger-master");
+	if (!charger) { ret = -ENODEV; goto out; }
+	/* The charger checks real chip, battery/JEITA/user state, reduces input
+	 * load and programs/readbacks 10.5 V OVP before any higher PD request. */
+	value.intval = 9000000;
+	port->u30pro_pd9_active = true;
+	ret = power_supply_set_property(charger, POWER_SUPPLY_PROP_VOLTAGE_MAX, &value);
+	power_supply_put(charger);
+	if (ret) {
+		port->u30pro_pd9_active = false;
+		goto out;
+	}
+	port->u30pro_pd9_attempted = true;
+	port->u30pro_pd9_active = true;
+	port->u30pro_pd9_exit_retry = 0;
+	port->snk_pdo[0] = port->snk_default_pdo[0];
+	port->snk_pdo[1] = SPRD_PDO_FIXED(9000, min(choice.ma, fixed_max_uw / 9000), 0);
+	/* PPS APDO: 3.3--9 V, bounded by the real SGM input. The source selector intersects
+	 * this with actual adapter capabilities, including its minimum voltage. */
+	port->snk_pdo[2] = (3U << 30) | (90U << 17) | (33U << 8) | (choice.ma / 50);
+	port->nr_snk_pdo = 3;
+	port->operating_snk_mw = choice.kind == 2 ?
+		port->operating_snk_default_mw :
+		min(fixed_max_uw / 1000, 9 * choice.ma);
+	if (choice.kind == 2) {
+		port->pps_status = 0;
+		port->pps_data.req_out_volt = 9000;
+		port->pps_data.req_op_curr = choice.ma;
+		sprd_tcpm_set_state(port, SNK_NEGOTIATE_PPS_CAPABILITIES, 0);
+	} else {
+		/* The synthetic sink PDO never permits 12/15/20 V; only 5 or 9 V. */
+		for (i = 0; i < port->nr_source_caps; i++)
+			if (sprd_pdo_type(port->source_caps[i]) == SPRD_PDO_TYPE_FIXED &&
+			    sprd_pdo_fixed_voltage(port->source_caps[i]) == 9000)
+				sprd_tcpm_log(port, "native SGM: enable advertised 9 V charging");
+		sprd_tcpm_set_state(port, SNK_NEGOTIATE_CAPABILITIES, 0);
+	}
+out:
+	mutex_unlock(&port->lock);
+	return ret;
+}
+
 static int sprd_tcpm_psy_set_prop(struct power_supply *psy,
 				  enum power_supply_property psp,
 				  const union power_supply_propval *val)
@@ -6600,6 +6737,9 @@ static int sprd_tcpm_psy_set_prop(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
 		ret = sprd_tcpm_psy_set_online(port, val);
+		break;
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+		ret = sprd_tcpm_u30pro_voltage_limit(port, val->intval);
 		break;
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 		if (val->intval < port->pps_data.min_volt * 1000 ||
@@ -6630,6 +6770,7 @@ static int sprd_tcpm_psy_prop_writeable(struct power_supply *psy,
 {
 	switch (psp) {
 	case POWER_SUPPLY_PROP_ONLINE:
+	case POWER_SUPPLY_PROP_VOLTAGE_MAX:
 	case POWER_SUPPLY_PROP_VOLTAGE_NOW:
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		return 1;

@@ -116,8 +116,8 @@
   },
   "kernel/ums9632/overlay/drivers/power/supply/u30pro-sgm41513.c": {
     "source_sha256": "604a09d3c82ecc46610dc401ca871045b23b90b905063e86ca56c367b6726d31",
-    "sha256": "cbdf9d5cf6a72cef4f694646eaea14a8d69f9efca6d161e996811d0ed555c7fd",
-    "reason": "Use the stock USB2 PHY/PMIC BC1.2 result, not SGM41513 PN0 PSEL bits, to select the existing stock SDP/DCP/CDP tables and report USB type. Atomic notifications queue process-context policy, probe defers for its provider and cleanup unregisters before cancelling workers. Preserve PD negotiation, user limits, JEITA, bypass, CV and OTG guards. 2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing. 2026-11-08: share stock bat.id resistor/profile selection between charger and FGU; obtain normal CV from the selected battery rather than an inherited warm register. Preserve 4.35 V special encoding and each JEITA recovery boundary; retain source limits, user pause, PD, OTG and no-battery exclusion. Evidence and validation boundaries: docs/U30PRO-CHARGE-PROFILE-20261108.zh-CN.md."
+    "sha256": "f4a0d061c64ed517b5e0a55bd868e5da70c3cd26c5f868c01e1fc30a16bad40b",
+    "reason": "Use the stock USB2 PHY/PMIC BC1.2 result, not SGM41513 PN0 PSEL bits, to select the existing stock SDP/DCP/CDP tables and report USB type. Atomic notifications queue process-context policy, probe defers for its provider and cleanup unregisters before cancelling workers. Preserve PD negotiation, user limits, JEITA, bypass, CV and OTG guards. 2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing. 2026-11-08: share stock bat.id resistor/profile selection between charger and FGU; obtain normal CV from the selected battery rather than an inherited warm register. Preserve 4.35 V special encoding and each JEITA recovery boundary; retain source limits, user pause, PD, OTG and no-battery exclusion. Evidence and validation boundaries: docs/U30PRO-CHARGE-PROFILE-20261108.zh-CN.md.; battery-backed native SGM PD 9 V/PPS admission, stock OVP/current policy, dedicated-adapter role isolation and contract notifications (2026-11-11) Use measured VBUS for verified 5 V OVP restoration, stock-selected fast-charge currents/JEITA, three 500 ms admission checks and stock taper thresholds; bound PD/PPS to advertised 9 V after charger preparation, retain role handling and no-battery exclusion. Evidence: docs/U30PRO-PD9-20261111.zh-CN.md."
   },
   "kernel/ums9632/overlay/drivers/power/supply/Kconfig.u30pro": {
     "source_sha256": "32fbd94b6b7b90b08f53ead42fae22fb05eac04515dcb0c2e959fd0674ed39b1",
@@ -126,13 +126,13 @@
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/usb/typec/sc27xx_typec.c": {
     "source_sha256": "6f61cc2cbabb4aed634bb5f444eeb77b2cfa506102f218d89758434a4744d972",
-    "sha256": "755f5d6877bf98882e2a999b89322f05ff30eba6e642045e0139fc4ef33dca7a",
-    "reason": "Honor stock sprd,mode=DRP and try-power-role=sink instead of silently programming sink-only. Native CC attachment events and TCPM own source/boost transitions."
+    "sha256": "62abe228092b082be6a01f41eab36a268a8a4cd0c94e26b5787d023b50b4586f",
+    "reason": "Honor stock sprd,mode=DRP and try-power-role=sink instead of silently programming sink-only. Native CC attachment events and TCPM own source/boost transitions. Incorporate ly-fv PR #2 UMP9651 A001 Type-C base correction, preserve DT on unknown/unreadable silicon IDs, retain existing UMP9360 handling. Evidence: docs/U30PRO-PD9-20261111.zh-CN.md."
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/sprd_charger/power_delivery/sprd_tcpm.c": {
     "source_sha256": "316ff012e0498ab6d7712af0c008c9ae5243e87237d8b43e10f82534ccd5fe9e",
-    "sha256": "758d1ef8a9f9886989040c473b783f3b183517623e425009e9482c117dd9a209",
-    "reason": "Remove the reference sink-only override and retain the stock dual-role Type-C capability/preferred sink policy; class port_type controls explicit user choices. Keep PD negotiation and VBUS safety."
+    "sha256": "dd7c309a2982980e5c244fdaa9141f5a3ce8e3c9fc523f1a70b48477875502a5",
+    "reason": "Remove the reference sink-only override and retain the stock dual-role Type-C capability/preferred sink policy; class port_type controls explicit user choices. Keep PD negotiation and VBUS safety.; battery-backed native SGM PD 9 V/PPS admission, stock OVP/current policy, dedicated-adapter role isolation and contract notifications (2026-11-11) Use measured VBUS for verified 5 V OVP restoration, stock-selected fast-charge currents/JEITA, three 500 ms admission checks and stock taper thresholds; bound PD/PPS to advertised 9 V after charger preparation, retain role handling and no-battery exclusion. Evidence: docs/U30PRO-PD9-20261111.zh-CN.md."
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/usb/musb/musb_sprd.c": {
     "source_sha256": "d567b3277c25ddc7da728b22028bf3aab39bc3ddf0d254530f80a93c3b3986a6",
@@ -186,8 +186,8 @@
   },
   "kernel/ums9632/overlay/drivers/power/supply/u30pro-ump965x-fgu.c": {
     "source_sha256": "c30e0967b9b05a0c503bd6ff5b20a4665008afd013b9b4c9288dca87bd5b72d2",
-    "reason": "2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing. 2026-11-08: share stock bat.id resistor/profile selection between charger and FGU; obtain normal CV from the selected battery rather than an inherited warm register. Preserve 4.35 V special encoding and each JEITA recovery boundary; retain source limits, user pause, PD, OTG and no-battery exclusion. Evidence and validation boundaries: docs/U30PRO-CHARGE-PROFILE-20261108.zh-CN.md.",
-    "sha256": "1b96ee28c03015ad51ea2bbef0855bc4fbb7002ff9f659dbd268d7d2887eaa7c"
+    "reason": "2026-11-05: explicit MU3356 product profile keeps U30 Pro defaults; F50 Pro has no physical battery or screen, and uses separate stock SIM routing. 2026-11-08: share stock bat.id resistor/profile selection between charger and FGU; obtain normal CV from the selected battery rather than an inherited warm register. Preserve 4.35 V special encoding and each JEITA recovery boundary; retain source limits, user pause, PD, OTG and no-battery exclusion. Evidence and validation boundaries: docs/U30PRO-CHARGE-PROFILE-20261108.zh-CN.md.; stock FGU input-voltage measurement and native PD fast-charge protection (2026-11-11) Use measured VBUS for verified 5 V OVP restoration, stock-selected fast-charge currents/JEITA, three 500 ms admission checks and stock taper thresholds; bound PD/PPS to advertised 9 V after charger preparation, retain role handling and no-battery exclusion. Evidence: docs/U30PRO-PD9-20261111.zh-CN.md. Treat nonnegative IIO processed reads as success and normalize the power-supply callback to zero; preserve measured VBUS and range/error guards.",
+    "sha256": "45258d4cc9bb4ce9378a81a32c885b5f9d476ef70d357b1f158cb98206159e90"
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/Kconfig": {
     "source_sha256": "be2eeea729c778ef8009779f8b378325f3f0ded2bb5796bad8a4c823a13007ff",
@@ -278,5 +278,10 @@
     "source_sha256": "68c7482bd49864a495a2c5c1b95528cf3ae3216a66d9ac635e371d6bb39769a9",
     "sha256": "64c90ee71466857542fa0b1067aea272391fd51e624263b4df7ed351e9529a36",
     "reason": "Quiet only WCN thermal read errors at the shell estimator debug level. Retain abnormal-temperature warnings, other sensor warnings, stock retry count, history and board-temperature fallback; do not change thermal protection."
+  },
+  "kernel/ums9632/overlay/include/linux/usb/sprd_tcpm.h": {
+    "source_sha256": "2af08e768a2f152e9cd672dac207393ececeb9f98ed2d338dc08385e749091b2",
+    "reason": "Native U30 Pro platform adaptation; battery-backed native SGM PD 9 V/PPS admission, stock OVP/current policy, dedicated-adapter role isolation and contract notifications (2026-11-11) Use measured VBUS for verified 5 V OVP restoration, stock-selected fast-charge currents/JEITA, three 500 ms admission checks and stock taper thresholds; bound PD/PPS to advertised 9 V after charger preparation, retain role handling and no-battery exclusion. Evidence: docs/U30PRO-PD9-20261111.zh-CN.md.",
+    "sha256": "04fe30ab16de818d29a9bf0b06f4b961c1d60c0a2af3fcb7e0ebabc9a8c6d2b7"
   }
 }

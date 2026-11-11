@@ -372,6 +372,20 @@ out:
 	schedule_delayed_work(&f->soc_work, msecs_to_jiffies(UMP_SOC_PERIOD_MS));
 }
 
+static int ump_charge_voltage_uv(struct ump_fgu *f, int *uv)
+{
+	int mv, ret;
+
+	/* IIO returns a nonnegative value on success, including IIO_VAL_INT. */
+	ret = iio_read_channel_processed(f->charge, &mv);
+	if (ret < 0)
+		return ret;
+	if (mv < 0 || mv > 20000)
+		return -ERANGE;
+	*uv = mv * 1000;
+	return 0;
+}
+
 static enum power_supply_property ump_properties[] = {
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
 	POWER_SUPPLY_PROP_CURRENT_NOW,
@@ -382,6 +396,7 @@ static enum power_supply_property ump_properties[] = {
 	POWER_SUPPLY_PROP_CHARGE_FULL,
 	POWER_SUPPLY_PROP_CHARGE_NOW,
 	POWER_SUPPLY_PROP_VOLTAGE_OCV,
+	POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE,
 	POWER_SUPPLY_PROP_PRESENT,
 };
 
@@ -400,6 +415,10 @@ static int ump_get_property(struct power_supply *psy, enum power_supply_property
 		break;
 	case POWER_SUPPLY_PROP_CURRENT_NOW:
 		ret = ump_current_ua(f, &val->intval);
+		break;
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
+		/* Stock FGU API: measured charger VBUS, distinct from cell VBAT. */
+		ret = ump_charge_voltage_uv(f, &val->intval);
 		break;
 	case POWER_SUPPLY_PROP_TEMP:
 		ret = ump_temperature(f, &val->intval);

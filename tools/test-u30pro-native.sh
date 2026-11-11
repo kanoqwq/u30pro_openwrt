@@ -36,6 +36,7 @@ OPENWRT_TEST_BUSYBOX="$test_busybox" python3 -m unittest discover -s "$top/insta
 python3 "$top/tests/u30pro_battery_history.py"
 python3 -m unittest discover -s "$top/tests" -p test_power_supply.py
 python3 "$top/tests/u30pro_charge_sources.py"
+python3 "$top/tests/u30pro_pd9.py"
 python3 "$top/tests/u30pro_charge_profile.py"
 python3 "$top/tests/u30pro_usb_roles.py"
 python3 "$top/tests/test_usb_link.py"

@@ -9,10 +9,12 @@
  */
 #include <linux/bitops.h>
 #include <linux/i2c.h>
+#include <linux/jiffies.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/power_supply.h>
+#include <linux/power/u30pro-pd9.h>
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
 #include <linux/regulator/of_regulator.h>
@@ -49,6 +51,7 @@ struct u30_sgm {
  struct delayed_work poll;
  struct usb_phy *usb_phy;
  struct notifier_block usb_nb;
+ struct notifier_block pd_nb;
  struct work_struct source_work;
  bool stopping;
  int legacy_id_result;
@@ -64,12 +67,24 @@ struct u30_sgm {
  int battery_index, battery_id_mv;
  u32 tbl_ichg[4], tbl_iin[4];	/* 0 SDP, 1 DCP, 2 CDP, 3 other */
  struct sgm_jeita jeita[8];
+ struct sgm_jeita fchg_jeita[8];
+ int fchg_jeita_n;
  int jeita_n, jeita_idx;
  int behaviour;			/* POWER_SUPPLY_CHARGE_BEHAVIOUR_* */
  u32 user_iin, user_ichg;	/* uA, 0 = automatic */
  int pol_type, pol_temp, pol_pd_ma;
  u32 pol_iin, pol_ichg, pol_cv;
  bool pol_charge;
+ bool pd_ovp_ready;
+ bool pd_ovp_touched;
+ u8 pd_saved_ovp;
+ u32 fchg_iin, fchg_ichg;
+ u32 fchg_ocv_max;
+ int pd_ocv, pd_vbat, pd_ibat, pd_vbus;
+ bool pd_measurements_valid, pd_wanted, pd_fast_active, pd_transition;
+ unsigned int pd_enable_count, pd_disable_count;
+ unsigned int pd_poll_ms;
+ unsigned long pd_next_check;
 };
 
 /* All callers hold lock; no read of clear-on-read REG09/REG0E here. */
@@ -127,6 +142,21 @@ static int sgm_load_tables(struct u30_sgm *s)
  ret = of_property_read_u32(bat, "constant-charge-voltage-max-microvolt", &s->cv_max_uv);
  if (ret) goto out;
  if (s->cv_max_uv < 3856000 || s->cv_max_uv > 4624000) { ret = -EINVAL; goto out; }
+ s->fchg_ocv_max = 4200000; /* stock CM default, selected battery may override */
+ of_property_read_u32(bat, "fast-charge-threshold-microvolt", &s->fchg_ocv_max);
+ if (s->fchg_ocv_max < 3520000 || s->fchg_ocv_max > 4624000)
+  s->fchg_ocv_max = 0;
+ {
+  u32 fchg[2];
+  if (s->fchg_ocv_max &&
+      !of_property_read_u32_array(bat, "charge-fchg-current-microamp", fchg, 2) &&
+      fchg[0] >= 100000 && fchg[0] <= 3500000 &&
+      fchg[1] >= 100000 && fchg[1] <= 3500000) {
+   /* Stock sprd_battery_info: pair[0] is cell current, pair[1] input. */
+   s->fchg_iin = min_t(u32, fchg[1], 3200000);
+   s->fchg_ichg = min_t(u32, fchg[0], 3000000);
+  }
+ }
  for (i = 0; i < 4; i++) {
   ret = of_property_read_u32_array(bat, names[i], pair, 2);
   if (ret) goto out;
@@ -152,6 +182,23 @@ static int sgm_load_tables(struct u30_sgm *s)
   }
  }
  s->jeita_n = n / 4;
+ /* Fast charging uses its selected battery's own JEITA table, not an
+  * assumption that it is identical to DCP (it is on the inspected unit). */
+ n = of_property_count_u32_elems(bat, "fchg-jeita-temp-table");
+ if (n >= 8 && !(n % 4) && n / 4 <= ARRAY_SIZE(s->fchg_jeita)) {
+  for (i = 0; i < n / 4; i++) {
+   int k;
+   for (k = 0; k < 4; k++)
+    if (of_property_read_u32_index(bat, "fchg-jeita-temp-table", i * 4 + k, &row[k])) break;
+   if (k != 4 || row[0] > 2000 || row[1] > 2000 ||
+       (i && (int)row[0] - 1000 <= s->fchg_jeita[i - 1].t_up) ||
+       (row[2] && (row[3] < 3856000 || row[3] > 4624000))) break;
+   s->fchg_jeita[i] = (struct sgm_jeita){(int)row[0] - 1000,
+                      (int)row[1] - 1000, row[2], row[3]};
+  }
+  if (i == n / 4) s->fchg_jeita_n = n / 4;
+ }
+ if (!s->fchg_jeita_n) s->fchg_iin = s->fchg_ichg = 0;
  s->policy_on = true;
  ret = 0;
 out:
@@ -163,9 +210,11 @@ out:
 static int sgm_band(struct u30_sgm *s, int t)
 {
  int i;
- for (i = 0; i < s->jeita_n; i++)
-  if (t < s->jeita[i].t_up) return i;
- return s->jeita_n;
+ const struct sgm_jeita *table = s->pd_fast_active ? s->fchg_jeita : s->jeita;
+ int count = s->pd_fast_active ? s->fchg_jeita_n : s->jeita_n;
+ for (i = 0; i < count; i++)
+  if (t < table[i].t_up) return i;
+ return count;
 }
 
 /* Each boundary has its own stock recovery point. Walk crossed boundaries so
@@ -174,14 +223,16 @@ static int sgm_band(struct u30_sgm *s, int t)
 static int sgm_jeita_band(struct u30_sgm *s, int t)
 {
  int target = sgm_band(s, t), band = s->jeita_idx;
- if (band < 0) return target;
+ struct sgm_jeita *table = s->pd_fast_active ? s->fchg_jeita : s->jeita;
+ int count = s->pd_fast_active ? s->fchg_jeita_n : s->jeita_n;
+ if (band < 0 || band > count) return target;
  while (band < target) {
-  struct sgm_jeita *edge = &s->jeita[band];
+  struct sgm_jeita *edge = &table[band];
   if (edge->t_rec > edge->t_up && t < edge->t_rec) break;
   band++;
  }
  while (band > target) {
-  struct sgm_jeita *edge = &s->jeita[band - 1];
+  struct sgm_jeita *edge = &table[band - 1];
   if (edge->t_rec < edge->t_up && t > edge->t_rec) break;
   band--;
  }
@@ -220,6 +271,7 @@ static void sgm_policy(struct u30_sgm *s)
  u32 iin, ichg, cv;
  bool charge;
 
+ s->pd_measurements_valid = false;
  if (!s->policy_on) return;
  status = sgm_read(s, SGM_STATUS);
  control = sgm_read(s, SGM_CONTROL);
@@ -233,15 +285,25 @@ static void sgm_policy(struct u30_sgm *s)
  s->pol_pd_ma = 0;
  pd = power_supply_get_by_name("sprd-tcpm-source-psy-sc27xx-pd");
  if (pd) {
-  int online = 0, volt = 0, cur = 0;
+  int online = 0, volt = 0, cur = 0, usb = POWER_SUPPLY_USB_TYPE_UNKNOWN;
   if (!power_supply_get_property(pd, POWER_SUPPLY_PROP_ONLINE, &v)) online = v.intval;
   if (!power_supply_get_property(pd, POWER_SUPPLY_PROP_VOLTAGE_NOW, &v)) volt = v.intval;
   if (!power_supply_get_property(pd, POWER_SUPPLY_PROP_CURRENT_MAX, &v)) cur = v.intval;
+  if (!power_supply_get_property(pd, POWER_SUPPLY_PROP_USB_TYPE, &v)) usb = v.intval;
   power_supply_put(pd);
-  if (online && volt > 0 && volt <= 6000000 && cur > 0) {
+  if (online && volt > 0 && volt <= (s->pd_ovp_ready ? 9500000 : 6000000) && cur > 0) {
    s->pol_pd_ma = cur / 1000;
-   if ((u32)cur > iin) iin = min_t(u32, cur, 3200000);
+   /* A-C DCP may expose a default Type-C 500 mA alongside real BC1.2.
+    * Only an explicit PD contract replaces BC1.2's allowance downward. */
+   if (usb == POWER_SUPPLY_USB_TYPE_PD || usb == POWER_SUPPLY_USB_TYPE_PD_PPS)
+    iin = min_t(u32, cur, 3200000);
+   else if ((u32)cur > iin) iin = min_t(u32, cur, 3200000);
    if (ichg < 3000000) ichg = 3000000;
+   if (volt > 6000000) {
+    s->pd_fast_active = true;
+    iin = min_t(u32, iin, s->fchg_iin);
+    ichg = min_t(u32, ichg, s->fchg_ichg);
+   }
   }
  }
  if (s->user_iin && s->user_iin < iin) iin = s->user_iin;
@@ -255,21 +317,45 @@ static void sgm_policy(struct u30_sgm *s)
  bat = power_supply_get_by_name("u30pro-battery");
  if (bat) {
   if (!power_supply_get_property(bat, POWER_SUPPLY_PROP_TEMP, &v)) temp = v.intval;
+  if (!power_supply_get_property(bat, POWER_SUPPLY_PROP_VOLTAGE_OCV, &v)) {
+   s->pd_ocv = v.intval;
+   if (!power_supply_get_property(bat, POWER_SUPPLY_PROP_VOLTAGE_NOW, &v)) {
+    s->pd_vbat = v.intval;
+    if (!power_supply_get_property(bat, POWER_SUPPLY_PROP_CURRENT_NOW, &v)) {
+     s->pd_ibat = v.intval;
+     if (!power_supply_get_property(bat, POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE, &v)) {
+      s->pd_vbus = v.intval;
+      s->pd_measurements_valid = v.intval >= 3900000 && v.intval <= 10500000;
+     }
+    }
+   }
+  }
   power_supply_put(bat);
  }
  if (temp == INT_MIN) {
   if (ichg > 1000000) ichg = 1000000;	/* no temperature: stay gentle */
  } else {
+  struct sgm_jeita *table;
+  int count;
+  if (!s->pd_wanted && s->pd_measurements_valid && s->pd_vbus < 6500000)
+   s->pd_fast_active = false;
+  table = s->pd_fast_active ? s->fchg_jeita : s->jeita;
+  count = s->pd_fast_active ? s->fchg_jeita_n : s->jeita_n;
   band = sgm_jeita_band(s, temp);
   s->jeita_idx = band;
-  if (band >= s->jeita_n) {
+  if (band >= count) {
    ichg = 0;
   } else {
-   if (s->jeita[band].ichg < ichg) ichg = s->jeita[band].ichg;
-   if (s->jeita[band].cv < cv) cv = s->jeita[band].cv;
+   if (table[band].ichg < ichg) ichg = table[band].ichg;
+   if (table[band].cv < cv) cv = table[band].cv;
   }
  }
  charge = ichg > 0 && s->behaviour != POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE;
+
+ if (s->pd_transition && s->pd_fast_active && s->pd_measurements_valid &&
+     s->pd_vbus >= 6500000 && s->pd_wanted)
+  s->pd_transition = false;
+ if (s->pd_transition && iin > 1500000) iin = 1500000;
 
  sgm_update_reg(s, 0x00, 0x1f, (iin / 1000 - 100) / 100);
  if (ichg > 0) sgm_update_reg(s, 0x02, 0x3f, sgm_ichg_code(ichg));
@@ -279,6 +365,137 @@ static void sgm_policy(struct u30_sgm *s)
  s->pol_iin = iin; s->pol_ichg = ichg; s->pol_cv = cv; s->pol_charge = charge;
 }
 
+static bool sgm_pd9_allowed(struct u30_sgm *s)
+{
+ return battery_present && s->policy_on && s->pd_poll_ms && s->pd_measurements_valid &&
+        s->fchg_iin && s->fchg_ichg &&
+        s->pol_charge && s->pol_temp != -9999 &&
+        s->behaviour == POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO && s->pd_wanted;
+}
+
+static bool sgm_pd_can_start(struct u30_sgm *s)
+{
+ return battery_present && s->policy_on && s->pd_poll_ms && s->pd_measurements_valid &&
+        s->fchg_iin && s->fchg_ichg && s->pol_charge &&
+        s->pol_temp != -9999 &&
+        s->behaviour == POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO &&
+        u30pro_pd9_start_eligible(s->pd_ocv, s->pd_ibat, s->pol_ichg,
+          s->user_ichg ? s->user_ichg : 1000000, s->fchg_ocv_max);
+}
+
+/* Advance at the stock maintenance cadence, never once per notification.
+ * Startup: three 500 ms checks. Normal monitoring follows cm-poll-interval;
+ * a low-cell/current/VBUS result schedules the second confirmation after 5 s.
+ * JEITA/user pause is immediate and remains authoritative. */
+static void sgm_pd_check(struct u30_sgm *s)
+{
+ if (!s->pd_measurements_valid || !s->pol_charge ||
+     s->pol_temp == -9999 ||
+     s->behaviour != POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO) {
+  s->pd_wanted = false;
+  s->pd_enable_count = s->pd_disable_count = 0;
+  return;
+ }
+ if (s->pd_wanted) {
+  if (s->pd_ovp_ready && s->pd_vbus >= 6500000) s->pd_fast_active = true;
+  if (s->pd_fast_active) {
+   if (time_before(jiffies, s->pd_next_check)) return;
+   if (u30pro_pd9_stop_eligible(s->pd_vbat, s->pd_ibat, s->pd_vbus))
+    s->pd_disable_count++;
+   else s->pd_disable_count = 0;
+   s->pd_next_check = jiffies + msecs_to_jiffies(s->pd_disable_count ? 5000 : s->pd_poll_ms);
+   if (s->pd_disable_count >= 2) {
+    s->pd_wanted = false;
+    s->pd_enable_count = s->pd_disable_count = 0;
+   }
+  }
+ } else if (sgm_pd_can_start(s)) {
+  if (++s->pd_enable_count >= 3) {
+   s->pd_wanted = true;
+   s->pd_next_check = jiffies + msecs_to_jiffies(s->pd_poll_ms);
+  }
+ } else s->pd_enable_count = 0;
+ if (!s->pd_wanted && s->pd_vbus < 6500000) s->pd_fast_active = false;
+}
+
+/* Process context only, outside the charger mutex: TCPM can synchronously
+ * call back into this charger's OVP preparation before queuing its request. */
+static void sgm_request_pd_voltage(struct u30_sgm *s)
+{
+ struct power_supply *pd;
+ struct power_supply *bat;
+ union power_supply_propval value, online, voltage, maximum;
+ int measured_vbus = -1;
+
+ if (!battery_present || READ_ONCE(s->stopping)) return;
+ mutex_lock(&s->lock);
+ value.intval = sgm_pd9_allowed(s) ? 9000000 : 5000000;
+ if (value.intval == 5000000 && s->pd_ovp_ready) {
+  int control = sgm_read(s, SGM_CONTROL);
+  if (control >= 0 && !(control & SGM_OTG)) {
+   u32 initial = s->user_iin ? min_t(u32, s->user_iin, 1500000) : 1500000;
+   if (s->pol_iin && s->pol_iin < initial) initial = s->pol_iin;
+   if (initial < 100000) initial = 100000;
+   if (!sgm_update_reg(s, 0x00, 0x1f, (initial / 1000 - 100) / 100))
+    s->pd_transition = true;
+  }
+ }
+ mutex_unlock(&s->lock);
+ pd = power_supply_get_by_name("sprd-tcpm-source-psy-sc27xx-pd");
+ if (!pd) return;
+ /* EAGAIN means the initial contract/role swap is not settled. Its normal
+  * power_supply event will re-run this worker; no negotiation polling. */
+ power_supply_set_property(pd, POWER_SUPPLY_PROP_VOLTAGE_MAX, &value);
+ bat = power_supply_get_by_name("u30pro-battery");
+ if (bat) {
+  if (!power_supply_get_property(bat, POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE, &value))
+   measured_vbus = value.intval;
+  power_supply_put(bat);
+ }
+ /* Never lower OVP while a 9 V transition/contract is still live. Restore
+  * the stock normal threshold only after 5 V is confirmed, or after detach. */
+ if (!power_supply_get_property(pd, POWER_SUPPLY_PROP_ONLINE, &online) &&
+     (!online.intval ||
+      (!power_supply_get_property(pd, POWER_SUPPLY_PROP_VOLTAGE_NOW, &voltage) &&
+       !power_supply_get_property(pd, POWER_SUPPLY_PROP_VOLTAGE_MAX, &maximum) &&
+       voltage.intval <= 5500000 && maximum.intval <= 6000000))) {
+  mutex_lock(&s->lock);
+  if (s->pd_ovp_touched && measured_vbus >= 0 && measured_vbus <= 6500000 &&
+      !sgm_update_reg(s, 0x06, 0xc0, s->pd_saved_ovp)) {
+   int readback = sgm_read(s, 0x06);
+   if (readback >= 0 && (readback & 0xc0) == s->pd_saved_ovp)
+    s->pd_ovp_touched = s->pd_ovp_ready = s->pd_transition = false;
+  }
+  mutex_unlock(&s->lock);
+ }
+ power_supply_put(pd);
+}
+
+/* PPS requires a request within 10 seconds even at unchanged voltage. Reuse
+ * the already-required 5 s IC watchdog worker; ordinary PD/BC1.2 has no
+ * keepalive. A normal source event must never create a request/event loop. */
+static void sgm_pd_keepalive(struct u30_sgm *s)
+{
+ struct power_supply *pd;
+ union power_supply_propval online, voltage;
+ bool allow;
+
+ if (!battery_present || READ_ONCE(s->stopping)) return;
+ sgm_request_pd_voltage(s);
+ mutex_lock(&s->lock);
+ allow = sgm_pd9_allowed(s) && s->pd_ovp_ready;
+ mutex_unlock(&s->lock);
+ if (!allow) return;
+ pd = power_supply_get_by_name("sprd-tcpm-source-psy-sc27xx-pd");
+ if (!pd) return;
+ if (!power_supply_get_property(pd, POWER_SUPPLY_PROP_ONLINE, &online) &&
+     online.intval == 2 &&
+     !power_supply_get_property(pd, POWER_SUPPLY_PROP_VOLTAGE_NOW, &voltage) &&
+     voltage.intval == 9000000)
+  power_supply_set_property(pd, POWER_SUPPLY_PROP_VOLTAGE_NOW, &voltage);
+ power_supply_put(pd);
+}
+
 static void sgm_source_work(struct work_struct *work)
 {
  struct u30_sgm *s = container_of(work, struct u30_sgm, source_work);
@@ -286,8 +503,28 @@ static void sgm_source_work(struct work_struct *work)
  if (READ_ONCE(s->stopping)) return;
  mutex_lock(&s->lock);
  if (!s->stopping) sgm_policy(s);
+ if (sgm_pd_can_start(s) && !s->pd_wanted && s->pd_enable_count < 3)
+  mod_delayed_work(system_wq, &s->poll, msecs_to_jiffies(500));
+ if (!s->pol_charge || s->behaviour != POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO ||
+     !s->pd_measurements_valid) {
+  s->pd_wanted = false;
+  s->pd_enable_count = s->pd_disable_count = 0;
+ }
  mutex_unlock(&s->lock);
+ sgm_request_pd_voltage(s);
  power_supply_changed(s->psy);
+}
+
+static int sgm_pd_notify(struct notifier_block *nb, unsigned long event, void *data)
+{
+ struct u30_sgm *s = container_of(nb, struct u30_sgm, pd_nb);
+ struct power_supply *psy = data;
+
+ if (event != PSY_EVENT_PROP_CHANGED || !psy || !psy->desc ||
+     strcmp(psy->desc->name, "sprd-tcpm-source-psy-sc27xx-pd") ||
+     READ_ONCE(s->stopping)) return NOTIFY_DONE;
+ schedule_work(&s->source_work);
+ return NOTIFY_OK;
 }
 
 /* USB PHY uses an atomic notifier. Never do I2C, lock a mutex or run a new
@@ -307,6 +544,7 @@ static void sgm_unregister_source(void *data)
  struct u30_sgm *s = data;
 
  usb_unregister_notifier(s->usb_phy, &s->usb_nb);
+ if (battery_present) power_supply_unreg_notifier(&s->pd_nb);
 }
 
 static int sgm_set_property(struct power_supply *psy, enum power_supply_property property,
@@ -316,6 +554,35 @@ static int sgm_set_property(struct power_supply *psy, enum power_supply_property
  int ret = 0;
  mutex_lock(&s->lock);
  switch (property) {
+ case POWER_SUPPLY_PROP_VOLTAGE_MAX:
+  if (value->intval != 9000000 || !sgm_pd9_allowed(s)) { ret = -EPERM; break; }
+  ret = sgm_read(s, SGM_CONTROL);
+  if (ret < 0) break;
+  if (ret & SGM_OTG) { ret = -EBUSY; break; }
+  /* Stock CM_FAST_CHARGE_OVP_ENABLE_CMD: REG06 OVP=10.5 V.
+   * Reduce demand before changing the adapter, preserving boost/VINDPM. */
+  if (!s->pd_ovp_ready) {
+   ret = sgm_read(s, 0x06);
+   if (ret < 0) break;
+   s->pd_saved_ovp = 0x40; /* stock master's normal 6.5 V OVP */
+  }
+  {
+   u32 initial = s->user_iin ? min_t(u32, s->user_iin, 1500000) : 1500000;
+   if (s->pol_iin && s->pol_iin < initial) initial = s->pol_iin;
+   if (initial < 100000) initial = 100000;
+   ret = sgm_update_reg(s, 0x00, 0x1f, (initial / 1000 - 100) / 100);
+  }
+  if (!ret) {
+   s->pd_ovp_touched = true;
+   ret = sgm_update_reg(s, 0x06, 0xc0, 0x80);
+  }
+  if (!ret) {
+   ret = sgm_read(s, 0x06);
+   if (ret >= 0) ret = (ret & 0xc0) == 0x80 ? 0 : -EIO;
+  }
+  if (!ret) s->pd_ovp_ready = s->pd_transition = true;
+  mutex_unlock(&s->lock);
+  return ret;
  case POWER_SUPPLY_PROP_CHARGE_BEHAVIOUR:
   if (value->intval != POWER_SUPPLY_CHARGE_BEHAVIOUR_AUTO &&
       value->intval != POWER_SUPPLY_CHARGE_BEHAVIOUR_INHIBIT_CHARGE) { ret = -EINVAL; break; }
@@ -333,6 +600,7 @@ static int sgm_set_property(struct power_supply *psy, enum power_supply_property
  }
  if (!ret) sgm_policy(s);
  mutex_unlock(&s->lock);
+ if (!ret) schedule_work(&s->source_work);
  return ret;
 }
 
@@ -494,12 +762,16 @@ static void sgm_poll(struct work_struct *work)
   }
  }
  if (!ret) sgm_policy(s);
+ if (!ret) sgm_pd_check(s);
  s->last_error = ret;
  if (ret) s->poll_errors++;
  mutex_unlock(&s->lock);
  if (changed) power_supply_changed(s->psy);
+ if (!ret) sgm_pd_keepalive(s);
  if (ret) dev_warn_ratelimited(s->dev, "status/watchdog I2C error %d\n", ret);
- if (!READ_ONCE(s->stopping)) schedule_delayed_work(&s->poll, 5 * HZ);
+ if (!READ_ONCE(s->stopping))
+  schedule_delayed_work(&s->poll, !s->pd_wanted && s->pd_enable_count > 0 &&
+                        s->pd_enable_count < 3 ? msecs_to_jiffies(500) : 5 * HZ);
 }
 static void sgm_cancel_poll(void *data)
 {
@@ -604,6 +876,15 @@ static int sgm_probe(struct i2c_client *client)
  if (battery_present) {
   ret = sgm_load_tables(s);
   if (ret) return dev_err_probe(dev, ret, "selected stock battery charge profile is invalid\n");
+  node = of_find_node_by_path("/charger-manager");
+  if (node) {
+   u32 interval;
+   if (of_property_read_bool(node, "sprd,support-fchg") &&
+       !of_property_read_u32(node, "cm-poll-interval", &interval) &&
+       interval >= 500 && interval <= 3600000)
+    s->pd_poll_ms = interval;
+   of_node_put(node);
+  }
  }
  psy_cfg.drv_data = s;psy_cfg.of_node = dev->of_node;
  s->psy = devm_power_supply_register(dev, &s->psy_desc, &psy_cfg);
@@ -625,8 +906,16 @@ static int sgm_probe(struct i2c_client *client)
  ret = devm_add_action_or_reset(dev, sgm_cancel_poll, s);
  if (ret) return ret;
  s->usb_nb.notifier_call = sgm_source_notify;
+ s->pd_nb.notifier_call = sgm_pd_notify;
+ if (battery_present) {
+  ret = power_supply_reg_notifier(&s->pd_nb);
+  if (ret) return ret;
+ }
  ret = usb_register_notifier(s->usb_phy, &s->usb_nb);
- if (ret) return ret;
+ if (ret) {
+  if (battery_present) power_supply_unreg_notifier(&s->pd_nb);
+  return ret;
+ }
  /* LIFO devres: unregister first, cancel both workers before psy/PHY release. */
  ret = devm_add_action_or_reset(dev, sgm_unregister_source, s);
  if (ret) return ret;

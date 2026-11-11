@@ -20,6 +20,7 @@
 #include <linux/extcon-provider.h>
 #include <linux/usb/sprd_typec.h>
 #include <linux/usb/sprd_tcpm.h>
+#include <linux/usb/u30pro-pmic-typec.h>
 
 /* registers definitions for controller REGS_TYPEC */
 #define SC27XX_EN			0x00
@@ -1737,11 +1738,11 @@ static int sc27xx_typec_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	regmap_read(sc->regmap, PMIC_ID_LOW, &pmic_id_low);
-	regmap_read(sc->regmap, PMIC_ID_HIGH, &pmic_id_high);
-
-	if ((pmic_id_high & 0xffff) == 0x9360 && (pmic_id_low & 0xffff) == 0xb000)
-		sc->base = 0x300;
+	/* Preserve DT on an unreadable/unknown PMIC; only verified silicon IDs
+	 * override older firmware's stale Type-C register address. */
+	if (!regmap_read(sc->regmap, PMIC_ID_LOW, &pmic_id_low) &&
+	    !regmap_read(sc->regmap, PMIC_ID_HIGH, &pmic_id_high))
+		sc->base = u30pro_pmic_typec_base(sc->base, pmic_id_low, pmic_id_high);
 
 	dev_info(sc->dev, "typec base addr: 0x%x\n", sc->base);
 

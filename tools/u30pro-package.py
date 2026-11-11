@@ -673,6 +673,9 @@ def package():
                     package_root/'docs/DATA-ROAMING-20261103.zh-CN.md')
     for name in ('EUICC.zh-CN.md', 'PRODUCT-FORM.zh-CN.md', 'INCOMING-CALL-ALERTS.zh-CN.md', 'U30PRO-SCREEN-DATA-SIM.zh-CN.md'):
         shutil.copyfile(TOP/'docs'/name, package_root/'docs'/name)
+    if MODEL['id'] == 'u30pro':
+        shutil.copyfile(TOP/'docs/U30PRO-PD9-20261111.zh-CN.md',
+                        package_root/'docs/U30PRO-PD9-20261111.zh-CN.md')
     shutil.copyfile(STAGE/'Image.manifest.json',package_root/'docs/KERNEL-WRAPPER.json')
     shutil.copyfile(KERNEL/'u30pro-build.json',package_root/'docs/KERNEL-BUILD.json')
     shutil.copyfile(RUNTIME/'runtime.json',package_root/'docs/HARDWARE-RUNTIME.json')

@@ -43,6 +43,21 @@ class RetainedRoot(unittest.TestCase):
         patcher = mock.patch.object(package, 'copy_tree', side_effect=SourceCopyReached)
         self.copy = patcher.start()
         self.addCleanup(patcher.stop)
+        # This fixture deliberately has only a platform marker, not an APK
+        # database/root filesystem. Dependency installation is a separate
+        # stage; never run a real ARM64 Docker install in this source-copy test.
+        self.lpac_install = mock.Mock()
+        run_path = package.runpy.run_path
+
+        def load(path, *args, **kwargs):
+            result = run_path(path, *args, **kwargs)
+            if Path(path) == TOP/'openwrt/stage-lpac.py':
+                result['install'] = self.lpac_install
+            return result
+
+        patcher = mock.patch.object(package.runpy, 'run_path', side_effect=load)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def save(self):
         (self.stage/'state.json').write_text(json.dumps(self.state))
@@ -77,6 +92,8 @@ class RetainedRoot(unittest.TestCase):
         for refresh in (False, True):
             with self.subTest(refresh=refresh), self.assertRaises(SourceCopyReached):
                 package.sources(refresh=refresh)
+        self.assertEqual(self.lpac_install.call_count, 2)
+        self.lpac_install.assert_called_with(self.root, package.LAYOUT['lpac_apks'], package.ROOT_IMAGE)
         self.assertEqual(json.loads((self.stage/'state.json').read_text()), self.state)
 
     def test_wrong_base_stops_before_copy(self):

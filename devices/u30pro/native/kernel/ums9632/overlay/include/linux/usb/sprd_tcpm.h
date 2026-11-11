@@ -649,6 +649,10 @@ struct sprd_tcpm_port {
 
 	/* Requested fixed PD voltage */
 	bool fixed_pd_pending;
+	/* Native battery-backed SGM policy; reset on detach, never a role override. */
+	bool u30pro_pd9_active;
+	bool u30pro_pd9_attempted;
+	unsigned long u30pro_pd9_exit_retry;
 	u32 fixed_pd_voltage;
 	struct completion fixed_pd_complete;
 

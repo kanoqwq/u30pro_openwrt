@@ -13,6 +13,7 @@ typedef uint32_t u32;
 #define IS_ERR(p) ((uintptr_t)(p) >= (uintptr_t)-4095)
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 #define DIV_ROUND_CLOSEST(n,d) (((n)+(d)/2)/(d))
+#define min_t(t,a,b) ((t)(a)<(t)(b)?(t)(a):(t)(b))
 struct device_node { int kind, index; };
 struct device { struct device_node *of_node; };
 struct device_node owner={0,0},chosen={1,0},batteries[]={{2,0},{2,1}};
@@ -49,29 +50,34 @@ static int of_property_read_u32(struct device_node *p,const char *key,u32 *v) {
   if(bad_cv==1)return -ENOENT;
   *v=bad_cv==2?4700000:max_cv[p->index];return 0;
  }
+ if(!strcmp(key,"fast-charge-threshold-microvolt")){*v=4100000;return 0;}
  assert(0);return -EINVAL;
 }
 static int of_property_count_u32_elems(struct device_node *p,const char *key) {
  (void)p;
  if(!strcmp(key,"batt-id-list"))return count;
- assert(!strcmp(key,"dcp-jeita-temp-table"));return bad_jeita==1?7:20;
+ assert(!strcmp(key,"dcp-jeita-temp-table")||!strcmp(key,"fchg-jeita-temp-table"));return bad_jeita==1?7:20;
 }
 static int of_property_read_u32_index(struct device_node *p,const char *key,int i,u32 *v) {
  (void)p;
  static const u32 rows[]={1000,1030,0,4400000,1050,1080,490000,4400000,
   1150,1180,1400000,4400000,1450,1420,3400000,4400000,1500,1480,2400000,4100000};
  if(!strcmp(key,"batt-id-list")) {if(i==broken_index)return -EIO;*v=targets[i];return 0;}
- assert(!strcmp(key,"dcp-jeita-temp-table")&&i>=0&&i<20);
+ assert((!strcmp(key,"dcp-jeita-temp-table")||!strcmp(key,"fchg-jeita-temp-table"))&&i>=0&&i<20);
  *v=rows[i];if(bad_jeita==2&&i==4)*v=999;return 0;
 }
 static int of_property_read_u32_array(struct device_node *p,const char *key,u32 *v,int n) {
  assert(n==2&&strstr(key,"charge-")&&strstr(key,"-current-microamp"));
+ if(!strcmp(key,"charge-fchg-current-microamp")) {
+  v[0]=p->index?1500000:3400000;v[1]=p->index?1200000:2000000;return 0;
+ }
  v[0]=p->index?1500000:2000000;v[1]=p->index?2000000:3000000;return 0;
 }
 struct sgm_jeita { int t_up,t_rec;u32 ichg,cv; };
 struct u30_sgm {
  struct device *dev;int battery_index,battery_id_mv;
- u32 cv_max_uv,tbl_ichg[4],tbl_iin[4];struct sgm_jeita jeita[8];
+ u32 cv_max_uv,tbl_ichg[4],tbl_iin[4],fchg_iin,fchg_ichg,fchg_ocv_max;
+ struct sgm_jeita jeita[8],fchg_jeita[8];int fchg_jeita_n;
  int jeita_n;bool policy_on;
 };
 /* PROFILE_HELPER */
@@ -84,6 +90,8 @@ static void check_profile(int expected,int mv) {
  struct device d={&owner};struct u30_sgm s={.dev=&d};
  assert(sgm_load_tables(&s)==0&&s.policy_on&&s.battery_index==expected);
  assert(s.cv_max_uv==max_cv[expected]&&s.tbl_iin[0]==(expected?2000000:3000000));
+ assert(s.fchg_iin==(expected?1200000:2000000));
+ assert(s.fchg_ichg==(expected?1500000:3000000));
  assert(s.jeita_n==5&&s.jeita[4].t_up==500&&s.jeita[4].t_rec==480&&!refs);
 }
 static void check_error(int expected) {

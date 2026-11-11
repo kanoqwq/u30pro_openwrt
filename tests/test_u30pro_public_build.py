@@ -36,9 +36,21 @@ class PublicInputs(unittest.TestCase):
         with mock.patch.dict(os.environ,{variable:str(roots[name]) for name,variable in fields.items()}):
             self.assertEqual(build['installer_paths']({'installer_artifacts':self.root/'unused'}),roots)
             for path in roots.values():path.mkdir()
+            lpac=self.root/'lpac';lpac.mkdir()
+            inspect=mock.Mock()
+            original=runpy.run_path
+
+            def load(path,*args,**kwargs):
+                if Path(path)==TOP/'openwrt/lpac-state.py':
+                    return {'inspect':inspect}
+                return original(path,*args,**kwargs)
+
             # The unused default must not reject otherwise selected inputs.
-            with self.assertRaisesRegex(FileNotFoundError,'Makefile'):
-                build['check_inputs']({'installer_artifacts':self.root/'unused','kernel_source':self.root})
+            with mock.patch.object(runpy,'run_path',side_effect=load), \
+                    self.assertRaisesRegex(FileNotFoundError,'Makefile'):
+                build['check_inputs']({'installer_artifacts':self.root/'unused',
+                                      'kernel_source':self.root,'lpac_apks':lpac})
+            inspect.assert_called_once_with(lpac)
 
     def test_missing_explicit_native_input_cannot_use_an_available_default(self):
         build=runpy.run_path(str(TOP/'tools/u30pro-build.py'))
