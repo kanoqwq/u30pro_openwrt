@@ -249,7 +249,14 @@ def provision(layout, work):
         materialize(get(name), work/'sources/u30pro-libs'/name, LOCK['assets'][name])
     materialize(get('busybox'), work/'sources/u30pro-busybox', LOCK['assets']['busybox'])
     if layout.get('installer_artifacts_kind') == 'published':
-        for name, asset in (('windows', 'installer_windows'), ('macos-arm64', 'installer_macos'), ('android', 'installer_android')):
+        for name, asset, override in (
+                ('windows', 'installer_windows', 'OPENWRT_GUI_ARTIFACT'),
+                ('macos-arm64', 'installer_macos', 'OPENWRT_GUI_MACOS_ARTIFACT'),
+                ('android', 'installer_android', 'OPENWRT_GUI_ANDROID_ARTIFACT')):
+            # Explicit, already-built native artifacts are validated by the
+            # release builder. Do not fetch their not-yet-published lock URLs.
+            if os.environ.get(override):
+                continue
             root = Path(layout['installer_artifacts'])/name
             # Installers validate their complete file set, so keep bootstrap
             # ownership receipts next to each artifact directory, not inside it.

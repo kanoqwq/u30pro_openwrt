@@ -84,9 +84,10 @@ def main():
     # Validate all source-pinned installers now, before a kernel compilation.
     sys.path.insert(0, str(TOP/'installer'))
     gui = runpy.run_path(str(TOP/'installer/package_gui.py'))
+    selected = load('u30pro-build.py')['installer_paths'](layout)
     for name, platform in (('windows','windows-x64'), ('macos-arm64','macos-arm64')):
-        gui['validate_artifact'](Path(layout['installer_artifacts'])/name, platform, gui['sources']())
-    runpy.run_path(str(TOP/'installer/package_android.py'))['artifact'](Path(layout['installer_artifacts'])/'android')
+        gui['validate_artifact'](selected[name], platform, gui['sources']())
+    runpy.run_path(str(TOP/'installer/package_android.py'))['artifact'](selected['android'])
     call(sys.executable, TOP/'tools/u30pro-build.py', 'check')
     if args.prepare_only:
         print('Public dependencies and static tools ready; no kernel/firmware package built', flush=True)
