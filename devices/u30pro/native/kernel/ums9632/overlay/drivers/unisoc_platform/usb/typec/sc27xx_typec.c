@@ -1740,8 +1740,21 @@ static int sc27xx_typec_probe(struct platform_device *pdev)
 	regmap_read(sc->regmap, PMIC_ID_LOW, &pmic_id_low);
 	regmap_read(sc->regmap, PMIC_ID_HIGH, &pmic_id_high);
 
+	/*
+	 * The Type-C block does not always sit at the offset the DTB reg
+	 * property declares, so the PMIC identity overrides it here.
+	 *
+	 * UMP9651 moves the block to 0x380. The stock U30 Pro DTB still
+	 * carries the 0x300 offset of the older PMIC; that only worked on
+	 * Android because its typec driver corrected the base at probe time.
+	 * Reading 0x300 on OpenWrt returns an unrelated PMIC register, the
+	 * port then never reports an attach and PD stays dead, leaving the
+	 * 5V BC1.2 path as the only charging mode.
+	 */
 	if ((pmic_id_high & 0xffff) == 0x9360 && (pmic_id_low & 0xffff) == 0xb000)
 		sc->base = 0x300;
+	else if ((pmic_id_high & 0xffff) == 0x9651 && (pmic_id_low & 0xffff) == 0xa001)
+		sc->base = 0x380;
 
 	dev_info(sc->dev, "typec base addr: 0x%x\n", sc->base);
 
