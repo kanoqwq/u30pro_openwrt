@@ -1,4 +1,9 @@
 {
+  "kernel/ums9632/minimal.config": {
+    "source_sha256": "22042bca5f7507d931f0c93f6dad17447547aec337e4e67e6517c3a1fd85073b",
+    "sha256": "c7fd3b469dea11b7624fba005c80b7096d736e98a4e44039106df4829a986bce",
+    "reason": "Enable NETFILTER_NETLINK_QUEUE and NFT_QUEUE in the shared UMS9632 kernel configuration so nfqueue users such as sing-box auto_redirect are supported."
+  },
   "kernel/ums9632/apply_overlay.py": {
     "source_sha256": "23eaf32671720ae4774749bef34d30bbfe2c226ab5ae621e9a43a8886c6f1602",
     "sha256": "e9ecf55c439a159da1b7eac41f3ff9073909c8f00d1a07a37b379b45a482d62d",
