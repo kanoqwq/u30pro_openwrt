@@ -208,6 +208,8 @@ def main(include_modem=True):
         'usr/libexec/unisoc-modem/call-notify-events.uc':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/call-notify-events.uc',
         'usr/libexec/unisoc-modem/call-notify':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/call-notify',
         'usr/libexec/unisoc-modem/sms-forward':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/sms-forward',
+        'usr/libexec/unisoc-modem/forward-filter.uc':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/forward-filter.uc',
+        'www/luci-static/resources/view/mu300/forward.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/forward.js',
         'usr/libexec/unisoc-modem/power-supply.sh':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/power-supply.sh',
         'opt/mu300/bin/mu300-usb':'rootfs/overlay/opt/mu300/bin/mu300-usb',
         'opt/mu300/bin/mu300-physical-sim':'rootfs/overlay/opt/mu300/bin/mu300-physical-sim',
