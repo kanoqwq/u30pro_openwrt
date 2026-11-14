@@ -288,5 +288,10 @@
     "source_sha256": "2af08e768a2f152e9cd672dac207393ececeb9f98ed2d338dc08385e749091b2",
     "reason": "Native U30 Pro platform adaptation; battery-backed native SGM PD 9 V/PPS admission, stock OVP/current policy, dedicated-adapter role isolation and contract notifications (2026-11-11) Use measured VBUS for verified 5 V OVP restoration, stock-selected fast-charge currents/JEITA, three 500 ms admission checks and stock taper thresholds; bound PD/PPS to advertised 9 V after charger preparation, retain role handling and no-battery exclusion. Evidence: docs/U30PRO-PD9-20261111.zh-CN.md.",
     "sha256": "04fe30ab16de818d29a9bf0b06f4b961c1d60c0a2af3fcb7e0ebabc9a8c6d2b7"
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_skb_recv.c": {
+    "source_sha256": "f59eadd3eae9ccf0db2d5e2ddb3b6c891aac497e0e3f179ed3f22a5d5c8c35af",
+    "sha256": "c1e48f77c4496f9c4e593f2c322510cd8e936ed4dfca8933f8203ac3866420eb",
+    "reason": "Balance skb/DMA ownership on failed receive replenishment and publish DMA buffers only after successful software-ring admission; retain the existing page-allocation guards, FIFO geometry and stock power policy."
   }
 }

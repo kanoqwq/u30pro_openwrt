@@ -11,6 +11,41 @@ NATIVE=TOP/'devices/u30pro/native/tools'
 
 
 class SimStatus(unittest.TestCase):
+    def test_feed_follows_actual_data_card_instead_of_saved_preference(self):
+        command=ucode()
+        if not command:self.skipTest('ucode runtime required')
+        source=(TOP/'devices/u30pro/overlay/usr/sbin/u30pro-ui-feed').read_text()
+        helper=source[source.index('function cell_status('):source.index('function run()')]
+        start=source.index("    for(let name in ['wireless','unisoc_modem','network'])")
+        prefix=source[start:source.index('    let sim={};',start)]
+        cases=[['0',1,'1',True,'connected'],['1',0,'0',True,'connected'],
+               ['0',1,'1',False,'dialing'],['0',None,'0',False,'dialing'],
+               ['1',None,'1',False,'dialing']]
+        program=helper+'''
+for(let row in CASES) {
+ let bus={}, collected=null;
+ let config={unload:()=>{},load:()=>{},get:()=>row[0]};
+ let selected=int(row[2]);
+ let snapshot={modem:{alive:1,data_sim:row[1],sims:[
+   {slot:0,state:selected==0?'ready':'absent'},
+   {slot:1,state:selected==1?'ready':'absent'}]},wan:{up:row[3]}};
+ let info=(scope,b,c)=>snapshot;
+ let status=(scope,cells,b,c)=>{
+   collected=scope;
+   return {cell:{cfun:scope==row[2]?1:0},sig:{}};
+ };
+ PREFIX
+ if(slot!==row[2] || collected!==row[2])
+   die(sprintf('Screen read the wrong card: saved=%s actual=%J collected=%J',row[0],row[1],collected));
+ let state=cell_status(view,cell,sig,true,slot);
+ if(state!=row[4])
+   die(sprintf('Screen state came from the other card: %s',state));
+}
+print('PASS actual/saved data-card screen selection\\n');
+'''.replace('CASES',json.dumps(cases)).replace('PREFIX',prefix)
+        result=subprocess.run(command+['-e',program],capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+
     def test_actual_screen_payload_uses_selected_sim_and_clears_removed_card(self):
         command=ucode()
         if not command:self.skipTest('ucode runtime required')

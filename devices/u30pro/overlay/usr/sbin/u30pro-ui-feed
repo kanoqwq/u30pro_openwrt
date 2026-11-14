@@ -25,6 +25,12 @@ function cell_status(view,cell,sig,wanted,slot) {
     if(!wanted)return 'data-disabled';
     return state=='ready'?'dialing':'checking-sim';
 }
+function screen_data_slot(view,saved) {
+    // The dashboard resolves the live WAN/owner selection. A saved preference
+    // may still name the previous card while a switch is completing.
+    let actual=view.modem?.data_sim;
+    return actual===0 || actual===1?''+actual:saved=='1'?'1':'0';
+}
 function screen_sms(slot,bus,ack_visible) {
     let pending=sms_reads; sms_reads={};
     let sms=bus.call('mu300dash','sms_list',{page:'1',slot}) || {};
@@ -75,8 +81,9 @@ function run() {
     let screen=bus.call('u30pro.panel','status',{}) || {}, req=requested;
     requested={};
     for(let name in ['wireless','unisoc_modem','network']) {config.unload(name);config.load(name);}
-    let slot=config.get('unisoc_modem','main','data_sim')=='1'?'1':'0';
-    let view=info(slot,bus,config), cached=status(slot,true,bus,config), cell=cached.cell || {}, sig=cached.sig || {};
+    let view=info(null,bus,config);
+    let slot=screen_data_slot(view,config.get('unisoc_modem','main','data_sim'));
+    let cached=status(slot,true,bus,config), cell=cached.cell || {}, sig=cached.sig || {};
     let sim={};
     try {sim=bus.call('mu300dash','sim_get',{}) || {};} catch(e) {}
     let relay=client.status(config,bus);

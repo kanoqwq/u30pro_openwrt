@@ -2,6 +2,7 @@
 'require view';
 'require poll';
 'require mu300.common as M';
+'require mu300.traffic-csv as TrafficCsv';
 
 function formatUsage(n) { return M.fmtTrafficBytes(n); }
 var ERRORS = { invalid_config: '配置无效', traffic_unavailable: '流量统计服务暂不可用',
@@ -70,9 +71,10 @@ return view.extend({
  <div class="mud-note">本地网卡统计供参考，计费以运营商为准。额度用于显示和提醒，不会自动断网。</div>
  <div class="mud-tr-actions"><button class="mud-btn warn" id="mud-tr-clear">清空流量记录</button></div>
  <div class="mud-note">仅清除本地统计，不会重置运营商账单，也不会断开网络。</div>
-</section>`;
+</section>
+<section class="mud-card" style="margin-top:14px" id="mud-tr-csv"></section>`;
 		M.localize(root); this.root = root; this.data = data || {};
-		this.fill(this.data.config || {}); this.paint(); this.wire();
+		this.fill(this.data.config || {}); this._csv = TrafficCsv.attach(this, M, function() { return M.selectedSlot(); }, function(slot) { return M.slotName(slot); }); this.paint(); this.wire();
 		var self = this; this._poll = function() { return self.refresh(); }; poll.add(this._poll, 10);
 		M.simSelector(root);
 		return root;
@@ -92,6 +94,7 @@ return view.extend({
 	},
 	paint: function() {
 		var d = this.data, s = d.status || {}, c = d.config || {}, self = this;
+		this._csv.update(d);
 		this.q('today').textContent = formatUsage(s.today_used); this.q('month').textContent = formatUsage(s.month_used);
 		this.q('cycle').textContent = formatUsage(s.cycle_used);
 		this.q('remaining').textContent = s.remaining == null ? M.translate('不限量') : formatUsage(s.remaining);
@@ -163,6 +166,7 @@ return view.extend({
 		var self = this;
 		this.q('refresh').onclick = function() { self.refresh(); };
 		this.q('clear').onclick = function() {
+			if (self._csv.busy) return;
 			if (self._mutating || self._confirming) return;
 			self._confirming = true;
 			M.confirmBox('清空所有流量记录？',
@@ -172,6 +176,7 @@ return view.extend({
 			}).finally(function() { self._confirming = false; });
 		};
 		this.q('save').onclick = function() {
+			if (self._csv.busy) return;
 			if (self._mutating || self._confirming) return;
 			var p = { plan_name:self.q('plan_name').value.trim(), device:self.q('device').value.trim(), count_mode:self.q('count_mode').value,
 				monthly_gb:Number(self.q('monthly_gb').value), daily_gb:Number(self.q('daily_gb').value), reset_day:Number(self.q('reset_day').value) };
