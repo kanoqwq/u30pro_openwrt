@@ -233,6 +233,9 @@ function button_done(argv, cb) {
 }
 function button_model() {
     if (key_model != null) return key_model;
+    // mu300-device identifies the shared platform as u30pro; MU3356's
+    // button settings belong to its product, like its native input key.
+    if (F50PRO_KEYS) { key_model = 'f50pro'; return key_model; }
     let exe = which('mu300-device');
     let p = exe ? popen(shq(exe) + ' 2>/dev/null', 'r') : null;
     key_model = p ? trim(p.read('all') ?? '') : '';

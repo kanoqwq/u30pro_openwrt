@@ -25,6 +25,7 @@ except Exception: sys.exit(1)' "$@"''')
 case $1 in
  supported) [ "${NFC_FAIL:-}" != supported ];;
  state) [ "${NFC_FAIL:-}" != read ] || exit 1; cat "$STUBLOG/enabled";;
+ result) printf '%s\n' "${NFC_CONTENT-wpa2}";;
  on|off)
   [ "${NFC_FAIL:-}" != apply ] || { echo 'private diagnostics' >&2; exit 1; }
   [ "${NFC_FAIL:-}" != mismatch ] || exit 0
@@ -62,6 +63,19 @@ esac''')
                 self.assertEqual(self.call(shell,'get',NFC_MODEL=model),{'ok':1,'supported':0})
                 self.assertEqual(self.call(shell,'set',payload={'enabled':'1'},NFC_MODEL=model)['error'],'nfc_unsupported')
             self.assertFalse((self.tmp/'calls').exists())
+
+    def test_native_content_status_distinguishes_enabled_from_wifi_token(self):
+        for shell in self.each_shell():
+            for model in ('u30pro','f50pro'):
+                for content,expected in [('wpa2','ready'),('open','ready'),
+                        ('unsupported_encryption','unsupported_encryption'),('hotspot_disabled','hotspot_disabled'),
+                        ('no_selected_hotspot','no_selected_hotspot'),('error','error'),('', 'pending'),
+                        ('bad"value','pending')]:
+                    result=self.call(shell,'get',NFC_MODEL=model,NFC_CONTENT=content)
+                    self.assertEqual(result['enabled'],1)
+                    self.assertEqual(result['content_state'],expected)
+                self.assertEqual(self.call(shell,'set',payload={'enabled':'0'},NFC_MODEL=model)['content_state'],'disabled')
+                self.state.write_text('1\n')
 
     def test_validation_rejects_injection_and_invalid_json_values(self):
         for shell in self.each_shell():

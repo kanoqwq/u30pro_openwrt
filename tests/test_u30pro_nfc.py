@@ -139,6 +139,17 @@ class NFCDevice(unittest.TestCase):
             self.assertNotEqual(self.call('wifi', 'AP', 'wpa2', key=key).returncode, 0)
             self.assertFalse(self.writes())
 
+    def test_shared_encoder_input_is_validated_before_tag_access(self):
+        message=credential(b'SAE AP',b'new private pass')
+        self.assertEqual(self.call('load',key=message.hex().encode()).returncode,0)
+        self.assertEqual(self.image.read_bytes()[16:16+len(message)],message)
+        self.log.unlink(missing_ok=True)
+        before=self.image.read_bytes()
+        for bad in (b'03 ff',b'03 02 fe',b'03 00 fe extra',b'g0',b'3',b'00'*513):
+            self.assertNotEqual(self.call('load',key=bad).returncode,0)
+            self.assertEqual(self.image.read_bytes(),before)
+        self.assertFalse(self.writes())
+
     def test_malformed_wsc_is_bounded(self):
         for data in (b'\3\xff', b'\3\1', b'\3\x50\xd2\xff\xff',
                      b'\3\x30\xd2\x16\x10application/vnd.wfa.wsc\x10\x0e\xff\xff'):
@@ -179,6 +190,9 @@ PY''')
         helper = self.stubs/'nfc-helper.py'
         helper.write_text('import json,os,sys\nfrom pathlib import Path\np=Path(os.environ["STUBLOG"])/"calls"\nwith p.open("a") as f: f.write(json.dumps({"args":sys.argv[1:],"stdin":sys.stdin.read()})+"\\n")\nsys.exit(int(os.environ.get("NFC_FAIL","0")))\n')
         self.stub('nfc', 'exec python3 "$STUBLOG/stubs/nfc-helper.py" "$@"')
+        encoder=self.stubs/'encoder.py'
+        encoder.write_text('import json,os,sys\nfrom pathlib import Path\np=Path(os.environ["STUBLOG"])/"encoded"\nwith p.open("a") as f:f.write(json.dumps({"args":sys.argv[2:],"key":sys.stdin.read()})+"\\n")\nprint("03 00 fe")\nsys.exit(int(os.environ.get("ENCODER_FAIL","0")))\n')
+        self.stub('ucode','exec python3 "$STUBLOG/stubs/encoder.py" "$@"')
         for cmd in ('logger', 'ubus'):
             self.stub(cmd, 'printf "%s\\n" "$*" >> "$STUBLOG/messages"')
 
@@ -192,6 +206,9 @@ PY''')
         p=self.tmp/'calls'
         return [json.loads(s) for s in p.read_text().splitlines()] if p.exists() else []
 
+    def encoded(self):
+        return json.loads((self.tmp/'encoded').read_text().splitlines()[-1])
+
     def test_switch_persists_and_config_events_do_not_reenable(self):
         self.assertEqual(self.call('off').returncode, 0)
         self.assertEqual(self.call('state').stdout.strip(), '0')
@@ -199,15 +216,21 @@ PY''')
         self.assertEqual([c['args'] for c in self.calls()], [['clear'], ['clear']])
         self.assertEqual(self.call('toggle').returncode, 0)
         self.assertEqual(self.call('state').stdout.strip(), '1')
-        self.assertEqual(self.calls()[-1], {'args':['wifi','Selected AP','wpa2'], 'stdin':'private dummy password'})
+        self.assertEqual(self.calls()[-1]['args'],['load'])
+        self.assertEqual(self.encoded(),{'args':['Selected AP','psk2',''],'key':'private dummy password'})
         self.assertNotIn('private dummy password', (self.tmp/'messages').read_text())
 
     def test_selected_ap_and_authentication_modes(self):
-        for mode, expected in [('none','open'), ('sae-mixed','wpa2'), ('psk2+ccmp','wpa2'),
-                               ('sae', None), ('owe', None), ('wpa2', None)]:
+        for mode in ('none','sae-mixed','psk2+gcmp','sae','owe','psk+tkip','wep-open','new-mode'):
             self.fields.write_text(f'available\n1\nsection\nselected\nssid\nSelected AP\nenc\n{mode}\nenabled\n1\n')
             r=self.call('sync'); self.assertEqual(r.returncode, 0, r.stderr)
-            self.assertEqual(self.calls()[-1]['args'], ['wifi','Selected AP',expected] if expected else ['clear'])
+            self.assertEqual(self.calls()[-1]['args'],['load'])
+            self.assertEqual(self.encoded()['args'][1],mode)
+            self.assertEqual(self.call('result').stdout.strip(),'wifi')
+
+    def test_content_status_before_initialization_does_not_access_tag(self):
+        self.assertEqual(self.call('result').stdout.strip(),'pending')
+        self.assertFalse(self.calls())
 
     def test_password_change_events_and_reenable_use_current_saved_credentials(self):
         # Both Pro products share this owner; their I2C/reset choices stay
@@ -218,8 +241,7 @@ PY''')
                        'wireless.selected.key':'changed private key'})
         self.config.write_text(json.dumps(config))
         self.assertEqual(self.call('sync').returncode,0)
-        self.assertEqual(self.calls()[-1],{'args':['wifi','Changed AP','wpa2'],
-                                         'stdin':'changed private key'})
+        self.assertEqual(self.encoded(),{'args':['Changed AP','psk2',''],'key':'changed private key'})
         self.assertEqual(self.call('off').returncode,0)
         config=json.loads(self.config.read_text())
         config['wireless.selected.key']='latest private key'
@@ -228,7 +250,7 @@ PY''')
         self.assertEqual(self.calls()[-1]['args'],['clear'])
         self.assertEqual(self.call('state').stdout.strip(),'0')
         self.assertEqual(self.call('on').returncode,0)
-        self.assertEqual(self.calls()[-1]['stdin'],'latest private key')
+        self.assertEqual(self.encoded()['key'],'latest private key')
         self.assertNotIn('private key',(self.tmp/'messages').read_text())
 
     def test_wireless_changes_are_registered_without_polling(self):
@@ -246,7 +268,60 @@ PY''')
     def test_field_value_is_not_parsed_as_another_field_name(self):
         self.fields.write_text('available\n1\nsection\nselected\nssid\nenabled\nenc\npsk2\nenabled\n1\n')
         self.assertEqual(self.call('sync').returncode, 0)
-        self.assertEqual(self.calls()[-1]['args'], ['wifi','Selected AP','wpa2'])
+        self.assertEqual(self.calls()[-1]['args'], ['load'])
+
+    def test_encoding_failure_does_not_clear_or_write_tag(self):
+        self.assertNotEqual(self.call('sync',ENCODER_FAIL='1').returncode,0)
+        self.assertFalse(self.calls())
+
+    def test_wep_selected_key_and_preserved_user_configuration(self):
+        config=json.loads(self.config.read_text())
+        config.update({'wireless.selected.key':'2','wireless.selected.key2':'s:abcde',
+                       'unrelated.setting':'keep me'})
+        self.config.write_text(json.dumps(config))
+        self.fields.write_text('available\n1\nsection\nselected\nenc\nwep-shared\nenabled\n1\nhidden\n1\n')
+        self.assertEqual(self.call('sync').returncode,0)
+        self.assertEqual(self.encoded(),{'args':['Selected AP','wep-shared','1'],'key':'abcde'})
+        self.assertEqual(json.loads(self.config.read_text()),config)
+
+    @unittest.skipUnless(os.environ.get('MU300_TEST_RUNTIME_IMAGE'),'select actual target ucode image')
+    def test_real_encoder_control_and_native_writer_upgrade_roundtrip(self):
+        from test_nfc_wifi_encoding import Encoding,records,attributes
+        native=self.tmp/'native-nfc'
+        subprocess.run(['clang','-std=gnu11','-O1','-Wall','-Wextra','-Werror',
+            str(TOP/'tests/fixtures/u30pro_nfc_io.c'),'-o',str(native)],check=True)
+        image=self.tmp/'tag';data=bytearray(65536);data[12:16]=bytes.fromhex('e1106d00');image.write_bytes(data)
+        model=self.tmp/'model';model.write_text('f50pro\n')
+        reset=self.tmp/'reset';reset.write_text('1\n')
+        env=dict(NFC_TEST_IMAGE=str(image),NFC_TEST_WRITES=str(self.tmp/'writes'),
+                 NFC_TEST_MODEL_FILE=str(model),NFC_TEST_RESET_FILE=str(reset))
+        self.stub('nfc',f'exec "{native}" "$@"')
+        Encoding.setUpClass()
+        try:
+            self.stub('ucode',f'shift; exec docker exec -i {Encoding.container} ucode /encode.uc "$@"')
+            # Legacy token -> new encoder -> legacy reader/writer, while the
+            # actual shared controller, UCI stub and private GPIO/I2C all run.
+            old=subprocess.run([str(native),'wifi','Selected AP','wpa2'],input=b'private dummy password',
+                               env=dict(os.environ,**env),capture_output=True)
+            self.assertEqual(old.returncode,0,old.stderr)
+            for mode in ('psk2','sae','sae-mixed+gcmp','psk+tkip','owe','wep-open'):
+                self.fields.write_text(f'available\n1\nsection\nselected\nenc\n{mode}\nenabled\n1\n')
+                before=json.loads(self.config.read_text())
+                result=self.call('sync',**env);self.assertEqual(result.returncode,0,result.stderr)
+                self.assertEqual(json.loads(self.config.read_text()),before)
+                content=image.read_bytes();size=content[17];offset=18
+                if size==255:size=int.from_bytes(content[18:20],'big');offset=20
+                token=records(content[16:offset+size+1])
+                cred=attributes(attributes(token[0][2])[0x100e])
+                self.assertEqual(cred[0x1045],b'Selected AP')
+                self.assertEqual(reset.read_text(),'1\n')
+                self.assertIn(('X:'+mode+';').encode(),token[1][2])
+                self.assertNotIn('private dummy password',result.stdout+result.stderr)
+            rollback=subprocess.run([str(native),'wifi','Selected AP','wpa2'],input=b'private dummy password',
+                                    env=dict(os.environ,**env),capture_output=True)
+            self.assertEqual(rollback.returncode,0,rollback.stderr)
+        finally:
+            Encoding.tearDownClass()
 
     def test_failed_write_is_not_reported_as_success(self):
         r=self.call('on', NFC_FAIL='1')

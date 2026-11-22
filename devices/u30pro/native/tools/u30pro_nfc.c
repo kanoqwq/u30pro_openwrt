@@ -27,6 +27,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <signal.h>
+#include <ctype.h>
 
 #define BUS "/dev/i2c-4"
 #define ADDR 0x57
@@ -345,12 +346,44 @@ static int key_ok(const char *k)
 	return l >= 8 && l <= 63;
 }
 
+/* The shared ucode encoder supplies a bounded NDEF TLV over stdin. Validate
+ * before selecting the chip so encoding/input failures preserve the old tag. */
+static int read_message(unsigned char *out, unsigned *length)
+{
+	unsigned n = 0, header = 2, payload;
+	int c, d;
+	while ((c = getchar()) != EOF) {
+		if (isspace((unsigned char)c)) continue;
+		d = getchar();
+		if (!isxdigit((unsigned char)c) || d == EOF || !isxdigit((unsigned char)d) || n == MAXMSG)
+			return -1;
+		char pair[3] = { c, d, 0 };
+		out[n++] = strtoul(pair, NULL, 16);
+	}
+	if (ferror(stdin) || n < 3 || out[0] != 3) return -1;
+	payload = out[1];
+	if (payload == 255) {
+		if (n < 5) return -1;
+		header = 4; payload = ((unsigned)out[2] << 8) | out[3];
+	}
+	if (header + payload + 1 != n || out[n - 1] != 254) return -1;
+	*length = n;
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	unsigned char msg[MAXMSG];
 	char key[80] = "";
 	unsigned size, n;
 	int wpa2;
+	if (argc == 2 && !strcmp(argv[1], "load")) {
+		if (read_message(msg, &n)) {
+			fprintf(stderr, "u30pro-nfc: invalid encoded NFC message\n");
+			return 2;
+		}
+		return open_tag(&size, 1) || rf_type2() || store(msg, n, size) ? 1 : 0;
+	}
 	if (argc == 2 && !strcmp(argv[1], "probe")) {
 		if (open_tag(&size, 0)) return 1;
 		printf("NFC Type 2 tag, %u data bytes\n", size);

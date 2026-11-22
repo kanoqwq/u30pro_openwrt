@@ -61,6 +61,9 @@ function flush(){let pending=timers;timers=[];for(let t in pending)if(!t.cancell
 function require(name){if(name!='uci')die('unexpected module');return {cursor:p=>({get:(config,section,key)=>settings[key],unload:()=>{}})};}
 function num(k,v){return v;}
 function readfile(p){return 'f50pro';}
+function which(name){return '/opt/mu300/bin/'+name;}
+function shq(s){return s;}
+function popen(cmd,mode){return {read:()=> 'u30pro',close:()=>{}};}
 function exists(p){return p=='/etc/openwrt_release';}
 function rd(p){return '10.00';}
 function digits(s){return true;}
@@ -74,7 +77,8 @@ function spawn(argv,cb){
 """
         suffix="""
 function check(yes,msg){if(!yes)die(msg);}
-key_model='f50pro';press(KEY_WIFI,'short');check(length(calls)==0,'fixed F50 Pro single invoked custom handler');
+check(button_model()=='f50pro','shared platform masked F50 Pro product');
+press(KEY_WIFI,'short');check(length(calls)==0,'fixed F50 Pro single invoked custom handler');
 flush();check(length(calls)==0,'F50 Pro single was delayed');
 press(KEY_WIFI,'short');press(KEY_WIFI,'short');check(length(calls)==0&&length(timers)==0,'unconfigured F50 double captured repeats');
 settings.f50pro_button_double='data-switch';press(KEY_WIFI,'short');

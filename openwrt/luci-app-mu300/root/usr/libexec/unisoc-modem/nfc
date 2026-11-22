@@ -35,4 +35,16 @@ fi
 actual=$("$owner" state 2>/dev/null) || error nfc_read_failed
 case $actual in 0|1) ;; *) error nfc_read_failed;; esac
 [ "$action" != set ] || [ "$actual" = "$enabled" ] || error nfc_apply_failed
-printf '{"ok":1,"supported":1,"enabled":%s}\n' "$actual"
+content=
+case $device in
+    u30pro|f50pro)
+        content=$("$owner" result 2>/dev/null) || error nfc_read_failed
+        case $content in
+            open|wpa2|wifi) content=ready;;
+            disabled|hotspot_disabled|unsupported_encryption|no_selected_hotspot|error) ;;
+            *) content=pending;;
+        esac
+        [ "$actual" = 1 ] || content=disabled
+        content=",\"content_state\":\"$content\"";;
+esac
+printf '{"ok":1,"supported":1,"enabled":%s%s}\n' "$actual" "$content"

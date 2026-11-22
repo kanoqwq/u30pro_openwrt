@@ -3044,7 +3044,7 @@ int rwnx_send_me_sta_add(struct rwnx_hw *rwnx_hw, struct station_parameters *par
 	#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 14, 0)
 	if (link_sta_params->opmode_notif_used) {
 		req->flags |= STA_OPMOD_NOTIF;
-		req->opmode = link_sta_params->opmode_notif_used;
+		req->opmode = link_sta_params->opmode_notif;
 	}
 	#endif
 

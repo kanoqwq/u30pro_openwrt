@@ -11,6 +11,12 @@ const words={
  '正在应用…':['Applying…','Uygulanıyor…'],
  '已开启':['Enabled','Açık'],
  '已关闭':['Disabled','Kapalı'],
+ '已开启 · Wi-Fi 标签已同步':['Enabled · Wi-Fi tag synchronized','Açık · Wi-Fi etiketi eşitlendi'],
+ '已开启 · 请重新同步 Wi-Fi 标签':['Enabled · Please synchronize the Wi-Fi tag again','Açık · Wi-Fi etiketini yeniden eşitleyin'],
+ '已开启 · 热点未开启，暂无 Wi-Fi 标签':['Enabled · Hotspot is off; no Wi-Fi tag','Açık · Erişim noktası kapalı; Wi-Fi etiketi yok'],
+ '已开启 · 未选择热点，暂无 Wi-Fi 标签':['Enabled · No hotspot selected; no Wi-Fi tag','Açık · Erişim noktası seçilmedi; Wi-Fi etiketi yok'],
+ '已开启 · 等待同步 Wi-Fi 标签':['Enabled · Waiting to synchronize Wi-Fi tag','Açık · Wi-Fi etiketi eşitlemesi bekleniyor'],
+ '已开启 · Wi-Fi 标签同步失败，请刷新重试':['Enabled · Wi-Fi tag synchronization failed; refresh to retry','Açık · Wi-Fi etiketi eşitlenemedi; yenileyip tekrar deneyin'],
  '已应用并保存':['Applied and saved','Uygulandı ve kaydedildi'],
  '靠近设备即可读取 NFC 内容，开关设置会自动保存。':['Tap a phone against the device to read its NFC content. The switch setting is saved automatically.','NFC içeriğini okumak için telefonu cihaza yaklaştırın. Anahtar ayarı otomatik kaydedilir.'],
  '无法读取 NFC 状态，请刷新重试':['Unable to read NFC status; refresh to retry','NFC durumu okunamadı; yenileyip tekrar deneyin'],
@@ -26,6 +32,13 @@ function failure(s) {
  const keys={nfc_invalid:'NFC 设置无效',nfc_unsupported:'当前设备不支持 NFC',nfc_unavailable:'NFC 暂不可用，请刷新重试',
   nfc_busy:'NFC 正忙，请稍后重试',nfc_read_failed:'无法读取 NFC 状态，请刷新重试',nfc_apply_failed:'NFC 设置失败，请刷新后重试'};
  return t(keys[s && s.error] || '无法读取 NFC 状态，请刷新重试');
+}
+function statusText(s) {
+ if(!s.enabled)return t('已关闭');
+ const states={ready:'已开启 · Wi-Fi 标签已同步',unsupported_encryption:'已开启 · 请重新同步 Wi-Fi 标签',
+  hotspot_disabled:'已开启 · 热点未开启，暂无 Wi-Fi 标签',no_selected_hotspot:'已开启 · 未选择热点，暂无 Wi-Fi 标签',
+  pending:'已开启 · 等待同步 Wi-Fi 标签',error:'已开启 · Wi-Fi 标签同步失败，请刷新重试'};
+ return t(states[s.content_state] || '已开启');
 }
 return baseclass.extend({mount:function(root) {
  const card=node('section',null,'mud-card mud-nfc');card.style.marginTop='14px';
@@ -45,7 +58,7 @@ return baseclass.extend({mount:function(root) {
  function paint(s) {
   if(!s || !s.ok || s.supported && s.enabled!==0 && s.enabled!==1 && typeof s.enabled!=='boolean')throw Error('invalid NFC reply');
   state=s;card.hidden=!s.supported;toggle.classList.toggle('on',!!s.enabled);toggle.setAttribute('aria-checked',String(!!s.enabled));
-  current.textContent=t(s.enabled?'已开启':'已关闭');disable();
+  current.textContent=statusText(s);disable();
  }
  async function reload() {
   if(disposed || busy)return;busy=true;disable();current.textContent=t('正在读取…');
@@ -59,7 +72,7 @@ return baseclass.extend({mount:function(root) {
   try {
    const s=await set(desired);if(disposed)return;
    if(!s || !s.ok)throw Object.assign(Error(failure(s)),{localized:true});
-   paint(s);current.textContent=t('已应用并保存');M.toast(t('已应用并保存'),'success');
+   paint(s);M.toast(current.textContent,s.enabled && s.content_state && s.content_state!=='ready'?'warning':'success');
   } catch(e) {
    if(disposed)return;
    const message=e.localized?e.message:t('NFC 设置失败，请刷新后重试');

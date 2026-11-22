@@ -220,6 +220,7 @@ def main(include_modem=True):
         'opt/mu300/bin/led-status':'rootfs/overlay/opt/mu300/bin/led-status',
         'opt/mu300/bin/mu300-led':'rootfs/overlay/opt/mu300/bin/mu300-led',
         'opt/mu300/bin/mu300-sysd':'rootfs/overlay/opt/mu300/bin/mu300-sysd',
+        'usr/share/ucode/mu300/nfc-wifi.uc':'rootfs/overlay/usr/share/ucode/mu300/nfc-wifi.uc',
         'opt/mu300/bin/mu300-wifi-band':'rootfs/overlay/opt/mu300/bin/mu300-wifi-band',
         'usr/libexec/unisoc-modem/buttons.py':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/buttons.py',
         'usr/libexec/unisoc-modem/buttons':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/buttons',

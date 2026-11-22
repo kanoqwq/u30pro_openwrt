@@ -54,6 +54,15 @@ with sync_playwright() as engine:
                 assert toggle.get_attribute('aria-checked')=='false'
                 toggle.click();page.wait_for_function('state.enabled===1 && !document.querySelector("#mud-nfc-switch").disabled')
                 assert page.evaluate('calls')==[['0'],['1']]
+                page.evaluate('state.content_state="error"');refresh.click()
+                page.wait_for_function('document.querySelector(".mud-nfc [role=status]").textContent.includes(" · ")')
+                assert toggle.get_attribute('aria-checked')=='true'
+                toggle.click();page.wait_for_function('state.enabled===0 && !document.querySelector("#mud-nfc-switch").disabled')
+                toggle.click();page.wait_for_function('state.enabled===1 && !document.querySelector("#mud-nfc-switch").disabled')
+                assert ' · ' in card.locator('[role=status]').inner_text()
+                if lang!='zh-cn':assert not any('\u4e00'<=c<='\u9fff' for c in card.inner_text())
+                page.evaluate('state.content_state="ready"');refresh.click()
+                page.wait_for_function('!document.querySelector("#mud-nfc-switch").disabled')
                 page.evaluate('fail="nfc_apply_failed"');toggle.click()
                 page.wait_for_function('!document.querySelector("#mud-nfc-switch").disabled')
                 assert toggle.get_attribute('aria-checked')=='true'

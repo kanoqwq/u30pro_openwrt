@@ -166,8 +166,8 @@
   },
   "tools/u30pro_nfc.c": {
     "source_sha256": "81fa9e7dcc7c74fef631812ee3061dd02a6edd5fae69947fcd7b32f016a619b4",
-    "sha256": "684bfa91696260812db5a915d35118c2b4c413e5ece683ce64d7c0215b1a84a1",
-    "reason": "Preserve original U30 Pro tag path. For MU3356 only, acquire the stock low-for-I2C/high-at-rest reset line through a DT-derived kernel owner, restore on exit/signals and add a capability-only read probe. No AT or modem NV writes."
+    "sha256": "9b610f41310182768da1dfd6bbde1db19268353f2b71c798f906e69f8b2651ac",
+    "reason": "Preserve original U30 Pro tag path. For MU3356 only, acquire the stock low-for-I2C/high-at-rest reset line through a DT-derived kernel owner, restore on exit/signals and add a capability-only read probe. No AT or modem NV writes.; accept bounded shared ucode-encoded NDEF via stdin, validating TLV before GPIO/I2C access for current Wi-Fi personal security modes"
   },
   "ui/native-control/overlay/usr/share/u30pro/battery-log.uc": {
     "source_sha256": "f1a7dbfebeacfa68954f6e6712c26e1b4b9dd7b7c10ab3e17aad3c875faf1ead",
@@ -303,5 +303,10 @@
     "source_sha256": "3049f3a001613805eeccc3083edd0993dd5fe9ea9342e2a95addf327de9aa206",
     "sha256": "bc0eb160850dc43a3619ac3ca3bfb10d423d57d6094bc002fdf6ad7acbf00a10",
     "reason": "Add a separately loadable Bluetooth rfkill owner using the stock MU3356 Android 15 aicbsp_set_subsys power bitmap; leave Wi-Fi GPIO, firmware loading and cfg80211 behavior unchanged."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/aic8800/aic8800_fdrv/rwnx_msg_tx.c": {
+    "source_sha256": "030b20b74960e5b38fa8ddb9e0ba16c65e4b820b9a4278d8ad7b669404155e0b",
+    "sha256": "b8c64b2a43eecef1612dcc626699a094bb90a1556427a32a98137d54629dff4e",
+    "reason": "Preserve the peer VHT Operating Mode Notification byte in ME_STA_ADD_REQ. The old code passed opmode_notif_used (boolean), coercing any supplied mode to 0x01 (40 MHz, one RX spatial stream). Keep the existing presence flag and all actual peer limits. Shared by U30 Pro and F50 Pro; no device or firmware-version gates."
   }
 }

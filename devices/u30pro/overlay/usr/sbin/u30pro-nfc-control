@@ -7,10 +7,12 @@ HOTSPOT=${U30PRO_NFC_HOTSPOT:-/usr/libexec/unisoc-modem/hotspot}
 RUN=${U30PRO_NFC_RUN:-/run/u30pro-nfc}
 SELF=${U30PRO_NFC_CONTROL:-/usr/sbin/u30pro-nfc-control}
 PLATFORM=${U30PRO_NFC_PLATFORM:-/etc/mu300/platform}
+ENCODER=${MU300_NFC_ENCODER:-/usr/share/ucode/mu300/nfc-wifi.uc}
 [ "$(cat "$PLATFORM" 2>/dev/null)" = u30pro ] || exit 2
 desired() { [ "$(uci -q get u30pro_native_control.nfc.enabled 2>/dev/null || true)" = 0 ] && echo 0 || echo 1; }
 case ${1:-sync} in
     state) desired; exit;;
+    result) if [ -r "$RUN/result" ]; then cat "$RUN/result"; else echo pending; fi; exit;;
     supported)
         [ -x "$NFC" ] || exit 1
         if [ "$(cat /etc/mu300/model 2>/dev/null)" = f50pro ]; then
@@ -46,7 +48,7 @@ case $action in
     *) exit 2;;
 esac
 enabled=$(desired)
-auth=; section=; ssid=; reason=disabled
+section=; ssid=; reason=disabled; active=0
 field() { printf '%s\n' "$fields" | awk -v key="$1" 'NR % 2 == 1 && $0 == key { getline; print; exit }'; }
 if [ "$enabled" = 1 ]; then
     # An unavailable RPC is not evidence that the AP was disabled. Retain the
@@ -58,34 +60,39 @@ if [ "$enabled" = 1 ]; then
         ssid=$(uci -q get "wireless.$section.ssid") || fail
         reason=hotspot_disabled
         if [ "$(field enabled)" = 1 ]; then
-            enc=$(field enc); reason=unsupported_encryption
-            case $enc in
-                none|'') auth=open;;
-                psk2|psk2+ccmp|psk2+aes|psk2+tkip+ccmp|sae-mixed|sae-mixed+ccmp) auth=wpa2;;
-            esac
+            enc=$(field enc); active=1
         fi
     else reason=no_selected_hotspot; fi
 fi
 err=$RUN/error.$$
 trap 'rm -f "$err"' EXIT
 rc=0
-if [ -z "$auth" ]; then
+if [ "$active" = 0 ]; then
     "$NFC" clear >"$err" 2>&1 || rc=$?
-elif [ "$auth" = open ]; then
-    "$NFC" wifi "$ssid" open >"$err" 2>&1 || rc=$?
 else
-    # Only the selected AP's saved key, passed over stdin, never argv/logs.
-    key=$(uci -q get "wireless.$section.key") || fail
-    printf '%s' "$key" | "$NFC" wifi "$ssid" wpa2 >"$err" 2>&1 || rc=$?
+    # Personal credentials only. AP-side RADIUS secrets are never shared.
+    key=
+    case ${enc%%+*} in
+        psk*|sae*) key=$(uci -q get "wireless.$section.key") || fail;;
+        wep*)
+            index=$(uci -q get "wireless.$section.key") || fail
+            case $index in 1|2|3|4) key=$(uci -q get "wireless.$section.key$index") || fail;; *) key=$index;; esac
+            case $key in s:*) key=${key#s:};; esac;;
+    esac
+    # Complete encoding before touching EEPROM; pipe errors must not clear it.
+    message=$(printf '%s' "$key" | ucode "$ENCODER" "$ssid" "$enc" "$(field hidden)" 2>"$err") || fail
     unset key
+    printf '%s\n' "$message" | "$NFC" load >"$err" 2>&1 || rc=$?
+    unset message
+    reason=wifi
 fi
 if [ "$rc" != 0 ]; then
     fail
 fi
-printf '%s\n' "${auth:-$reason}" > "$RUN/result"
+printf '%s\n' "$reason" > "$RUN/result"
 if [ "$action" != sync ]; then
     if [ "$enabled" = 0 ]; then message='{"cmd":"toast NFC 已关闭"}'
-    elif [ -n "$auth" ]; then message='{"cmd":"toast NFC 已开启"}'
+    elif [ "$active" = 1 ]; then message='{"cmd":"toast NFC 已开启"}'
     else message='{"cmd":"toast 当前热点暂不支持 NFC"}'; fi
     ubus call u30pro.panel command "$message" >/dev/null 2>&1 || true
 fi
