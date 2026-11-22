@@ -5,14 +5,14 @@ f50pro_detected_board_id() {
     local root=${MU300_SYSROOT:-} value token path
     if [ -r "$root/proc/driver/board_id" ]; then
         value=$(cat "$root/proc/driver/board_id")
-        case $value in 0|1|2|3|4|5) echo "$value"; return;; *) return 1;; esac
+        case $value in 0|1|2|3|4|5|6) echo "$value"; return;; *) return 1;; esac
     fi
     for path in "$root/proc/cmdline" "$root/proc/device-tree/chosen/bootargs"; do
         [ -r "$path" ] || continue
         for token in $(tr '\000' ' ' < "$path"); do
             case $token in androidboot.zte_boardid=*|zteboot.zte_boardid=*)
                 value=${token#*=}
-                case $value in 0|1|2|3|4|5) echo "$value"; return;; *) return 1;; esac;;
+                case $value in 0|1|2|3|4|5|6) echo "$value"; return;; *) return 1;; esac;;
             esac
         done
     done
@@ -24,7 +24,7 @@ f50pro_board_id() {
     else value=$(uci -q get unisoc_modem.main.f50pro_board_override 2>/dev/null || true); fi
     case $value in
         ''|auto) f50pro_detected_board_id;;
-        0|1|2|3|4|5) printf '%s\n' "$value";;
+        0|1|2|3|4|5|6) printf '%s\n' "$value";;
         *) return 1;;
     esac
 }
@@ -33,7 +33,7 @@ f50pro_cards() {
         0) echo '0 1 2';;
         1) echo '0 1';;
         2) echo '0 2';;
-        3) echo '0 2 3 4';;
+        3|6) echo '0 2 3 4';;
         4) echo '0 1 3 4';;
         5) echo '3 4';;
         *) return 1;;
@@ -48,10 +48,10 @@ f50pro_card_map() {
             1:1|2:2|5:4) echo '1 fixed 0';;
             0:1) echo '1 chip_select 0';;
             0:2) echo '1 chip_select 1';;
-            3:0|4:0) echo '0 psim_select 1';;
-            3:2|4:1) echo '1 chip_select 1';;
-            3:3|4:3) echo '0 psim_select 0';;
-            3:4|4:4) echo '1 chip_select 0';;
+            3:0|4:0|6:0) echo '0 psim_select 1';;
+            3:2|4:1|6:2) echo '1 chip_select 1';;
+            3:3|4:3|6:3) echo '0 psim_select 0';;
+            3:4|4:4|6:4) echo '1 chip_select 0';;
             *) return 1;;
         esac
         return

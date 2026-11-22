@@ -15,7 +15,7 @@ import sys
 ROOT = Path(os.environ.get('MU300_SYSROOT') or '/')
 RUN = Path(os.environ.get('MU300_U30PRO_RUN', os.environ.get('MU300_V50_RUN', '/run')))
 PROFILES = {'u30pro': tuple(str(i) for i in range(7)),
-            'f50pro': tuple(str(i) for i in range(6)),
+            'f50pro': tuple(str(i) for i in range(7)),
             'v50': tuple(str(i) for i in range(4))}
 
 

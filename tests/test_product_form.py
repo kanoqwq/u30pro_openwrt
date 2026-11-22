@@ -109,6 +109,26 @@ elif args[0]=='batch':
         self.assertEqual(f['options'][4]['cards'],[0,1,3,4])
         self.assertNotIn('1000',[o['value'] for o in f['options']])
 
+    @unittest.skipUnless((TOP/'devices/f50pro').is_dir(), 'Pro model libraries are in the Pro repository')
+    def test_f50pro_board_six_auto_and_existing_manual_override(self):
+        self.product('f50pro',6)
+        form=self.get()
+        self.assertEqual(form['effective_board_id'],6)
+        self.assertEqual(form['options'][6]['cards'],[0,2,3,4])
+        self.assertEqual(form['options'][6]['cards'],form['options'][3]['cards'])
+        self.config(f50pro_board_override='3',f50pro_card='2',
+                    f50pro_route0='0',f50pro_route1='2',data_sim='1')
+        self.mod.execute('boot',{})
+        self.assertEqual(self.get()['effective_board_id'],3)
+        self.mod.execute('set',{'model':'f50pro','mode':'auto'})
+        self.assertEqual(self.get()['effective_board_id'],3)
+        self.mod.execute('boot',{})
+        self.assertEqual(self.get()['effective_board_id'],6)
+        self.assertEqual(self.values()['f50pro_route1'],'2')
+        self.assertEqual(self.values()['data_sim'],'1')
+        self.product('u30pro',6)
+        self.assertEqual(self.get()['options'][6]['cards'],[0,2])
+
     def test_save_freezes_old_effective_form_until_boot(self):
         self.config(v50_card='2',data_sim='1',keep_sms='yes',dual_standby='0')
         result=self.mod.execute('set',{'model':'v50','mode':'3'})

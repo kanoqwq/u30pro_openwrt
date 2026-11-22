@@ -26,7 +26,8 @@ class F50ProCards(fixtures.PhysicalCardsFixture):
         return self.script(shell,TOP/'devices/u30pro/overlay/usr/sbin/u30pro-sim-preinit',**self.extra)
 
     def test_pre_cp_saved_pair_restores_gpio_without_at_or_uci_mutation(self):
-        for shell in self.each_shell():
+        for shell,board in ((s,b) for s in self.each_shell() for b in (4,6)):
+            self.args.write_bytes(f'zteboot.zte_boardid={board}\0'.encode())
             state=dict(self.initial,f50pro_route0=3,f50pro_route1=4)
             self.state.write_text(json.dumps(state));before=self.state.read_bytes()
             (self.hw/'chip_select').write_text('1\n');(self.hw/'psim_select').write_text('1\n')
@@ -87,7 +88,7 @@ class F50ProCards(fixtures.PhysicalCardsFixture):
         self.assertLess(service.index(': > /run/u30pro-cp-started'),service.index('procd_set_param command /usr/sbin/u30-modemd'))
 
     def test_all_production_layouts_and_no_operator_filter(self):
-        expected={0:[0,1,2],1:[0,1],2:[0,2],3:[0,2,3,4],4:[0,1,3,4],5:[3,4]}
+        expected={0:[0,1,2],1:[0,1],2:[0,2],3:[0,2,3,4],4:[0,1,3,4],5:[3,4],6:[0,2,3,4]}
         for shell in self.each_shell():
             for board,cards in expected.items():
                 self.args.write_bytes(f'zteboot.zte_boardid={board}\0'.encode())
@@ -109,7 +110,7 @@ class F50ProCards(fixtures.PhysicalCardsFixture):
 
     def test_stock_inverse_mapping_for_every_production_board_and_mux_state(self):
         for shell in self.each_shell():
-            for board in range(6):
+            for board in range(7):
                 self.args.write_bytes(f'zteboot.zte_boardid={board}\0'.encode())
                 for chip in (0,1):
                     for psim in (0,1):
@@ -117,7 +118,8 @@ class F50ProCards(fixtures.PhysicalCardsFixture):
                         (self.hw/'psim_select').write_text(str(psim))
                         expected={0:[0,1 if chip==0 else 2],1:[0,1],2:[0,2],
                                   3:[0 if psim else 3,2 if chip else 4],
-                                  4:[0 if psim else 3,1 if chip else 4],5:[3,4]}[board]
+                                  4:[0 if psim else 3,1 if chip else 4],5:[3,4],
+                                  6:[0 if psim else 3,2 if chip else 4]}[board]
                         for slot in (0,1):
                             (self.run/'mu300-data-sim-actual').write_text(str(slot))
                             status=json.loads(self.call(shell,'status').stdout)
@@ -125,7 +127,8 @@ class F50ProCards(fixtures.PhysicalCardsFixture):
                             self.assertEqual(status['active_card'],expected[slot])
 
     def test_second_external_card_uses_stack_one_and_shared_power_order(self):
-        for shell in self.each_shell():
+        for shell,board in ((s,b) for s in self.each_shell() for b in (4,6)):
+            self.args.write_bytes(f'zteboot.zte_boardid={board}\0'.encode())
             self.state.write_text(json.dumps(self.initial))
             (self.hw/'chip_select').write_text('1\n')
             (self.tmp/'commands').unlink(missing_ok=True)
