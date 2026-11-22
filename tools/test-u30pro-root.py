@@ -63,6 +63,13 @@ def kernel_checks():
     assert all(p.relative_to(ROOT).as_posix() in owned for p in module_root.glob('*.ko')), 'Native module APK ownership is incomplete'
     for name in native['provides']:
         assert packages[name]['D']=='kernel='+native['package_version'], 'Wrong native kmod dependency: '+name
+    capability = runpy.run_path(str(TOP/'tools/stage-kernel-packages.py'))
+    config = dict(s.split('=',1) for s in (objects/'.config').read_text().splitlines()
+                  if s.startswith('CONFIG_') and '=' in s)
+    builtin = {capability['normalize'](s) for s in (module_root/'modules.builtin').read_text().splitlines()}
+    expected = capability['capabilities'](config,
+        {capability['normalize'](p.name):p for p in module_root.glob('*.ko')}, builtin)
+    assert native['provides']==expected, 'Native APK capabilities do not cover the current feature map'
     assert 'kernel='+native['package_version'] in (ROOT/'etc/apk/world').read_text().splitlines(), 'Native kernel selection is not pinned'
     print(f'Matched Image/config/source receipt and {count} installed modules')
 
@@ -319,6 +326,8 @@ def main(include_modem=True):
         if expected.startswith(b'#!'):expected=expected.replace(b'\r\n',b'\n')
         assert (ROOT/target).read_bytes()==expected,'Prepared root missed current source: '+source
     print('Current hotfix sources/native adapters/catalogs match prepared root: '+str(len(inputs)))
+    assert not (ROOT/'etc/apk/repositories.d/u30pro.list').exists(), 'Retired Pro feed was still packaged'
+    assert not (ROOT/'etc/apk/keys/u30pro-feed.pem').exists(), 'Retired Pro feed key was still packaged'
     scripts=['/opt/mu300/bin/mu300-modemd','/usr/sbin/u30pro-ui-feed','/opt/mu300/bin/mu300-sysd',
         '/usr/sbin/f50pro-leds',
         '/usr/libexec/unisoc-modem/roaming','/opt/mu300/bin/mu300-network-recovery',

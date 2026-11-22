@@ -53,7 +53,6 @@ TESTS = {
 def selected(name):
     p = PurePosixPath(name)
     if name in {
-        'feed/packages/u30pro-feed/files/etc/apk/keys/u30pro-feed.pem',
         'feed/packages/u30pro-feed-immortalwrt/files/etc/apk/keys/immortalwrt-25.12.pem',
         'feed/packages/u30pro-feed-immortalwrt/files/etc/apk/repositories.d/immortalwrt.list',
         'ui/native-control/overlay/usr/libexec/rpcd/u30pro-wallpaper',

@@ -229,6 +229,64 @@ class NativePackages(unittest.TestCase):
         self.assertEqual((live/f'lib/modules/{KREL}/tun.ko').read_bytes(),
                          (new/f'lib/modules/{KREL}/tun.ko').read_bytes())
 
+    def test_10_docker_capabilities_require_real_modules_and_builtin_evidence(self):
+        # A mix of built-ins and modules is normal on the native Pro kernel.
+        config = {
+            'CONFIG_NETFILTER_XT_MATCH_ADDRTYPE':'y', 'CONFIG_NETFILTER_XT_MATCH_OWNER':'y',
+            'CONFIG_NETFILTER_XT_MATCH_PKTTYPE':'y', 'CONFIG_NETFILTER_XT_MATCH_QUOTA':'m',
+        }
+        builtin = {'xt_addrtype', 'xt_owner', 'xt_pkttype'}
+        self.assertIn('kmod-ipt-extra', M['capabilities'](config, {'xt_quota':None}, builtin))
+        self.assertNotIn('kmod-ipt-extra', M['capabilities'](config, {}, builtin))
+        self.assertNotIn('kmod-ipt-extra', M['capabilities'](config, {'xt_quota':None}, builtin-{'xt_owner'}))
+        self.assertNotIn('kmod-ipt-extra', M['capabilities'](dict(config, CONFIG_NETFILTER_XT_MATCH_OWNER='n'),
+                                                                  {'xt_quota':None}, builtin))
+
+    def test_11_docker_dependencies_solve_without_a_foreign_kernel_alias(self):
+        root = self.path/'docker'; shutil.copytree(self.old, root)
+        names = ['ipt-extra', 'ipt-conntrack', 'ipt-nat', 'ipt-nat6', 'ipt-physdev', 'nf-ipvs']
+        config = {'TUN':'m'}; builtin = set()
+        for name in names:
+            flags, modules = M['FEATURES'][name]
+            config.update({key:'y' for key in flags.split()})
+            builtin.update(modules.split())
+        put(root, f'lib/modules/{KREL}/modules.builtin',
+            ''.join('kernel/net/'+name+'.ko\n' for name in sorted(builtin)))
+        config_path = put(self.path, 'docker.config', ''.join('CONFIG_'+key+'='+value+'\n'
+                                                            for key,value in sorted(config.items())))
+        receipt = M['stage'](root, config_path, self.image, KREL, 'u30pro', IMAGE)
+        self.assertTrue({'kmod-'+name for name in names} <= set(receipt['provides']))
+        files = self.path/'docker-files'; files.mkdir()
+        archive = root/'docker-dependencies.apk'
+        M['apk_file'](files, set(), archive, 'pkgname = docker-kernel-dependencies\npkgver = 1-r1\n'
+            'pkgdesc = Docker kernel dependency regression\narch = aarch64_generic\n'
+            'license = GPL-2.0-only\nsize = 0\nbuilddate = 0\n'+
+            ''.join('depend = kmod-'+name+'\n' for name in names))
+        self.apk(root, 'add', '--allow-untrusted', '--scripts=no', '--commit-hooks=no', str(archive))
+        rows = M['records']((root/'lib/apk/db/installed').read_text())
+        self.assertEqual(M['field'](rows['kernel'],'V'), receipt['package_version'])
+        for name in names:
+            self.assertEqual(M['field'](rows['kmod-'+name],'D'), 'kernel='+receipt['package_version'])
+        self.assertNotIn('u30pro-kernel-', (root/'lib/apk/db/installed').read_text())
+
+    def test_12_proxy_capabilities_do_not_claim_disabled_or_missing_components(self):
+        cases = {
+            'dummy': ({'CONFIG_DUMMY':'y'}, {'dummy'}),
+            'inet-diag': ({'CONFIG_INET_DIAG':'y', 'CONFIG_INET_TCP_DIAG':'y', 'CONFIG_INET_UDP_DIAG':'y'},
+                          {'inet_diag', 'tcp_diag', 'udp_diag'}),
+            'nf-socket': ({'CONFIG_NF_SOCKET_IPV4':'y', 'CONFIG_NF_SOCKET_IPV6':'y'},
+                          {'nf_socket_ipv4', 'nf_socket_ipv6'}),
+            'nf-tproxy': ({'CONFIG_NF_TPROXY_IPV4':'y', 'CONFIG_NF_TPROXY_IPV6':'y'},
+                          {'nf_tproxy_ipv4', 'nf_tproxy_ipv6'}),
+            'nft-socket': ({'CONFIG_NFT_SOCKET':'y'}, {'nft_socket'}),
+            'nft-tproxy': ({'CONFIG_NFT_TPROXY':'y'}, {'nft_tproxy'}),
+        }
+        for name, (config, builtin) in cases.items():
+            with self.subTest(capability=name):
+                self.assertIn('kmod-'+name, M['capabilities'](config, {}, builtin))
+                self.assertNotIn('kmod-'+name, M['capabilities'](config, {}, set()))
+                self.assertNotIn('kmod-'+name, M['capabilities']({}, {}, builtin))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

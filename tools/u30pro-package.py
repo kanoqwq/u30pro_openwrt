@@ -254,7 +254,6 @@ def sources(refresh=False):
         'ui/native-control/overlay/www/luci-static/resources/view/system/u30pro-wallpaper.js':'www/luci-static/resources/view/system/u30pro-wallpaper.js',
         'ui/native-control/overlay/www/luci-static/resources/u30pro/kit.js':'www/luci-static/resources/u30pro/kit.js',
         'ui/native-control/overlay/www/luci-static/resources/u30pro/kit.css':'www/luci-static/resources/u30pro/kit.css',
-        'feed/packages/u30pro-feed/files/etc/apk/keys/u30pro-feed.pem':'etc/apk/keys/u30pro-feed.pem',
         'feed/packages/u30pro-feed-immortalwrt/files/etc/apk/keys/immortalwrt-25.12.pem':'etc/apk/keys/immortalwrt-25.12.pem',
         'feed/packages/u30pro-feed-immortalwrt/files/etc/apk/repositories.d/immortalwrt.list':'etc/apk/repositories.d/immortalwrt.list',
     }
@@ -262,6 +261,8 @@ def sources(refresh=False):
         path=ROOT/destination;path.parent.mkdir(parents=True,exist_ok=True)
         shutil.copyfile(NATIVE/source,path)
         path.chmod(0o755 if path.read_bytes().startswith(b'#!') else 0o644)
+    (ROOT/'etc/apk/keys/u30pro-feed.pem').unlink(missing_ok=True)
+    (ROOT/'etc/apk/repositories.d/u30pro.list').unlink(missing_ok=True)
     # Shared modem service has one C transport and one ucode policy owner.
     transport = Path(LAYOUT['at_transport'])
     checker = importlib.util.spec_from_file_location('io_artifact', TOP / 'tools/atd-io/artifact.py')
