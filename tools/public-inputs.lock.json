@@ -2,7 +2,7 @@
   "format": 1,
   "openwrt": "25.12.5",
   "kernel": "6.12.94",
-  "installer_commit": "760aa2621ebc3d0e526724a88ed1996180ae2e4e",
+  "installer_commit": "117e6b716c015f7a910f44e09885d2c30627b4f8",
   "assets": {
     "kernel": {
       "url": "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-6.12.94.tar.xz",
@@ -45,16 +45,16 @@
       "sha256": "ff23a9825aeac8da14a7142e985d598043c0287a463279f24863c580622bf18d"
     },
     "installer_windows": {
-      "url": "https://github.com/kanoqwq/openwrt-tools/releases/download/build-tools-760aa26/installer-windows-x64-760aa26.tar.gz",
-      "sha256": "1aab318503f792fe2bd7f5550ba341f45b137193b084721f629c553923519b9d"
+      "url": "https://github.com/kanoqwq/openwrt-tools/releases/download/build-tools-117e6b7/installer-windows-x64-117e6b7.tar.gz",
+      "sha256": "894f3f6653c3f78aeb7d539c24b1a8b10974f2d16417daa8885c8385635f131d"
     },
     "installer_macos": {
-      "url": "https://github.com/kanoqwq/openwrt-tools/releases/download/build-tools-760aa26/installer-macos-arm64-760aa26.tar.gz",
-      "sha256": "1cb37db7e4dab3833ead53b1045afd8e7bcfc064af3ec327ffe7cf39c7db3767"
+      "url": "https://github.com/kanoqwq/openwrt-tools/releases/download/build-tools-117e6b7/installer-macos-arm64-117e6b7.tar.gz",
+      "sha256": "1c0ef43a1a9b4b4f8133975dffa575ac9e5ee3367125171cd0213fc6e43e1b96"
     },
     "installer_android": {
-      "url": "https://github.com/kanoqwq/openwrt-tools/releases/download/build-tools-760aa26/installer-android-aarch64-760aa26.tar.gz",
-      "sha256": "1dad329fc745ca6066e0e5defce50d711ba7f728994176f5b82cb0c1cdc02efe"
+      "url": "https://github.com/kanoqwq/openwrt-tools/releases/download/build-tools-117e6b7/installer-android-aarch64-117e6b7.tar.gz",
+      "sha256": "6ccd4500bcec232e671c58dfd493ef164c523881b286a5dc3cb1279260ba9108"
     },
     "theme": {
       "url": "https://github.com/eamonxg/luci-theme-aurora/releases/download/v1.4.0/luci-theme-aurora-1.4.0-r20260920.apk",

@@ -331,8 +331,8 @@ def sources(refresh=False):
         if Path(name).name!=name or not name.endswith('.ko'):
             raise ValueError('Invalid previously owned module name')
         (module_root/name).unlink(missing_ok=True)
-    # Distro armsr modules are for another kernel build. finish() replaces
-    # their APK records after all dependency installation has completed.
+    # Same MU300 root assembly rule: distro armsr modules are for another
+    # kernel build. Keep package metadata, but never ship those unused .ko's.
     for directory in (ROOT/'lib/modules').iterdir():
         if directory==module_root:continue
         if directory.is_symlink() or directory.resolve().parent!=(ROOT/'lib/modules').resolve():
@@ -343,6 +343,7 @@ def sources(refresh=False):
     # Firmware follows MU300's protected per-device vendor namespace. Keep the
     # hardware driver's original firmware path through a relative link only.
     link=ROOT/'odm/firmware/aic8800'
+    link.parent.mkdir(parents=True, exist_ok=True)
     if link.is_dir() and not link.is_symlink():
         if any(p.name not in {Path(n).name for n in board['files'] if n.startswith('odm/firmware/aic8800/')} for p in link.iterdir()):
             raise ValueError('Unowned files in old firmware staging')
@@ -494,9 +495,6 @@ def finish():
     if applied.pop('fw4-sipa-offload.patch', None) is not None:
         patched.write_text(json.dumps(applied,indent=2)+'\n')
     runpy.run_path(str(TOP/'tools/stage-wifi-patches.py'))['stage'](ROOT,TOP/'openwrt/patches',patched)
-    runpy.run_path(str(TOP/'tools/stage-kernel-packages.py'))['stage'](
-        ROOT, KERNEL/'.config', KERNEL/'arch/arm64/boot/Image', report['version'],
-        'u30pro', ROOT_IMAGE)
     baseline=target('MU300_LIB=1; export MU300_LIB; . /target/opt/mu300/bin/mu300-update; upk_manual /target openwrt')
     if not baseline.strip():raise ValueError('Image package baseline is empty')
     (etc/'image-packages').write_text(baseline)
@@ -742,9 +740,25 @@ def clean_staging():
     print('Removed owned package assembly staging only; prepared root, inputs and releases retained')
 
 
+def rebuild_root():
+    """Explicitly re-create this tool's disposable prepared root, not caches."""
+    owned()
+    if not BASE.is_file() or digest(BASE) != BASE_SHA:
+        raise ValueError('Verify the registered base before rebuilding the prepared root')
+    state = json.loads((STAGE/'state.json').read_text())
+    if state.get('base') != BASE_SHA or state.get('step') not in ('root-ready', 'packaged'):
+        raise ValueError('Inspect unfinished staging before rebuilding its root')
+    for line in Path('/proc/self/mountinfo').read_text().splitlines():
+        mount = Path(re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), line.split()[4]))
+        if mount == STAGE or mount.is_relative_to(STAGE):
+            raise ValueError('Unmount owned staging before rebuilding its root')
+    shutil.rmtree(STAGE)
+    bootstrap()
+
+
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('stage', choices=('bootstrap', 'dependencies', 'sources', 'refresh-sources', 'finish', 'canonical_boot', 'package','clean-staging'))
+    p.add_argument('stage', choices=('bootstrap', 'dependencies', 'sources', 'refresh-sources', 'finish', 'canonical_boot', 'package','clean-staging','rebuild-root'))
     args = p.parse_args()
     if os.environ.get('U30PRO_BUILD_LOCKED') != '1':
         raise SystemExit('Use tools/build-release.py run')

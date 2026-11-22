@@ -122,3 +122,9 @@ ORG_GRADLE_PROJECT_kotlin.compiler.execution.strategy=in-process，不改全局 
 刷新前核对缓存归属、OpenWrt 基底及 U30 Pro 机型标记，不依赖上一版 ZIP 是否仍在原目录。
 Image.wrapped 若属于旧 Image，先检查并运行
 clean-staging，仅清本工具拥有的组包/包装输出，再由 canonical_boot 重生成。
+
+若已确认准备根被撤回的构建策略修改（例如生成式内核 APK 记录），可在同一
+runner 中显式执行 `tools/u30pro-package.py rebuild-root`，再执行
+`dependencies`、`sources`、`finish`。该操作先检查归属、完成状态、基础归档和
+挂载，仅重新创建固定 `package-work/u30pro-release/`；不删除源码、对象、下载、
+原生产物或历史发布，也不在准备根上覆盖解包。正常打包不自动调用此操作。

@@ -62,6 +62,32 @@ class RetainedRoot(unittest.TestCase):
     def save(self):
         (self.stage/'state.json').write_text(json.dumps(self.state))
 
+    def test_explicit_root_rebuild_keeps_source_object_and_release_inputs(self):
+        base=self.work/'cache/base.tar.gz';base.parent.mkdir();base.write_bytes(b'verified fixture')
+        kept=[]
+        for name in ('sources/kernel/input.c','objects/kernel/Image','release/previous.zip'):
+            path=self.work/name;path.parent.mkdir(parents=True);path.write_bytes(b'keep');kept.append(path)
+        with mock.patch.object(package,'BASE',base), mock.patch.object(package,'digest',return_value=package.BASE_SHA), \
+             mock.patch.object(package,'bootstrap') as prepare:
+            package.rebuild_root()
+        prepare.assert_called_once_with()
+        self.assertFalse(self.stage.exists())
+        for path in kept:self.assertEqual(path.read_bytes(),b'keep')
+
+    def test_root_rebuild_rejects_invalid_base_before_removing_staging(self):
+        with mock.patch.object(package,'BASE',self.work/'missing-base'):
+            with self.assertRaisesRegex(ValueError,'registered base'):
+                package.rebuild_root()
+        self.assertTrue((self.root/'etc/mu300/platform').is_file())
+
+    def test_root_rebuild_rejects_unfinished_staging(self):
+        base=self.work/'base.tar.gz';base.write_bytes(b'fixture')
+        self.state['step']='base-extracted';self.save()
+        with mock.patch.object(package,'BASE',base), mock.patch.object(package,'digest',return_value=package.BASE_SHA):
+            with self.assertRaisesRegex(ValueError,'unfinished'):
+                package.rebuild_root()
+        self.assertTrue(self.root.is_dir())
+
     def test_epoch_dated_native_file_can_be_archived_without_changing_payload(self):
         source = self.work/'native.apk'
         source.write_bytes(b'verified native artifact')

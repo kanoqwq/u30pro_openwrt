@@ -51,26 +51,6 @@ def kernel_checks():
         assert installed.is_file() and package['digest'](installed)==package['digest'](objects/name), \
             'Prepared kernel module differs from the current build: '+name
         count+=1
-    sys.path.insert(0, str(TOP/'installer'))
-    from backend.ota_engine import package_records, package_paths, package_versions
-    db=(ROOT/'lib/apk/db/installed').read_bytes()
-    packages=package_versions(db); records=package_records(db)
-    native=json.loads((ROOT/'usr/share/unisoc-kernel/package.json').read_text())
-    assert native['kernel_release']==report['version'], 'APK kernel receipt names another release'
-    assert packages['kernel']['V']==native['package_version'], 'APK kernel record differs from actual native payload'
-    assert 'o:unisoc-native-kernel' in records['kernel'], 'Official kernel record remained in the prepared root'
-    owned=package_paths(records['kernel'])
-    assert all(p.relative_to(ROOT).as_posix() in owned for p in module_root.glob('*.ko')), 'Native module APK ownership is incomplete'
-    for name in native['provides']:
-        assert packages[name]['D']=='kernel='+native['package_version'], 'Wrong native kmod dependency: '+name
-    capability = runpy.run_path(str(TOP/'tools/stage-kernel-packages.py'))
-    config = dict(s.split('=',1) for s in (objects/'.config').read_text().splitlines()
-                  if s.startswith('CONFIG_') and '=' in s)
-    builtin = {capability['normalize'](s) for s in (module_root/'modules.builtin').read_text().splitlines()}
-    expected = capability['capabilities'](config,
-        {capability['normalize'](p.name):p for p in module_root.glob('*.ko')}, builtin)
-    assert native['provides']==expected, 'Native APK capabilities do not cover the current feature map'
-    assert 'kernel='+native['package_version'] in (ROOT/'etc/apk/world').read_text().splitlines(), 'Native kernel selection is not pinned'
     print(f'Matched Image/config/source receipt and {count} installed modules')
 
 
@@ -414,7 +394,8 @@ def main(include_modem=True):
     # owned temporary lock, not the host's runtime directory.
     try:
         reply=json.loads(run('chroot /target /usr/bin/env UNISOC_NFC_LOCK=/tmp/u30pro-nfc-rpc-test.lock /usr/libexec/unisoc-modem/nfc get'))
-        expected={'ok':0,'error':'nfc_unavailable'} if MODEL['id']=='f50pro' else {'ok':1,'supported':1,'enabled':1}
+        expected={'ok':0,'error':'nfc_unavailable'} if MODEL['id']=='f50pro' else {
+            'ok':1,'supported':1,'enabled':1,'content_state':'pending'}
         assert reply==expected,reply
     finally:
         (ROOT/'tmp/u30pro-nfc-rpc-test.lock').unlink(missing_ok=True)
