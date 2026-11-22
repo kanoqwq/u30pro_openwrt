@@ -26,6 +26,10 @@ class ChargeBoot(unittest.TestCase):
         (self.root/'etc/config/mu300-charge').write_text("config charge 'main'\n option power_on '0'\n")
         (self.root/'proc/cmdline').write_text('console=ttyS1\n modem=shutdown sprdboot.mode=charger\n')
         (self.root/'proc/device-tree/chosen/bootargs').write_bytes(b'androidboot.mode=charger\0')
+        self.sink=self.root/'sys/class/extcon/extcon7'
+        (self.sink/'cable.3').mkdir(parents=True)
+        (self.sink/'name').write_text('64600000.spi:pmic@1:typec@380\n')
+        (self.sink/'cable.3/state').write_text('1\n')
         # These must survive all charging transitions byte for byte.
         self.saved = {
             'etc/config/unisoc_modem': b"radio_permissions='0 1'\ndata_sim=1\n",
@@ -98,7 +102,7 @@ exit 0
         p = self.call(); self.assertEqual(p.returncode, 0, p.stderr)
         rows = self.events()
         self.assertIn('display charger', rows)
-        self.assertIn('keys -c -p /fixture/sys/class/power_supply/u30pro-charger-master/online -l 2000', rows)
+        self.assertIn('keys -c -p /fixture/sys/class/power_supply/u30pro-charger-master/online -a /fixture/sys/class/extcon/extcon7/cable.3/state -l 2000', rows)
         self.assertIn('display-stopped', rows)
         self.assertFalse((self.root/'run/mu300/charging-boot').exists())
         self.assertEqual(json.loads((self.root/'run/mu300/charging-boot.json').read_text())['reason'],'boot')
@@ -112,6 +116,14 @@ exit 0
         self.assertLess(rows.index('display-stopped'), rows.index('sync '))
         self.assertEqual(rows[-5:], ['sync ', 'mount -o remount,ro /',
                                     'mount -o remount,ro /mnt/mu300-disk', 'sync ', 'poweroff -f'])
+
+    def test_missing_typec_is_explicit_and_does_not_use_old_unplug_logic(self):
+        (self.sink/'cable.3/state').unlink()
+        p=self.call()
+        self.assertEqual(p.returncode,0,p.stderr)
+        self.assertIn('Type-C sink signal unavailable',p.stderr)
+        self.assertEqual(self.events(),[])
+        self.assertFalse((self.root/'run/mu300/charging-boot').exists())
 
     def test_missing_key_interface_continues_boot_without_reboot_loop(self):
         self.stub('usr/sbin/mu300-keys', 'sleep 1; exit 1')

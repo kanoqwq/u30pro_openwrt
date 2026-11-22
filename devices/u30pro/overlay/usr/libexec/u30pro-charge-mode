@@ -28,12 +28,21 @@ if (!fs.stat(RUN) && !fs.mkdir(RUN, 448)) die('Cannot create charging runtime di
 const marker = RUN + '/charging-boot';
 if (fs.writefile(marker, 'u30pro\n') != 7) die('Cannot record charging boot\n');
 const entered = time();
+// Native sc27xx_typec_cable[] exposes EXTCON_SINK as cable.3. Resolve the
+// controller instance rather than relying on its extcon number or PMIC address.
+let sinks = [];
+for (let name in fs.glob(ROOT + '/sys/class/extcon/*/name')) {
+    if (!match(trim(fs.readfile(name) || ''), /:typec@[0-9a-f]+$/)) continue;
+    push(sinks, substr(name, 0, length(name) - 4) + 'cable.3/state');
+}
+const sink_path = length(sinks) == 1 ? sinks[0] : null;
 const initial_power = {capacity:read('/sys/class/power_supply/u30pro-battery/capacity'),
     battery_type:read('/sys/class/power_supply/u30pro-battery/type'),
     charger_status:read('/sys/class/power_supply/u30pro-charger-master/status'),
     online:read('/sys/class/power_supply/u30pro-charger-master/online')};
 function record(state, reason) {
     let text = sprintf('%J\n', {state, reason, entered, changed:time(), initial_power,
+        typec_sink:sink_path ? trim(fs.readfile(sink_path) || '') : '',
         capacity:read('/sys/class/power_supply/u30pro-battery/capacity'),
         battery_type:read('/sys/class/power_supply/u30pro-battery/type'),
         charger_status:read('/sys/class/power_supply/u30pro-charger-master/status'),
@@ -42,6 +51,12 @@ function record(state, reason) {
         log('could not record charging transition');
 }
 record('charging', '');
+if (!sink_path || !match(trim(fs.readfile(sink_path) || ''), /^[01]$/)) {
+    record('handoff', 'typec-unavailable');
+    fs.unlink(marker);
+    log('native Type-C sink signal unavailable; continuing normal startup');
+    exit(0);
+}
 
 // A healthy charging session must not consume the automatic rollback budget.
 // --rearm respects the saved Android/Linux choice and never changes it.
@@ -90,7 +105,8 @@ display = uloop.process(exe('/opt/u30pro/bin/u30pro-panel'), ['charger'], ENV,
     code => { display = null; if (!ending) log('charging display ended: ' + code); complete(); });
 // Supply is selected by hardware profile, never by an image/version/hash.
 waiter = uloop.process(exe('/usr/sbin/mu300-keys'),
-    ['-c', '-p', ROOT + '/sys/class/power_supply/u30pro-charger-master/online', '-l', '2000'], ENV,
+    ['-c', '-p', ROOT + '/sys/class/power_supply/u30pro-charger-master/online',
+     '-a', sink_path, '-l', '2000'], ENV,
     code => { waiter = null; finish(policy.outcome(code)); complete(); });
 if (!waiter) finish('unavailable');
 log('charging only; hold power for 2 seconds to start OpenWrt');

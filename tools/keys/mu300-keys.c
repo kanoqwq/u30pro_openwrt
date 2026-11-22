@@ -62,13 +62,25 @@ static int charge_online(const char *path)
 	return value[0] - '0';
 }
 
+/* Power-good can disappear during a PD hard reset with CC still attached.
+ * The caller supplies its native Type-C sink signal; no connector is inferred
+ * from charging status, battery percentage or the PD negotiation state. */
+static int charge_connected(const char *online_path, const char *sink_path)
+{
+	int online = charge_online(online_path);
+	if (online != 0 || !sink_path)
+		return online;
+	return charge_online(sink_path);
+}
+
 static int charge_event(const char *buf, size_t size)
 {
 	for (size_t i = 0; i < size;) {
 		size_t n = strnlen(buf + i, size - i);
 		if (n == size - i)
 			return 0;
-		if (!strcmp(buf + i, "SUBSYSTEM=power_supply"))
+		if (!strcmp(buf + i, "SUBSYSTEM=power_supply") ||
+		    !strcmp(buf + i, "SUBSYSTEM=extcon"))
 			return 1;
 		i += n + 1;
 	}
@@ -76,7 +88,7 @@ static int charge_event(const char *buf, size_t size)
 }
 
 static int charge_wait(struct pollfd *keys, int n, int events,
-		       const char *online_path, long long hold)
+		       const char *online_path, const char *sink_path, long long hold)
 {
 	struct pollfd fds[MAXDEV + 1];
 	long long down[MAXDEV] = {0}, unplug = 0;
@@ -93,7 +105,7 @@ static int charge_wait(struct pollfd *keys, int n, int events,
 	for (;;) {
 		long long now = now_ms();
 		if (changed || unplug) {
-			int online = charge_online(online_path);
+			int online = charge_connected(online_path, sink_path);
 			if (online < 0)
 				return 1;
 			if (online)
@@ -242,12 +254,15 @@ int main(int argc, char **argv)
 	int n = 0, opt, charging = 0, ue = -1, out = -1, npfd;
 	char *list = NULL;
 	const char *charging_supply = "/sys/class/power_supply/bq256xx-charger/online";
+	const char *charging_sink = NULL;
 
-	while ((opt = getopt(argc, argv, "cp:l:t:u:")) != -1) {
+	while ((opt = getopt(argc, argv, "cp:a:l:t:u:")) != -1) {
 		if (opt == 'c')
 			charging = 1;
 		else if (opt == 'p')
 			charging_supply = optarg;
+		else if (opt == 'a')
+			charging_sink = optarg;
 		else if (opt == 'l')
 			hold = atoll(optarg);
 		else if (opt == 't')
@@ -255,7 +270,7 @@ int main(int argc, char **argv)
 		else if (opt == 'u')
 			list = optarg;
 		else {
-			fprintf(stderr, "usage: mu300-keys [-c [-p SUPPLY_ONLINE]] [-l MS] [-t SEC] [-u SUBSYSTEM[,SUBSYSTEM...]]\n");
+			fprintf(stderr, "usage: mu300-keys [-c [-p SUPPLY_ONLINE] [-a TYPEC_SINK]] [-l MS] [-t SEC] [-u SUBSYSTEM[,SUBSYSTEM...]]\n");
 			return 2;
 		}
 	}
@@ -299,7 +314,7 @@ int main(int argc, char **argv)
 			return 1;
 		int buffer = 256 * 1024;
 		setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &buffer, sizeof(buffer));
-		return charge_wait(pfd, n, fd, charging_supply, hold);
+		return charge_wait(pfd, n, fd, charging_supply, charging_sink, hold);
 	}
 	npfd = n;
 	if (nsub) {
