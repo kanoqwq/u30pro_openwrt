@@ -261,8 +261,8 @@
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_skb_send.c": {
     "source_sha256": "07ea3ab9f900c76c9dd3b60afe01904b965b5e5a65c93acdb5c8d26a30f0e57c",
-    "sha256": "215fc802ee611aaf3d417e408000948ef688f415e4e318004dda4646ccaa0ecf",
-    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on."
+    "sha256": "c2f9bb0d24768c48a93846cbfa6b6ffeb467a8ed5adb635aaab56e8dc41e4995",
+    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on. 2026-11-25: review against 33333s/U30pro-openwrt 2d4c266deebd5e34e3c7ee772ec8c40bc2ab1b29. Re-sync completion DMA outside send_lock, process later valid entries, advance only inspected descriptors, return credits only for owned skb, detach before unlocked requeue. Unknown descriptors never release unrelated mappings or fabricate credits; retain existing flow-control serialization."
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_nic.c": {
     "source_sha256": "4800a5aafc668858d402c15714819eebab78d787cc2b019160c3152ac037ecff",
@@ -271,8 +271,8 @@
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_eth.c": {
     "source_sha256": "7649c43991af5944d499bd70513e67147e9b2297d25a3908d23e5ee8c9aafe45",
-    "sha256": "2dac67c8933d0c9923f17a6d4d6e12d4b6cd840a877a648f0a9b4621ecd4b927",
-    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on."
+    "sha256": "58c854f4a02cb110774a26aaff98571ce1af8d5f9266538581abd14c3769baf6",
+    "reason": "Serialize per-NIC flow snapshots and netdev callbacks; revalidate live RM/FIFO causes after reordered hints, preserve grants completed before request_resource returns, gate close, and keep IRQ save flags local. Fix observed stopped TX queue with released resources; no polling, radio reset or forced power-on. 2026-11-25: adapt the skb ownership/headroom fixes from 33333s/U30pro-openwrt 2d4c266deebd5e34e3c7ee772ec8c40bc2ab1b29. Track dummy-header push explicitly, COW writable headroom, retain skb only for resource BUSY, consume permanent failures; preserve existing flow-control serialization."
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_usb.c": {
     "source_sha256": "68c00c89e9e323b351aa3d4d53caa29e04e3f57b3645f087ad68643f208115f5",
@@ -291,8 +291,8 @@
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_skb_recv.c": {
     "source_sha256": "f59eadd3eae9ccf0db2d5e2ddb3b6c891aac497e0e3f179ed3f22a5d5c8c35af",
-    "sha256": "c1e48f77c4496f9c4e593f2c322510cd8e936ed4dfca8933f8203ac3866420eb",
-    "reason": "Balance skb/DMA ownership on failed receive replenishment and publish DMA buffers only after successful software-ring admission; retain the existing page-allocation guards, FIFO geometry and stock power policy."
+    "sha256": "b2c9b0cae39250fd1a8148b440ff4f6cbd44dbfde6a8e453a6b3ef0ad898a586",
+    "reason": "Balance skb/DMA ownership on failed receive replenishment and publish DMA buffers only after successful software-ring admission; retain the existing page-allocation guards, FIFO geometry and stock power policy. 2026-11-25: pooled RX pages include CPU-written skb_shared_info; use bidirectional page mappings and explicit CPU/device handoff on initial fill, page reuse and receive/error paths. Preserve single-use FROM_DEVICE mapping policy and existing publication failure handling; initial fill also tracks real buffer offsets and checks software-ring admission. Do not copy the mismatched DMA_TO_DEVICE sync from external 2d4c266."
   },
   "kernel/ums9632/overlay/drivers/unisoc_platform/aic8800/Kconfig": {
     "source_sha256": "6c1c6e0f9b30d20141e7c8346715aa096bf966280ecec4f3075c28b36bc58121",
@@ -308,5 +308,10 @@
     "source_sha256": "030b20b74960e5b38fa8ddb9e0ba16c65e4b820b9a4278d8ad7b669404155e0b",
     "sha256": "b8c64b2a43eecef1612dcc626699a094bb90a1556427a32a98137d54629dff4e",
     "reason": "Preserve the peer VHT Operating Mode Notification byte in ME_STA_ADD_REQ. The old code passed opmode_notif_used (boolean), coercing any supplied mode to 0x01 (40 MHz, one RX spatial stream). Keep the existing presence flag and all actual peer limits. Shared by U30 Pro and F50 Pro; no device or firmware-version gates."
+  },
+  "kernel/ums9632/overlay/drivers/unisoc_platform/net/sipa_v3/sipa_dummy.c": {
+    "source_sha256": "83c80370117d33dd3340bfbdaa7f5aaf5aa1ce8442b09aebf772f69651b6e6f2",
+    "sha256": "3a0ce08a742f892da244c8c15d68483ee4df0c4920e669c99c22847cc6002f69",
+    "reason": "2026-11-25: adapt 33333s/U30pro-openwrt 2d4c266deebd5e34e3c7ee772ec8c40bc2ab1b29 USB bypass isolation. Only the enabled legacy SIPA USB path may change IPA mode for exact usb0; native configfs NCM must not acquire that power reference."
   }
 }

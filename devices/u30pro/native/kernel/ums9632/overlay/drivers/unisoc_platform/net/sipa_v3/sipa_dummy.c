@@ -935,14 +935,16 @@ static int sipa_dummy_netdev_event_handler(struct notifier_block *nb,
 	case NETDEV_UP:
 		ret = NOTIFY_OK;
 		sipa_dummy_netdev_set_state(ndev, true);
-		if (!strncmp(ndev->name, "usb0", 4)) {
+		if (IS_ENABLED(CONFIG_UNISOC_SIPA_USB) &&
+		    !strcmp(ndev->name, "usb0")) {
 			sipa_nic_set_bypass_mode(false);
 			debug_cnt++;
 		}
 
 		break;
 	case NETDEV_DOWN:
-		if (!strncmp(ndev->name, "usb0", 4)) {
+		if (IS_ENABLED(CONFIG_UNISOC_SIPA_USB) &&
+		    !strcmp(ndev->name, "usb0")) {
 			sipa_nic_set_bypass_mode(true);
 			debug_cnt--;
 		}

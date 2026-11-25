@@ -207,6 +207,7 @@ static netdev_tx_t sipa_eth_start_xmit(struct sk_buff *skb,
 	int netid;
 	unsigned int len;
 	unsigned long tx_threshold;
+	bool pushed = false;
 
 	if (sipa_eth->state != DEV_ON) {
 		pr_err("called when %s is down\n", dev->name);
@@ -219,7 +220,7 @@ static netdev_tx_t sipa_eth_start_xmit(struct sk_buff *skb,
 	if (unlikely(ret)) {
 		stats->tx_dropped++;
 		dev_kfree_skb_any(skb);
-		return ret;
+		return NETDEV_TX_OK;
 	}
 
 	netid = pdata->netid;
@@ -230,9 +231,14 @@ static netdev_tx_t sipa_eth_start_xmit(struct sk_buff *skb,
 	/* because the BPF program and dev->type is rawip,
 	 * the IPv6 forwarding packet is without ethernet header
 	 */
-	if (likely(skb_headroom(skb) >= ETH_HLEN)) {
-		if (skb->mac_header == skb->network_header)
-			skb_push(skb, ETH_HLEN);
+	if (skb->mac_header == skb->network_header) {
+		if (unlikely(skb_cow_head(skb, ETH_HLEN))) {
+			stats->tx_dropped++;
+			dev_kfree_skb_any(skb);
+			return NETDEV_TX_OK;
+		}
+		skb_push(skb, ETH_HLEN);
+		pushed = true;
 	}
 
 	if (ipa->ul_threshold.persec_bytes < tx_threshold)
@@ -240,13 +246,17 @@ static netdev_tx_t sipa_eth_start_xmit(struct sk_buff *skb,
 
 	ret = sipa_nic_tx(sipa_eth->nic_id, pdata->src_id, netid, skb);
 	if (unlikely(ret != 0)) {
-		pr_err("fail to send, ret %d\n", ret);
-		stats->tx_errors++;
-		if (likely(skb_headroom(skb) >= ETH_HLEN)) {
-			if (skb->mac_header == skb->network_header)
-				skb_pull_inline(skb, ETH_HLEN);
+		if (pushed)
+			__skb_pull(skb, ETH_HLEN);
+		if (ret == -EINPROGRESS || ret == -EAGAIN) {
+			pr_debug("send waiting for resources, ret %d\n", ret);
+			return NETDEV_TX_BUSY;
 		}
-		return NETDEV_TX_BUSY;
+		pr_err_ratelimited("fail to send, ret %d\n", ret);
+		stats->tx_errors++;
+		stats->tx_dropped++;
+		dev_kfree_skb_any(skb);
+		return NETDEV_TX_OK;
 	}
 
 	/* update netdev statistics */
