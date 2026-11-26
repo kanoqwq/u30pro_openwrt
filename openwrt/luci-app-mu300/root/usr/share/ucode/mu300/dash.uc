@@ -99,17 +99,61 @@ export function power() {
         volt:volts!=null && volts>0?+sprintf('%.2f',volts/1000000.0):null,
         ua:battery?num(rd(battery+'/current_now')):null,usb};
 };
+function valid_boot_control(block) {
+    if(block==null || length(block)!=32 || substr(block,4,4)!='BCAB' || ord(block,8)!=1 || (ord(block,9)&7)!=2 ||
+       (ord(block,13)&1) || (ord(block,15)&1))return false;
+    let crc=0xFFFFFFFF, expected=0;
+    for(let i=0;i<28;i++) {
+        crc ^= ord(block,i);
+        for(let bit=0;bit<8;bit++)crc=(crc >> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
+    }
+    for(let i=31;i>=28;i--)expected=expected*256+ord(block,i);
+    return (crc ^ 0xFFFFFFFF)==expected;
+};
+
+function u30pro_next_boot(runtime,slot) {
+    if(!(slot in ['a','b']))return null;
+    let android=fs.readfile(ROOT+runtime+'misc-bc-android.bin');
+    let linux=fs.readfile(ROOT+runtime+'misc-bc-linux-trial.bin');
+    let other=slot=='a'?'b':'a', meta=slot=='a'?12:14;
+    if(!valid_boot_control(android) || !valid_boot_control(linux) ||
+       substr(android,0,2)!='_'+other || substr(linux,0,2)!='_'+slot ||
+       ord(android,meta)!=0x1e || ord(android,26-meta)!=0x9f ||
+       ord(linux,meta)!=0x2f || ord(linux,26-meta)!=0x9e)return null;
+
+    // The initramfs keeps this /dev alias when switching to the OpenWrt root.
+    let misc=fs.open(ROOT+'/dev/block/by-name/misc','r');
+    if(!misc)return null;
+    let block=misc.seek(2048,0)?misc.read(32):null;
+    misc.close();
+    if(!valid_boot_control(block))return null;
+    if(block==android)return 'android';
+
+    // Linux re-arming changes only the Linux slot retry byte and the CRC.
+    let value=ord(block,meta);
+    if((value & 0x8f)!=0x0f || substr(block,0,meta)!=substr(linux,0,meta) ||
+       substr(block,meta+1,27-meta)!=substr(linux,meta+1,27-meta))return null;
+    // Unisoc LK falls back when an unsuccessful Linux slot has one try left.
+    return (value >> 4)>1?'linux':'android';
+};
+
 export function boot() {
     let state=rd('/etc/mu300/default-boot') || 'android';
     if(!(state in ['android','linux']))state='unknown';
-    let slot=rd('/run/mu300/linux-slot') || 'b', writable=false;
+    let runtime='/run/mu300/', native_slot=rd(runtime+'linux-slot');
+    let slot=native_slot || 'b', writable=false;
     if(executable('/opt/mu300/bin/mu300-next-boot') && slot in ['a','b']) {
         writable=fs.stat(ROOT+'/run/mu300/misc-bc-linux-trial.bin')?.size>0 &&
             fs.stat(ROOT+'/run/mu300/misc-bc-android.bin')?.size>0;
         if(slot=='b')writable = writable || fs.stat(ROOT+'/run/mu300/misc-bc-slot-b-trial.bin')?.size>0 &&
             fs.stat(ROOT+'/run/mu300/misc-bc-slot-a.bin')?.size>0;
     }
-    return {default:state,temporary:state=='unknown'?null:state!='linux',can_set_default:!!writable};
+    let status={default:state,temporary:state=='unknown'?null:state!='linux',can_set_default:!!writable};
+    if(rd('/etc/mu300/platform')=='u30pro' && rd('/etc/mu300/model')=='u30pro') {
+        status.system_switch='u30pro';
+        status.next=u30pro_next_boot(runtime,native_slot);
+    }
+    return status;
 };
 function clients(dev,bus,leases) {
     if(!device(dev) || !exists('/sys/class/net/'+dev))return {rows:[],count:0};

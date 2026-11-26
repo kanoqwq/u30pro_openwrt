@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import zlib
 from pathlib import Path
 from helpers import TOP, ucode
 from native_dashboard_fixture import Snapshot
@@ -229,6 +230,64 @@ class NativeSnapshot(unittest.TestCase):
         self.assertFalse(s.run('boot')['can_set_default'])
         for name in ['linux-trial','android']:s.write('run/mu300/misc-bc-'+name+'.bin','record')
         state=s.run('boot');self.assertTrue(state['can_set_default']);self.assertFalse(state['temporary'])
+
+    @staticmethod
+    def _boot_control(active_slot, slot_a, slot_b):
+        record = bytearray(32)
+        record[:10] = f'_{active_slot}'.encode() + b'\0\0BCAB\x01\x02'
+        record[12], record[14] = slot_a, slot_b
+        record[28:] = zlib.crc32(record[:28]).to_bytes(4, 'little')
+        return bytes(record)
+
+    def test_u30pro_boot_status_reads_next_target_for_either_slot(self):
+        if not ucode():
+            self.skipTest('ucode runtime required')
+        s = self.snap
+        s.write('etc/mu300/platform', 'u30pro\n')
+        s.write('etc/mu300/model', 'u30pro\n')
+        s.write('opt/mu300/bin/mu300-next-boot', '#!/bin/sh\n').chmod(0o755)
+        misc = s.write('dev/block/by-name/misc', '')
+        s.write('run/mu300/misc-dev', '/dev/block/by-name/misc\n')
+        default_file = s.write('etc/mu300/default-boot', '')
+
+        for linux_slot, android_slot, android_flags in [('a', 'b', (0x1e, 0x9f)), ('b', 'a', (0x9f, 0x1e))]:
+            def linux_control(remaining):
+                bootable = (remaining << 4) | 0x0f
+                flags = (bootable, 0x9e) if linux_slot == 'a' else (0x9e, bootable)
+                return self._boot_control(linux_slot, *flags)
+
+            s.write('run/mu300/linux-slot', linux_slot + '\n')
+            s.write('run/mu300/android-slot', android_slot + '\n')
+            android = self._boot_control(android_slot, *android_flags)
+            trial = linux_control(2)
+            s.write('run/mu300/misc-bc-android.bin', '').write_bytes(android)
+            s.write('run/mu300/misc-bc-linux-trial.bin', '').write_bytes(trial)
+            corrupt = trial[:-1] + bytes([trial[-1] ^ 1])
+            cases = [('stock', 'android', android, 'android'),
+                     ('one-shot trial', 'android', trial, 'linux'),
+                     ('saved Linux', 'linux', linux_control(7), 'linux'),
+                     ('Android fallback', 'linux', linux_control(1), 'android'),
+                     ('bad CRC', 'linux', corrupt, None),
+                     ('short read', 'linux', trial[:-1], None)]
+            for case, default, block, next_target in cases:
+                with self.subTest(slot=linux_slot, case=case):
+                    default_file.write_text(default + '\n')
+                    # A valid block at offset 0 must never be mistaken for the boot record.
+                    data = android + bytes(2048 - len(android)) + block
+                    misc.write_bytes(data)
+                    status = s.run('boot')
+                    self.assertEqual(status['system_switch'], 'u30pro')
+                    self.assertEqual((status['default'], status['next']), (default, next_target))
+                    self.assertEqual(status['temporary'], default == 'android')
+                    self.assertEqual(misc.read_bytes(), data)
+                    self.assertEqual(default_file.read_text(), default + '\n')
+
+    def test_f50pro_keeps_existing_boot_status_on_shared_platform(self):
+        s = self.snap
+        s.write('etc/mu300/platform', 'u30pro\n')
+        s.write('etc/mu300/model', 'f50pro\n')
+        s.write('etc/mu300/default-boot', 'linux\n')
+        self.assertEqual(s.run('boot'), {'default': 'linux', 'temporary': False, 'can_set_default': False})
 
     def test_no_shell_processes_or_optional_backend_switches(self):
         source=(TOP/'openwrt/luci-app-mu300/root/usr/share/ucode/mu300/dash.uc').read_text()

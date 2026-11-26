@@ -6,10 +6,12 @@ function fixture(on) {
     const buttons = {}, requests = [], dialogs = [];
     let decide, complete, finishJob, rejectJob;
     const jobs=[], toasts=[];
-    const root = {isConnected:true, querySelectorAll(){return [];}, querySelector(id) {
-        return buttons[id] || (buttons[id] = {disabled:false, addEventListener(){}});
-    }};
+    const element = id => buttons[id] || (buttons[id] = {disabled:false, style:{}, addEventListener(){}});
+    const root = {isConnected:true, querySelectorAll(){return [];}, querySelector:element};
     const M = {
+        v(id) { return element('#mud-'+id); },
+        set(id,text) { element('#mud-'+id).textContent=text; },
+        translate(text) { return text; },
         confirmBox(title,body,options) { dialogs.push({title,body,options}); return new Promise(resolve => { decide=resolve; }); },
         choiceBox(title,body,choices) { dialogs.push({title,body,choices}); return new Promise(resolve => { decide=resolve; }); },
         callAct(op,arg) { requests.push([op,arg]); return new Promise(resolve => { complete=resolve; }); },
@@ -29,7 +31,8 @@ function fixture(on) {
         ['data',true,'data','down'], ['data',false,'data','up'],
         ['radio',true,'radio','off'], ['radio',false,'radio','on'],
         ['wifi',true,'wifi','off'], ['wifi',false,'wifi','on'],
-        ['modem',true,'modem-reset',null], ['android',true,'os','android']
+        ['modem',true,'modem-reset',null], ['android',true,'os','android'],
+        ['pro-default',true,'os','linux-default']
     ];
     for (const [id,on,op,arg] of cases) {
         for (const decision of ['cancel','confirm','unload','detach']) {
@@ -101,5 +104,48 @@ function fixture(on) {
         if(state==='busy')f.view._wifiBusy=true;
         f.buttons['#mud-btn-wifi'].onclick(); assert.equal(f.dialogs.length,0,state);
     }
-    console.log('PASS: quick controls and power chooser; shutdown/restart, cancellation, view lifecycle, duplicates, RPC errors and busy cleanup');
+    const f=fixture(true), node=id=>f.root.querySelector('#mud-'+id);
+    const markup=f.view.html();
+    const androidIndex=markup.indexOf('id="mud-btn-android"');
+    const defaultIndex=markup.indexOf('id="mud-btn-pro-default"');
+    const statusIndex=markup.indexOf('id="mud-boot-switch"');
+    assert(0<=androidIndex && androidIndex<defaultIndex && defaultIndex<statusIndex);
+    assert(markup.indexOf('快捷控制')<androidIndex && statusIndex<markup.indexOf('<h3>邻区'));
+    const boot={system_switch:'u30pro',default:'android',next:'linux',temporary:true,can_set_default:true};
+    const paint=()=>{
+        f.view.lastInfo={boot,capabilities:{dualboot:1}};
+        f.view.paintBoot(f.view.lastInfo);
+    };
+    paint();
+    assert(!node('boot-switch').hidden && node('boot-notice').hidden);
+    assert.equal(node('btn-android').style.display,'');
+    assert.equal(node('boot-current-label').textContent,'当前系统 / 下次启动');
+    assert.equal(node('boot-default').textContent,'原厂 Android');
+    assert(!node('boot-default-row').hidden && node('boot-next-row').hidden);
+    assert.equal(node('boot-temporary').textContent,'是');
+    assert.equal(node('boot-control').textContent,'可写入');
+    assert(!node('btn-pro-default').hidden && !node('btn-pro-default').disabled);
+    node('btn-android').onclick();
+    assert.equal(f.requests.length,0);
+    assert.match(f.dialogs[0].body,/USB.*临时启动已安装的 OpenWrt/);
+    f.decide(true); await tick();
+    assert.deepEqual(f.requests,[['os','android']]);
+    f.complete(); await tick();
+    boot.next='android'; paint();
+    assert.equal(node('boot-default-label').textContent,'默认启动 / 下次启动');
+    assert(!node('boot-default-row').hidden && node('boot-next-row').hidden);
+    boot.default='linux'; boot.next='linux'; boot.temporary=false; paint();
+    assert(node('btn-pro-default').hidden && node('btn-pro-default').disabled);
+    assert.equal(node('boot-current-label').textContent,'当前系统 / 默认启动 / 下次启动');
+    assert(node('boot-default-row').hidden && node('boot-next-row').hidden);
+    boot.next='android'; paint();
+    assert(!node('btn-pro-default').hidden && !node('btn-pro-default').disabled);
+    boot.next=null; boot.can_set_default=false; paint();
+    assert.equal(node('boot-next').textContent,'未确认');
+    assert(!node('boot-next-row').hidden && node('btn-android').disabled);
+    assert(node('btn-pro-default').hidden && node('btn-pro-default').disabled);
+    f.view.paintBoot({boot:{temporary:true,can_set_default:true},capabilities:{dualboot:1}});
+    assert(node('boot-switch').hidden && !node('boot-notice').hidden);
+    assert(node('btn-pro-default').hidden && !node('btn-android').disabled);
+    console.log('PASS: quick controls, power chooser and U30 Pro boot dashboard');
 })().catch(e=>{console.error(e);process.exitCode=1;});

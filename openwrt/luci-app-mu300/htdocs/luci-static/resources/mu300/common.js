@@ -1132,6 +1132,19 @@ var DASH_I18N = {
  '设为默认启动': ['Make default boot', 'Varsayılan başlatma yap'],
  '以后开机默认进入 OpenWrt；启动失败仍保留 Android 回退。现在不会重启。': ['Future boots will use OpenWrt, with Android fallback if startup fails. No reboot now.', 'Sonraki açılışlar OpenWrt kullanır; başarısızlıkta Android geri dönüşü korunur. Şimdi yeniden başlatılmaz.'],
  '当前启动镜像不支持设置默认启动': ['This boot image cannot set a default boot', 'Bu açılış imajı varsayılan başlatmayı ayarlayamaz'],
+	'当前系统': ['Current system', 'Çalışan sistem'],
+	'默认启动': ['Default boot', 'Varsayılan açılış'],
+	'下次启动': ['Next boot', 'Sonraki açılış'],
+	'临时启动': ['Temporary boot', 'Geçici açılış'],
+	'启动控制': ['Boot control', 'Açılış kontrolü'],
+	'可写入': ['Writable', 'Yazılabilir'],
+	'未确认': ['Unconfirmed', 'Doğrulanmadı'],
+	'原厂 Android': ['Stock Android', 'Orijinal Android'],
+	'设 OpenWrt 为默认启动': ['Make OpenWrt the default', 'OpenWrt’yi varsayılan yap'],
+	'切换到原厂系统并重启': ['Switch to stock Android and reboot', 'Orijinal Android’e geç ve yeniden başlat'],
+	'正在切换到原厂系统': ['Switching to stock Android', 'Orijinal Android’e geçiliyor'],
+	'设备将重启进入原厂 Android，此管理页与网络连接会断开。': ['The device will reboot into stock Android. This page and network connections will disconnect.', 'Cihaz orijinal Android’e yeniden başlayacak. Bu sayfanın ve ağın bağlantısı kesilecek.'],
+	'要回到 OpenWrt，请通过 USB 连接电脑，在 OpenWrt 安装器中选择「临时启动已安装的 OpenWrt」。': ['To return to OpenWrt, connect the device to a computer over USB and choose “Temporarily boot installed OpenWrt” in the OpenWrt installer.', 'OpenWrt’ye dönmek için cihazı USB ile bilgisayara bağlayın ve OpenWrt yükleyicisinde “Kurulu OpenWrt’yi geçici olarak başlat” seçeneğini kullanın.'],
 '切换到 Android 系统': ['Switch to Android', 'Android sistemine geç'],
 	'下次启动将进入 Android 并立即重启，此管理页面与蜂窝共享都会断开': ['The next boot will enter Android and reboot now. This management page and cellular sharing will disconnect', 'Sonraki açılış Android’e geçecek ve cihaz şimdi yeniden başlayacak. Yönetim sayfası ve hücresel paylaşım kesilecek'],
 	'回到 OpenWrt：在 Android 上执行 mu300-next-boot linux 后重启': ['To return to OpenWrt, run mu300-next-boot linux in Android and reboot', 'OpenWrt’ye dönmek için Android’de mu300-next-boot linux çalıştırıp yeniden başlatın'],
@@ -1872,6 +1885,9 @@ html.mud-bootstrap-theme{--surface:var(--background-color-high);--surface-sunken
 .mud-btn.warn{border-color:color-mix(in oklab,var(--danger,#E25555) 55%,transparent);color:var(--danger,#E25555)}
 .mud-btn[disabled]{opacity:.4;pointer-events:none}
 .mud-ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:7px}
+.mud-boot-default{grid-column:1}
+.mud-boot-rows{margin-top:7px}
+.mud-boot-default[hidden],.mud-boot-rows[hidden],.mud-boot-rows .mud-r[hidden]{display:none}
 .mud-note{font-size:.72rem;color:var(--text-subtle,var(--text-light,#999));margin-top:7px}
 .mud-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:.8rem}
 .mud-table th{font-weight:500;color:var(--text-muted,var(--text-light,#777));text-align:right;padding:1px 4px;border-bottom:1px solid var(--hairline,var(--border,#ddd));font-size:.72rem;position:sticky;top:0;background:var(--surface,var(--background-alt,var(--background,#fff)))}
