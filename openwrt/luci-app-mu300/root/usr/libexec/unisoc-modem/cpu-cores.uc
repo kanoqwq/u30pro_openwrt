@@ -5,6 +5,13 @@ const CONFIG = getenv('UNISOC_CORES_CONFIG') || '/etc/unisoc-cpu-cores.json';
 const DEFAULTS = getenv('UNISOC_CORES_DEFAULTS') || '/run/unisoc-cpu-cores-defaults.json';
 const ERROR = getenv('UNISOC_CORES_ERROR') || '/run/unisoc-cpu-cores-error';
 function text(path) { return trim(fs.readfile(path) || ''); }
+// U30 Pro and F50 Pro share this platform; TEE requires CPU0 to stay online.
+const PRO = text(getenv('UNISOC_CORES_PLATFORM') || '/etc/mu300/platform') == 'u30pro';
+function keep_tee_online(target) {
+    if (PRO && type(target) == 'array') for (let c in target)
+        if (type(c) == 'object' && c.id === 0 && c.online === false) c.online = true;
+    return target;
+}
 function cores() {
     let out = [], present = text(ROOT + '/present');
     for (let name in fs.lsdir(ROOT) || []) {
@@ -16,8 +23,9 @@ function cores() {
         }))) continue;
         let value = text(path), valid = value == '0' || value == '1';
         // A missing online file denotes a kernel-managed, non-hotpluggable CPU.
-        push(out, {id, online: valid ? value == '1' : true,
-            writable: valid && !!(fs.stat(path)?.mode & 128)});
+        let required_online = PRO && id == 0;
+        push(out, {id, online: valid ? value == '1' : true, required_online,
+            writable: !required_online && valid && !!(fs.stat(path)?.mode & 128)});
     }
     return sort(out, (a, b) => a.id - b.id);
 }
@@ -41,7 +49,8 @@ function validate(target, current) {
         let found = filter(current, p => p.id == c.id)[0];
         if (!found || seen[''+c.id]) die('cpu_cores_topology');
         seen[''+c.id] = true;
-        if (!found.writable && c.online != found.online)
+        if (found.required_online && !c.online) die('cpu_cores_tee');
+        if (!found.writable && c.online != found.online && !found.required_online)
             die('cpu_cores_fixed');
     }
     if (!length(filter(target, c => c.online))) die('cpu_cores_fixed');
@@ -59,15 +68,15 @@ function apply(input, replay) {
         length(filter(keys(input), k => k != 'cores' && k != 'persist' && k != 'reset')) ||
         (input.reset != null && type(input.reset) != 'bool')) die('cpu_cores_invalid');
     let base = fs.stat(DEFAULTS) ? json(fs.readfile(DEFAULTS)) : null;
-    let target = input.reset === true ? base?.cores || settings(current) : input.cores;
+    let target = input.reset === true ? keep_tee_online(base?.cores || settings(current)) : input.cores;
     target = validate(target, current);
-    if (!base && !store(DEFAULTS, {version:1, cores:settings(current)})) die('cpu_cores_save');
+    if (!base && !store(DEFAULTS, {version:1, cores:keep_tee_online(settings(current))})) die('cpu_cores_save');
     let changed = [], error = null;
     // Bring requested cores online before offlining any others.
     for (let online in [true, false]) for (let c in target) {
         let old = filter(current, p => p.id == c.id)[0];
         if (error || c.online != online || c.online == old.online) continue;
-        push(changed, {id:old.id, online:old.online});
+        push(changed, {id:old.id, online:old.required_online || old.online});
         if (!write(c)) { error = 'cpu_cores_write'; break; }
     }
     // Also detect a concurrent platform hotplug policy changing the result.
@@ -107,12 +116,16 @@ try {
         else {
             let profile = json(fs.readfile(CONFIG));
             if (type(profile?.version) != 'int' || profile.version != 1 || length(keys(profile)) != 2) die('cpu_cores_invalid');
-            result = apply({cores:profile.cores, persist:true}, true);
+            let saved = sprintf('%J', profile.cores);
+            result = apply({cores:keep_tee_online(profile.cores), persist:true}, true);
+            // Repair only the withdrawn CPU0-off choice, retaining every peer core.
+            if (result.ok && saved != sprintf('%J', profile.cores) && !store(CONFIG, profile))
+                result = {ok:0, error:'cpu_cores_save', cores:cores()};
         }
     } else die('cpu_cores_invalid');
 } catch (e) {
     let message = trim(e.message || ''+e);
-    result = {ok:0, error: match(message, /^cpu_cores_(invalid|topology|fixed|save)$/) ? message : 'cpu_cores_invalid'};
+    result = {ok:0, error: match(message, /^cpu_cores_(invalid|topology|fixed|save|tee)$/) ? message : 'cpu_cores_invalid'};
 }
 if (action == 'boot' && !result.ok) fs.writefile(ERROR, result.error + '\n');
 printf('%J\n', result);

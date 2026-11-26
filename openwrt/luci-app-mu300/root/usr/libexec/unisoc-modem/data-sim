@@ -28,6 +28,10 @@ validate_apply() {
             value=${2#f50pro-pair-}
             /opt/mu300/bin/f50pro-card-pair validate "${value%-*}" "${value#*-}" || return 1
             return 0;;
+        u30pro-pair-[0-3]-[0-3])
+            value=${2#u30pro-pair-}
+            /opt/mu300/bin/u30pro-card-pair validate "${value%-*}" "${value#*-}" || return 1
+            return 0;;
         radio-[01]-[01])
             [ -x /opt/mu300/bin/mu300-sim-radio ] || { echo dual_sim_unavailable >&2; return 1; }
             case "$2" in radio-1-*)
@@ -59,6 +63,7 @@ apply)
         u30pro-card-[0-3]) exec /opt/mu300/bin/mu300-u30pro-sim apply "${3#u30pro-card-}";;
         f50pro-card-[0-4]) exec /opt/mu300/bin/mu300-u30pro-sim apply "${3#f50pro-card-}";;
         f50pro-pair-[0-4]-[0-4]) value=${3#f50pro-pair-}; exec /opt/mu300/bin/f50pro-card-pair apply "${value%-*}" "${value#*-}";;
+        u30pro-pair-[0-3]-[0-3]) value=${3#u30pro-pair-}; exec /opt/mu300/bin/u30pro-card-pair apply "${value%-*}" "${value#*-}";;
         *) exec "$adapter" apply "$3";;
     esac;;
 *) exit 2 ;;

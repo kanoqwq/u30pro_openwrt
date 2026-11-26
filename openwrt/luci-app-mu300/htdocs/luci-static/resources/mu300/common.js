@@ -35,12 +35,13 @@ function selectViewedSlot(slot, followData) {
         return true;
     } catch(e) { return false; }
 }
-function scopedRpc(options) {
+function scopedRpc(options, bindView) {
     var count = (options.params || []).length;
     options.params = (options.params || []).concat(['slot']);
     var call = rpc.declare(options);
     return function() {
         var args = Array.prototype.slice.call(arguments, 0, count);
+        var viewed=bindView && dataSlot!=null?selectedSlot():null;
         while (args.length < count) args.push('');
         function invoke() {args.push(selectedSlot());return call.apply(null,args);}
         if(viewChoice()!=='auto')return invoke();
@@ -48,6 +49,9 @@ function scopedRpc(options) {
         // Concurrent page requests share this read-only, AT-free query.
         return callSimGet().then(function(){
             if(dataSlot==null)throw new Error(translate('当前上网卡状态暂不可用'));
+            // A write belongs to the card the user was viewing, even if a
+            // hardware key switched data while its confirmation was open.
+            if(viewed!=null && selectedSlot()!==viewed)throw new Error(translate('查看卡槽已改变，请重新确认操作'));
             return invoke();
         });
     };
@@ -142,13 +146,15 @@ var callCells = scopedRpc({ object: 'mu300status', method: 'cells', nobatch: tru
 var callStatus = scopedRpc({ object: 'mu300status', method: 'status', nobatch: true, expect: { '': {} } });
 var callSignal = scopedRpc({ object: 'mu300.modem', method: 'signal', nobatch: true, expect: { '': {} } });
 var callSysinfo = rpc.declare({ object: 'mu300status', method: 'sysinfo', nobatch: true, expect: { '': {} } });
-var callAct    = scopedRpc({ object: 'mu300dash', method: 'act', params: [ 'op', 'arg' ], expect: { '': {} } });
-var callAt     = scopedRpc({ object: 'mu300dash', method: 'at', nobatch: true, params: [ 'cmd' ], expect: { '': {} } });
+var callAct    = scopedRpc({ object: 'mu300dash', method: 'act', params: [ 'op', 'arg' ], expect: { '': {} } }, true);
+// Boot controls are machine-wide and must also work without a ready data SIM.
+var callBootAct = rpc.declare({ object: 'mu300dash', method: 'act', params: [ 'op', 'arg' ], expect: { '': {} } });
+var callAt     = scopedRpc({ object: 'mu300dash', method: 'at', nobatch: true, params: [ 'cmd' ], expect: { '': {} } }, true);
 var callAtHist = scopedRpc({ object: 'mu300dash', method: 'at_history', expect: { '': {} } });
 var callLockGet = scopedRpc({ object: 'mu300dash', method: 'lock_get', nobatch: true, expect: { '': {} } });
 var callLockFresh = scopedRpc({ object: 'mu300dash', method: 'lock_get', nobatch: true, params: [ 'fresh' ], expect: { '': {} } });
-var callLockSet = scopedRpc({ object: 'mu300dash', method: 'lock_set', nobatch: true, params: [ 'kind', 'val' ], expect: { '': {} } });
-var callLockStatus = scopedRpc({ object: 'mu300dash', method: 'lock_status', nobatch: true, params: [ 'id' ], expect: { '': {} } });
+var callLockSet = scopedRpc({ object: 'mu300dash', method: 'lock_set', nobatch: true, params: [ 'kind', 'val' ], expect: { '': {} } }, true);
+var callLockStatus = scopedRpc({ object: 'mu300dash', method: 'lock_status', nobatch: true, params: [ 'id' ], expect: { '': {} } }, true);
 function waitLockJob(started, active) {
 	return new Promise(function(resolve, reject) {
 		if (!started || !started.ok || !started.id) { reject(new Error(started && started.error || '网络设置提交失败')); return; }
@@ -176,11 +182,11 @@ function waitLockJob(started, active) {
 var callSmsHead = scopedRpc({ object: 'mu300status', method: 'sms_head', nobatch: true, expect: { '': {} } });
 var callSmsList = scopedRpc({ object: 'mu300dash', method: 'sms_list', params: [ 'page' ], expect: { '': {} } });
 var callSmsShow = scopedRpc({ object: 'mu300dash', method: 'sms_show', params: [ 'id' ], expect: { '': {} } });
-var callSmsSend = scopedRpc({ object: 'mu300dash', method: 'sms_send', params: [ 'num', 'text' ], expect: { '': {} } });
+var callSmsSend = scopedRpc({ object: 'mu300dash', method: 'sms_send', params: [ 'num', 'text' ], expect: { '': {} } }, true);
 var smsJobRpc = rpc.declare({ object: 'mu300dash', method: 'sms_job', params: [ 'slot' ], nobatch: true, expect: { '': {} } });
 function callSmsJob(slot) { return smsJobRpc(slot == null ? selectedSlot() : String(slot)); }
-var callSmsDel  = scopedRpc({ object: 'mu300dash', method: 'sms_delete', params: [ 'id', 'sim' ], expect: { '': {} } });
-var callSmsSync = scopedRpc({ object: 'mu300dash', method: 'sms_sync', expect: { '': {} } });
+var callSmsDel  = scopedRpc({ object: 'mu300dash', method: 'sms_delete', params: [ 'id', 'sim' ], expect: { '': {} } }, true);
+var callSmsSync = scopedRpc({ object: 'mu300dash', method: 'sms_sync', expect: { '': {} } }, true);
 var callForwardGet = rpc.declare({ object: 'mu300dash', method: 'forward_get', params: [ 'profile' ], expect: { '': {} } });
 var callForwardStatus = rpc.declare({ object: 'mu300dash', method: 'forward_status', params: [ 'profile' ], expect: { '': {} } });
 var callForwardSet = rpc.declare({ object: 'mu300dash', method: 'forward_set', params: [ 'payload' ], expect: { '': {} } });
@@ -203,6 +209,15 @@ var callUsbNetAdd = rpc.declare({ object: 'mu300dash', method: 'usb_net_add', pa
  * standalone package works in any OpenWrt buildroot without po2lmo or extra
  * language packages. Chinese remains the source/fallback language. */
 var DASH_I18N = {
+    "启动方式": ["Boot mode", "Başlatma modu"],
+    "永久启动 OpenWrt": ["Boot OpenWrt by default", "OpenWrt varsayılan başlatma"],
+    "当前为永久启动 OpenWrt": ["OpenWrt is the default boot system", "OpenWrt varsayılan başlatma sistemi"],
+    "当前启动方式未知": ["Boot mode unavailable", "Başlatma modu bilinmiyor"],
+    "切换为临时启动": ["Use temporary boot", "Geçici başlatmaya geç"],
+    "将默认启动系统设为 Android，当前 OpenWrt 会话继续运行；下次重启进入 Android。": ["Make Android the default boot system. The current OpenWrt session stays running; the next restart enters Android.", "Android varsayılan başlatma sistemi olur. Mevcut OpenWrt oturumu devam eder; sonraki yeniden başlatma Android’e girer."],
+    "启动方式已保存": ["Boot mode saved", "Başlatma modu kaydedildi"],
+    "启动方式设置失败，请重试": ["Could not save boot mode; please retry", "Başlatma modu kaydedilemedi; tekrar deneyin"],
+
     '2内置卡 + 2插拔卡': ['2 built-in SIMs + 2 removable SIMs', '2 dahili SIM + 2 çıkarılabilir SIM'],
     '2插拔卡': ['2 removable SIMs', '2 çıkarılabilir SIM'],
     "卡源组合": ["SIM source combination", "SIM kaynak birleşimi"],
@@ -292,6 +307,7 @@ var DASH_I18N = {
     "正在读取核心状态…": ["Reading core states…", "Çekirdek durumları okunuyor…"],
     "核心设置已应用；调频与温控页面将在下次打开时刷新。": ["Core settings applied. Reopen CPU settings to refresh frequency and thermal controls.", "Çekirdek ayarları uygulandı. Frekans ve sıcaklık kontrollerini yenilemek için CPU ayarlarını yeniden açın."],
     "此核心由内核管理，不能关闭": ["This core is managed by the kernel and cannot be disabled", "Bu çekirdek sistem tarafından yönetiliyor ve kapatılamaz"],
+    "CPU0 供 TEE 使用，必须保持在线": ["CPU0 is reserved for TEE and must remain online", "CPU0 TEE için ayrılmıştır ve çevrimiçi kalmalıdır"],
     "CPU 核心配置无效": ["Invalid CPU core settings", "Geçersiz CPU çekirdek ayarları"],
     "CPU 核心列表已变化，请重新载入": ["The CPU core list changed; reload the page", "CPU çekirdek listesi değişti; sayfayı yenileyin"],
     "无法保存核心设置": ["Unable to save core settings", "Çekirdek ayarları kaydedilemedi"],
@@ -1128,6 +1144,8 @@ var DASH_I18N = {
  '启动控制回退失败，请检查启动设置': ['Boot control rollback failed; check boot settings', 'Açılış kontrolü geri alma başarısız; açılış ayarlarını kontrol edin'],
  '默认启动设置失败，请重试': ['Could not save the default boot; try again', 'Varsayılan açılış kaydedilemedi; tekrar deneyin'],
 '当前为临时启动 OpenWrt': ['OpenWrt was booted temporarily', 'OpenWrt geçici olarak başlatıldı'],
+'高铁模式': ['High-speed rail mode', 'Hızlı tren modu'],
+'高铁模式运行中...': ['High-speed rail mode active...', 'Hızlı tren modu etkin...'],
  '是否将 OpenWrt 设为默认启动？不会立即重启或断网。': ['Make OpenWrt the default boot? This will not reboot or interrupt networking.', 'OpenWrt varsayılan açılsın mı? Yeniden başlatma veya ağ kesintisi olmaz.'],
  '设为默认启动': ['Make default boot', 'Varsayılan başlatma yap'],
  '以后开机默认进入 OpenWrt；启动失败仍保留 Android 回退。现在不会重启。': ['Future boots will use OpenWrt, with Android fallback if startup fails. No reboot now.', 'Sonraki açılışlar OpenWrt kullanır; başarısızlıkta Android geri dönüşü korunur. Şimdi yeniden başlatılmaz.'],
@@ -1756,6 +1774,25 @@ function fmtUptime(s) {
 
 /* ------------------------------------------------------------------ 样式 */
 var CSS = `
+.mud .mud-home-heading{display:flex;align-items:center;gap:8px;min-width:0}
+.mud .mud-home-heading::before{flex-shrink:0;margin-right:0}
+.mud-home-heading .mud-heading-label{flex:1 1 auto;min-width:0}
+.mud-home-heading .mud-home-progress{flex:0 0 11em;max-width:55%;min-width:0;height:1.4em;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.7rem;font-weight:400;letter-spacing:normal;text-align:right;color:var(--text-muted,var(--text-light,#787d85))}
+.mud-home-progress:empty{visibility:hidden}
+.mud-boot-page{display:grid;gap:16px}
+.mud-boot-mode-row{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:18px;padding:10px 0 4px}
+.mud-boot-mode-row>b{font-size:.95rem}
+.mud-boot-toggle{display:inline-flex;align-items:center;gap:12px;cursor:pointer;position:relative;font-size:.85rem}
+.mud-boot-toggle input{position:absolute!important;opacity:0!important;width:1px!important;height:1px!important}
+.mud-boot-toggle i{display:inline-block;flex:0 0 38px;width:38px;height:22px;border-radius:12px;background:var(--hairline,var(--border,#ddd));position:relative;transition:background .15s}
+.mud-boot-toggle i::after{content:'';position:absolute;width:16px;height:16px;top:3px;left:3px;border-radius:50%;background:#fff;box-shadow:0 1px 3px #0003;transition:transform .15s}
+.mud-boot-toggle input:checked+i{background:var(--brand,var(--primary,#009d95))}
+.mud-boot-toggle input:checked+i::after{transform:translateX(16px)}
+.mud-boot-toggle input:focus-visible+i{outline:2px solid var(--brand,var(--primary,#009d95));outline-offset:3px}
+.mud-boot-toggle:has(input:disabled){opacity:.55;cursor:default}
+.mud-boot-actions .mud-ctl{margin:0;gap:12px;flex-wrap:wrap}
+.mud-boot-actions .mud-btn{min-height:38px}
+
 /* Bootstrap exposes a different token family. Only activate this bridge when
  * Aurora's --surface token is absent, so existing Aurora styling wins intact.
  * Bootstrap's data-darkmode switch updates these aliases without a reload. */
@@ -2289,7 +2326,7 @@ function choiceBox(title, message, choices, opts) {
 
 /* LuCI 的 require 把模块当类工厂：必须返回 baseclass 派生的类，加载后拿到的是它的实例 */
 return baseclass.extend({
-	callRates: callRates, callCells: callCells, mergeCell: mergeCell, callStatus: callStatus, callSignal: callSignal, callSysinfo: callSysinfo, callAct: callAct, callAt: callAt, callAtHist: callAtHist,
+	callRates: callRates, callCells: callCells, mergeCell: mergeCell, callStatus: callStatus, callSignal: callSignal, callSysinfo: callSysinfo, callBootAct: callBootAct, callAct: callAct, callAt: callAt, callAtHist: callAtHist,
 	callLockGet: callLockGet, callLockFresh: callLockFresh, callLockSet: callLockSet,
 	callLockStatus: callLockStatus, waitLockJob: waitLockJob,
 	callSmsList: callSmsList, callSmsShow: callSmsShow, callSmsSend: callSmsSend, callSmsJob: callSmsJob,

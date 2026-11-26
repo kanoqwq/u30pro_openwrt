@@ -22,9 +22,11 @@ case $model in
         . "${MU300_U30PRO_CARD_LIB:-/opt/mu300/lib/u30pro-card.sh}"
         # Unknown SKUs retain stock wiring, as in the runtime controller.
         board=$(u30pro_board_id) || exit 0
-        single=$(cfg u30pro_card)
-        [ -n "$single" ] || single=$(u30pro_default_card "$board")
-        cards=$(u30pro_boot_cards "$board" "$single") || fail invalid_saved_card
+        first=$(cfg u30pro_route0); second=$(cfg u30pro_route1); single=$(cfg u30pro_card)
+        if [ -z "$first$second" ]; then
+            [ -n "$single" ] || single=$(u30pro_default_card "$board")
+            cards=$(u30pro_boot_cards "$board" "$single") || fail invalid_saved_card
+        fi
         layout=mu5358
         card_map() { u30pro_card_map "$@"; };;
     *) exit 0;;
@@ -45,12 +47,12 @@ plan() {
     esac
 }
 # Validate the complete saved pair before touching either GPIO.
-if [ "$model" = u30pro ]; then
-    expected=
-    for card in $cards; do plan "$card"; done
-elif [ -n "$first$second" ]; then
+if [ -n "$first$second" ]; then
     expected=0; plan "$first"
     expected=1; plan "$second"
+elif [ "$model" = u30pro ]; then
+    expected=
+    for card in $cards; do plan "$card"; done
 else
     expected=; plan "$single"
 fi

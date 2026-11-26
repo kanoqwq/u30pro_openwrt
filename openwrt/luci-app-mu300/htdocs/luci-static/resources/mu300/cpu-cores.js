@@ -9,6 +9,7 @@ const apply = rpc.declare({object:'unisoc-cpu-cores', method:'apply', params:['c
 const errors = {
     cpu_cores_invalid:'CPU 核心配置无效', cpu_cores_topology:'CPU 核心列表已变化，请重新载入',
     cpu_cores_fixed:'此核心由内核管理，不能关闭', cpu_cores_save:'无法保存核心设置',
+    cpu_cores_tee:'CPU0 供 TEE 使用，必须保持在线',
     cpu_cores_write:'内核未接受核心开关设置', cpu_cores_busy:'核心设置正忙，请稍后重试'
 };
 function node(tag, cls, text) {
@@ -18,6 +19,7 @@ function node(tag, cls, text) {
     return el;
 }
 function message(error) { return M.translate(errors[error] || '无法读取 CPU 核心状态'); }
+function editable(core) { return !!core.writable && !core.required_online; }
 
 return baseclass.extend({
     render: function() {
@@ -52,15 +54,15 @@ return baseclass.extend({
             current=state;grid.replaceChildren();inputs=[];
             for(const c of state.cores || []) {
                 const row=node('label','mud-core'), text=node('span','mud-core-copy');
-                const title=node('strong',null,'CPU '+c.id), live=node('small',null,c.online?'在线':'离线');live.dataset.coreLive=String(c.id);
+                const title=node('strong',null,'CPU '+c.id+(c.required_online?' · TEE':'')), live=node('small',null,c.online?'在线':'离线');live.dataset.coreLive=String(c.id);
                 text.append(title,live);
-                const input=node('input');input.type='checkbox';input.checked=c.online;input.disabled=!c.writable;input.dataset.core=String(c.id);
-                input.setAttribute('aria-label','CPU '+c.id);input.title=c.writable?'':M.translate('此核心由内核管理，不能关闭');
+                const input=node('input');input.type='checkbox';input.checked=c.online;input.disabled=!editable(c);input.dataset.core=String(c.id);
+                input.setAttribute('aria-label','CPU '+c.id);input.title=c.required_online?M.translate('CPU0 供 TEE 使用，必须保持在线'):c.writable?'':M.translate('此核心由内核管理，不能关闭');
                 input.onchange=()=>{dirty=true;};
                 row.append(text,input);grid.append(row);inputs.push({c,input});
             }
             persist.checked=!!state.persistent;dirty=false;
-            save.disabled=reset.disabled=!(state.cores || []).some(c=>c.writable);
+            save.disabled=reset.disabled=!(state.cores || []).some(editable);
             report(state.boot_error?message(state.boot_error):'',!!state.boot_error);
         }
         persist.onchange=()=>{dirty=true;};
@@ -68,7 +70,7 @@ return baseclass.extend({
             if(busy || !current) return;
             busy=true;card.querySelectorAll('button,input').forEach(e=>e.disabled=true);
             try {
-                const result=await apply(inputs.map(({c,input})=>({id:c.id,online:input.checked})),isReset?false:persist.checked,isReset);
+                const result=await apply(inputs.map(({c,input})=>({id:c.id,online:c.required_online || input.checked})),isReset?false:persist.checked,isReset);
                 if(!result.ok) {
                     let text=message(result.error);
                     if(result.rollback===false) text+=' · '+M.translate('回滚未完成，请检查实际核心状态');
@@ -79,8 +81,8 @@ return baseclass.extend({
             } catch(e) { report(e.message,true); }
             finally {
                 busy=false;persist.disabled=false;
-                inputs.forEach(({c,input})=>input.disabled=!c.writable);
-                save.disabled=reset.disabled=!inputs.some(({c})=>c.writable);
+                inputs.forEach(({c,input})=>input.disabled=!editable(c));
+                save.disabled=reset.disabled=!inputs.some(({c})=>editable(c));
             }
         }
         save.onclick=()=>submit(false);reset.onclick=()=>submit(true);

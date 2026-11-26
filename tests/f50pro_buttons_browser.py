@@ -57,6 +57,23 @@ with sync_playwright() as pw:
                 assert page.locator('#mud-button-2').count()==0
                 assert not page.locator('[id*=power-long]').count()
                 assert page.locator('#mud-button-4').is_visible()==(model in ('u30pro','u30air'))
+                assert page.locator('#mud-button-cycle').is_visible()==(model in ('f50pro','u30pro'))
+                if model in ('f50pro','u30pro'):
+                    assert page.locator('#mud-button-cycle').input_value()=='pair'
+                    note=page.locator('#mud-button-cycle').locator('..').locator('p')
+                    text=note.text_content()
+                    assert all(word in text for word in ({
+                        'zh':['列表序号','内置绿','外置白','失败红'],
+                        'en':['list position','green','white','red'],
+                        'tr':['liste sırası','yeşil','beyaz','kırmızı']} if model=='f50pro' else {
+                        'zh':['仅影响切卡快捷键','保存不切卡'],
+                        'en':['Only affects SIM shortcuts','Saving does not switch SIMs'],
+                        'tr':['Yalnızca SIM kısayollarını','Kaydetmek SIM değiştirmez']})[lang])
+                    assert note.evaluate('n=>parseFloat(getComputedStyle(n).marginTop)')==0
+                    if lang=='zh' and width==1280:
+                        out=TOP/'work'/ (model+'-button-cycle');out.mkdir(parents=True,exist_ok=True)
+                        page.locator('.mud-buttons').screenshot(path=str(out/'settings.png'))
+                    page.locator('#mud-button-cycle').select_option('list')
                 page.locator('#mud-button-3').select_option('custom')
                 page.locator('#mud-button-3-command').fill('logger double')
                 page.locator('#mud-button-1').select_option('custom')
@@ -69,6 +86,7 @@ with sync_playwright() as pw:
                 page.wait_for_function('calls.length===1 && !document.querySelector(".mud-buttons button").disabled')
                 assert page.evaluate('calls[0].slice(0,4)')==['custom',"logger 'hello $world; test'",'custom','logger double']
                 assert command.input_value()=="logger 'hello $world; test'"
+                if model in ('f50pro','u30pro'):assert page.evaluate('state.cycle')=='list'
                 page.evaluate("appError='storage_failed'");save.click()
                 page.wait_for_function('calls.length===2 && !document.querySelector(".mud-buttons button").disabled')
                 assert ('空间' if lang=='zh' else 'space' if lang=='en' else 'alanı') in page.locator('[role=status]').inner_text()

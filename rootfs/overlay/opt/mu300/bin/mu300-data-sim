@@ -53,6 +53,12 @@ wait_down() {
     return 1
 }
 case ${1:-} in
+current)
+    # Explicit shortcut requests must use the modem's live data stack, not the
+    # saved preference or a startup snapshot. Keep the existing scoped AT owner.
+    actual=$(data_card)
+    case "$actual" in 0|1) printf '%s\n' "$actual";; *) echo sim_read_failed >&2; exit 1;; esac
+    ;;
 get)
     status=$(net_status); actual=$(cat "$actual_file" 2>/dev/null)
     case "$actual" in 0|1) ;; *) actual=null ;; esac

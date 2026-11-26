@@ -7,6 +7,9 @@ base=$(mktemp -d)
 trap 'rm -rf "$base"' EXIT
 export UNISOC_CORES_SYS=$base/sys UNISOC_CORES_CONFIG=$base/profile.json
 export UNISOC_CORES_DEFAULTS=$base/defaults.json UNISOC_CORES_ERROR=$base/error
+export UNISOC_CORES_PLATFORM=$base/platform
+printf 'mu300\n' > "$UNISOC_CORES_PLATFORM"
+readonly=${UNISOC_CORES_READONLY:-/readonly}
 mkdir -p "$UNISOC_CORES_SYS/cpu0" "$UNISOC_CORES_SYS/cpu1" "$UNISOC_CORES_SYS/cpu2" "$UNISOC_CORES_SYS/cpu3"
 printf '1\n' > "$UNISOC_CORES_SYS/cpu1/online"
 printf '1\n' > "$UNISOC_CORES_SYS/cpu2/online"
@@ -63,7 +66,7 @@ test ! -e "$UNISOC_CORES_CONFIG"
 # A genuine read-only filesystem rejects the second core after the first
 # changed successfully. Both must return to the original online state.
 rm "$UNISOC_CORES_SYS/cpu2/online"
-ln -s /readonly/online "$UNISOC_CORES_SYS/cpu2/online"
+ln -s "$readonly/online" "$UNISOC_CORES_SYS/cpu2/online"
 if request "$off" true; then echo 'readonly hotplug write accepted'; exit 1; fi
 test "$(value '@.error')" = cpu_cores_write
 test "$(value '@.rollback')" = true
@@ -74,7 +77,7 @@ rm "$UNISOC_CORES_SYS/cpu2/online"
 printf '1\n' > "$UNISOC_CORES_SYS/cpu2/online"
 # Failed persistence also restores runtime state and keeps prior disk data.
 original=$UNISOC_CORES_CONFIG
-export UNISOC_CORES_CONFIG=/readonly/profile.json
+export UNISOC_CORES_CONFIG=$readonly/profile.json
 if request "$off" true; then echo 'readonly persistence accepted'; exit 1; fi
 test "$(value '@.error')" = cpu_cores_save
 test "$(value '@.rollback')" = true
@@ -124,4 +127,44 @@ printf '{"reset":true,"persist":false}' | call apply
 test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 1
 test "$(cat "$UNISOC_CORES_SYS/cpu1/online")" = 1
 test ! -e "$UNISOC_CORES_CONFIG"
-echo 'PASS core discovery, capability-based CPU0, last-online protection, validation, fixed cores, temporary/persistent settings, boot replay, reset, write/save rollback'
+# U30 Pro/F50 Pro share the platform marker. CPU0 remains reserved even when
+# the kernel exposes a writable online node. Other core choices are unchanged.
+printf 'u30pro\n' > "$UNISOC_CORES_PLATFORM"
+call get
+test "$(value '@.cores[0].writable')" = false
+test "$(value '@.cores[0].required_online')" = true
+if request "$alt" true; then echo 'accepted Pro CPU0 offline'; exit 1; fi
+test "$(value '@.error')" = cpu_cores_tee
+test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 1
+test ! -e "$UNISOC_CORES_CONFIG"
+request "$off" true
+test "$(cat "$UNISOC_CORES_SYS/cpu1/online")" = 0
+printf '{"version":1,"cores":%s}' "$alt" > "$UNISOC_CORES_CONFIG"
+printf '0\n' > "$UNISOC_CORES_SYS/cpu0/online"
+call boot
+test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 1
+test "$(cat "$UNISOC_CORES_SYS/cpu1/online")" = 1
+test "$(cat "$UNISOC_CORES_SYS/cpu2/online")" = 0
+test "$(cat "$UNISOC_CORES_SYS/cpu3/online")" = 0
+test "$(jsonfilter -i "$UNISOC_CORES_CONFIG" -e '@.cores[0].online')" = true
+cp "$UNISOC_CORES_CONFIG" "$base/repaired"
+call boot
+cmp "$base/repaired" "$UNISOC_CORES_CONFIG"
+# A default snapshot taken by an older version must not undo the reservation.
+printf '{"version":1,"cores":%s}' "$alt" > "$UNISOC_CORES_DEFAULTS"
+printf '{"reset":true,"persist":false}' | call apply
+test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 1
+test "$(cat "$UNISOC_CORES_SYS/cpu2/online")" = 0
+test ! -e "$UNISOC_CORES_CONFIG"
+# Even failure of another core must not roll a recovered CPU0 back offline.
+printf '0\n' > "$UNISOC_CORES_SYS/cpu0/online"
+printf '1\n' > "$UNISOC_CORES_SYS/cpu2/online"
+printf '1\n' > "$UNISOC_CORES_SYS/cpu3/online"
+rm "$UNISOC_CORES_SYS/cpu2/online"
+ln -s "$readonly/online" "$UNISOC_CORES_SYS/cpu2/online"
+if request "$off" true; then echo 'accepted readonly peer hotplug'; exit 1; fi
+test "$(value '@.error')" = cpu_cores_write
+test "$(value '@.rollback')" = true
+test "$(cat "$UNISOC_CORES_SYS/cpu0/online")" = 1
+test "$(cat "$UNISOC_CORES_SYS/cpu1/online")" = 1
+echo 'PASS core capabilities, Pro TEE CPU0 reservation, forged requests, peer cores, boot-profile repair, reset and rollback'

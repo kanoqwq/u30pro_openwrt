@@ -1068,7 +1068,8 @@ case "${1:-status}" in
                     [ "$DEVICE" = u30pro ] && [ "$(cat /etc/mu300/model 2>/dev/null)" = f50pro ] || exit 2
                     radio_locked "$@" ;;
                 '/opt/mu300/bin/mu300-u30pro-sim --pair-route '[0-4])
-                    [ "$DEVICE" = u30pro ] && [ "$(cat /etc/mu300/model 2>/dev/null)" = f50pro ] || exit 2
+                    [ "$DEVICE" = u30pro ] || exit 2
+                    case $(cat /etc/mu300/model 2>/dev/null) in u30pro|f50pro) ;; *) exit 2;; esac
                     radio_locked "$@" ;;
                 *) exit 2;;
             esac

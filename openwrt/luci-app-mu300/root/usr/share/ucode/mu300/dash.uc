@@ -70,6 +70,12 @@ function board() {
     if(exists('/proc/device-tree'))return 'f50';
     return rd('/run/mu300/device');
 };
+function high_rail(bus) {
+    let supported=board()=='u30pro', state={};
+    if(supported)try { state=call(bus,'mu300.modem','high_rail'); } catch(e) {}
+    let known=supported && state.supported===true && state.known===true;
+    return {supported,known,active:known && state.active===true};
+};
 export function power() {
     const base='/sys/class/power_supply';
     let model=board(), battery=null, usb=null;
@@ -256,7 +262,7 @@ function snapshot(slot,bus,settings) {
             country:text(wifi.country),enc:wifi.enc || 'none',hidden:wifi.hidden ?? null,hostapd:hapd.status=='ENABLED'?1:0,
             clients:stations.rows,clients_n:stations.count},
         lan:{leases:length(leases),ip:address(rows4,lan,false),list:leases},
-        modem:{data_sim:active_slot in ['0','1']?int(active_slot):null,alive:atd || (urc && now-urc.mtime<240)?1:0,atd:atd?1:0,data_paused:exists('/run/mu300-mobile-data-down')?1:0,
+        modem:{high_rail:high_rail(bus),data_sim:active_slot in ['0','1']?int(active_slot):null,alive:atd || (urc && now-urc.mtime<240)?1:0,atd:atd?1:0,data_paused:exists('/run/mu300-mobile-data-down')?1:0,
             imeis:equipment(atd,cfg('sim_slots','1')),sims:map(['0','1'],n=>({slot:int(n),state:atd?sim_state(n):'unknown'}))},
         boot:boot(),capabilities:{dualboot:executable('/opt/mu300/bin/mu300-next-boot')?1:0},
         conns:conntrack(),traffic:obj('/run/unisoc-modem-traffic/'+(traffic_slot=='1'?'sim1/':'')+'view.json')};

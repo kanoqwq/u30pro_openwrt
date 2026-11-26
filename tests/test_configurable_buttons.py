@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from helpers import ucode, ucode_paths
 
 TOP = Path(__file__).resolve().parents[1]
 BACKEND = TOP/'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/buttons.py'
@@ -79,6 +80,7 @@ else:sys.exit(2)
             self.assertTrue(r['supported'])
             self.assertEqual(r['power'], product in ('u30air','u30pro'))
             self.assertEqual(r['short'], {'u30pro':'page-next','f50pro':'none','v50':'none'}.get(product,'default'))
+            self.assertEqual(r.get('cycle'), 'pair' if product in ('f50pro','u30pro') else None)
         self.set_model('f50')
         self.assertFalse(self.get()['supported'])
 
@@ -183,20 +185,15 @@ else:sys.exit(2)
 
     def test_builtin_actions_use_existing_transaction_owners(self):
         module=self.backend()
-        (self.root/'mu300-data-sim-actual').write_text('0')
-        with patch.object(module,'call') as call:
-            call.return_value=json.dumps(dict(ok=1,supported=True,ready=True,model='u30pro',
-                                             cards=[0,1,3],active_card=0,logical_cards=[0,3]))
-            module.execute('u30pro','data-switch','')
-            self.assertEqual(call.call_args.args[0][-3:],['apply','data','u30pro-card-1'])
-            call.reset_mock()
-            call.return_value=json.dumps(dict(ok=1,supported=True,ready=True,model='v50',
-                                             cards=[0,1,2],active_card=1,logical_cards=[0,1]))
+        with patch.object(module,'call',side_effect=['1',json.dumps(dict(ok=1,supported=True,ready=True,model='v50',
+                cards=[0,1,2],active_card=0,logical_cards=[0,1])), '']) as call:
             module.execute('v50','data-switch','')
             self.assertEqual(call.call_args.args[0][-3:],['apply','data','v50-card-2'])
-            call.reset_mock();module.execute('u30air','wifi-band','')
+        with patch.object(module,'call',return_value='') as call:
+            module.execute('u30air','wifi-band','')
             self.assertEqual(call.call_args.args[0][-1],'toggle')
 
+    @unittest.skipUnless(ucode(),'requires target ucode for F50 Pro selection policy')
     def test_physical_button_cycles_every_form_option_through_existing_apply(self):
         # Real board/form option sets. Expected order is the SIM page's order,
         # independent of which two sources happen to be routed right now.
@@ -213,6 +210,14 @@ else:sys.exit(2)
                                saved_card=order[-1],logical_cards=[0,1])
                     applied=[]
                     def dispatch(argv, **kwargs):
+                        if argv[-1]=='current':
+                            card=state['active_card'];slot=0 if card in (0,3) else 1
+                            state['logical_cards']=[next((c for c in order if c in (0,3)),None),next((c for c in order if c not in (0,3)),None)]
+                            state['logical_cards'][slot]=card
+                            return str(slot)
+                        if argv[0]=='ucode':
+                            return subprocess.check_output(ucode()+ucode_paths()+[
+                                str(BACKEND.with_name('button-cycle.uc')),*argv[-2:]],input=kwargs['input'],text=True)
                         if argv[-1]=='status':
                             owner='mu300-v50-sim' if product=='v50' else 'mu300-physical-sim'
                             self.assertEqual(Path(argv[0]).name,owner)
@@ -224,34 +229,112 @@ else:sys.exit(2)
                         state['active_card']=int(target.rsplit('-',1)[1])
                         applied.append(state['active_card'])
                         return ''
-                    with patch.object(module,'call',side_effect=dispatch):
-                        for _ in range(len(order)*2):module.execute(product,'data-switch','')
+                    with patch.object(module,'read_setting',return_value='list'),patch.object(module,'call',side_effect=dispatch):
+                        for _ in range(len(order)*2):
+                            if product=='f50pro':
+                                # The full ucode worker is covered by f50pro_feedback_runtime.py.
+                                target=module.next_data_target(product)
+                                if target is not None:dispatch([module.LIB/'data-sim','apply','data',target])
+                            else:module.execute(product,'data-switch','')
                     expected=(order[1:]+order[:1])*2 if len(order)>1 else []
                     self.assertEqual(applied,expected)
+
+    def test_f50pro_cycle_setting_persists_without_switching_and_rejects_invalid(self):
+        self.set_model('f50pro')
+        self.assertEqual(self.get()['cycle'],'pair')
+        for mode in ['list','pair']:
+            self.assertTrue(self.save(cycle=mode)['ok'])
+            self.assertEqual(self.get()['cycle'],mode)
+        for mode in ['',None,True,'unknown']:
+            self.assertFalse(self.save(cycle=mode)['ok'])
+            self.assertEqual(self.get()['cycle'],'pair')
+        self.env['BUTTON_TEST_COMMIT_FAIL']='1'
+        self.assertFalse(self.save(cycle='list')['ok'])
+        self.env.pop('BUTTON_TEST_COMMIT_FAIL')
+        self.set_model('u30pro')
+        self.assertTrue(self.save(cycle='',long='none')['ok'])
+        self.assertTrue(self.save(cycle='pair')['ok'])
+        self.assertTrue(self.save(cycle='list')['ok'])
+        self.assertEqual(self.get()['cycle'],'list')
+        self.assertEqual(json.loads(self.db.read_text())['u30pro_native_control.settings.home_button_cycle'],'list')
+        self.assertTrue(self.save(cycle='',long='none')['ok'])  # retained old browser
+        self.assertEqual(self.get()['cycle'],'list')
+        self.assertFalse(self.save(cycle='bad')['ok'])
+        self.env['BUTTON_TEST_COMMIT_FAIL']='1'
+        self.assertFalse(self.save(cycle='pair')['ok'])
+        self.env.pop('BUTTON_TEST_COMMIT_FAIL')
+
+    @unittest.skipUnless(ucode(),'requires target ucode for F50 Pro selection policy')
+    def test_f50pro_selected_pair_policy_keeps_both_sources(self):
+        module=self.backend()
+        for product,pair in [('f50pro',p) for p in ([0,4],[3,1],[3,4],[0,1])]+[('u30pro',p) for p in ([0,2],[3,1],[3,2],[0,1])]:
+            state=dict(ok=1,supported=True,ready=True,model=product,cards=[0,1,3,4] if product=='f50pro' else [0,1,2,3],
+                       active_card=pair[0],saved_card=pair[1],logical_cards=list(pair))
+            applied=[]
+            def dispatch(argv,**kwargs):
+                if argv[-1]=='current':return '0' if state['active_card'] in (0,3) else '1'
+                if argv[-1]=='status':return json.dumps(state)
+                if argv[0]=='ucode':
+                    self.assertEqual(argv[1],module.LIB/'button-cycle.uc')
+                    return subprocess.check_output(ucode()+ucode_paths()+[
+                        str(BACKEND.with_name('button-cycle.uc')),*argv[-2:]],input=kwargs['input'],text=True)
+                self.assertEqual(argv[:3],[module.LIB/'data-sim','apply','data'])
+                state['active_card']=int(argv[-1].rsplit('-',1)[1]);applied.append(state['active_card'])
+                return ''
+            with patch.object(module,'read_setting',return_value='pair'),patch.object(module,'call',side_effect=dispatch):
+                for _ in range(4):
+                    if product=='f50pro':
+                        target=module.next_data_target(product)
+                        dispatch([module.LIB/'data-sim','apply','data',target])
+                    else:module.execute(product,'data-switch','')
+            self.assertEqual(applied,[pair[1],pair[0]]*2)
+            self.assertEqual(state['logical_cards'],list(pair))
+
+    def test_f50pro_data_action_uses_ucode_worker_and_reports_refusal(self):
+        module=self.backend()
+        with patch.object(module,'read_setting',return_value='list'),patch.object(module,'call') as call:
+            module.execute('f50pro','data-switch','')
+            self.assertEqual(call.call_args.args[0],['ucode',module.LIB/'f50pro-sim-key.uc','list'])
+            call.side_effect=subprocess.CalledProcessError(1,['ucode'],stderr='sim_not_ready\n')
+            with self.assertRaisesRegex(ValueError,'sim_not_ready'):
+                module.execute('f50pro','data-switch','')
 
     def test_physical_switch_never_guesses_from_saved_or_unavailable_sources(self):
         module=self.backend()
         valid=dict(ok=1,supported=True,ready=True,model='v50',cards=[0,1,2,3],
                    active_card=3,saved_card=0,logical_cards=[3,2])
-        with patch.object(module,'call',return_value=json.dumps(valid)) as call:
+        with patch.object(module,'call',side_effect=['0',json.dumps(valid),'']) as call:
             module.execute('v50','data-switch','')
             self.assertEqual(call.call_args.args[0][-1],'v50-card-0')
         for change in ({'ready':False},{'ok':0},{'supported':False},{'model':'u30pro'},
-                       {'active_card':None},{'active_card':False},{'active_card':4},
+                       {'logical_cards':None},{'logical_cards':[]},{'logical_cards':[None,2]},
                        {'cards':[]},{'cards':[0,0]},{'cards':[False,1]},
                        {'cards':[0,4]},{'cards':'0,1'}):
-            with self.subTest(change=change),patch.object(module,'call',return_value=json.dumps(dict(valid,**change))) as call:
+            with self.subTest(change=change),patch.object(module,'call',side_effect=['0',json.dumps(dict(valid,**change))]) as call:
                 with self.assertRaises(ValueError):module.execute('v50','data-switch','')
-                self.assertEqual(call.call_count,1)  # status only; no write
+                self.assertEqual(call.call_count,2)  # live stack and routing only; no write
+
+    def test_live_data_stack_controls_first_press_despite_stale_card_snapshot(self):
+        module=self.backend()
+        for actual,wanted in [('0','v50-card-1'),('1','v50-card-3')]:
+            state=dict(ok=1,supported=True,ready=True,model='v50',cards=[0,1,2,3],
+                       active_card=0,saved_card=0,logical_cards=[0,2])
+            with patch.object(module,'call',side_effect=[actual,json.dumps(state),'']) as call:
+                module.execute('v50','data-switch','')
+                self.assertEqual(call.call_args.args[0][-1],wanted)
+        for actual in ('','2','unknown'):
+            with patch.object(module,'call',return_value=actual) as call:
+                with self.assertRaises(ValueError):module.execute('v50','data-switch','')
+                self.assertEqual(call.call_count,1)
 
     def test_u30air_keeps_logical_dual_slot_switching(self):
         module=self.backend()
         for slot,target in [('0','1'),('1','0')]:
             (self.root/'mu300-data-sim-actual').write_text(slot)
-            with patch.object(module,'call',return_value='') as call:
+            with patch.object(module,'call',side_effect=[slot,'']) as call:
                 module.execute('u30air','data-switch','')
                 self.assertEqual(call.call_args.args[0][-3:],['apply','data',target])
-                self.assertEqual(call.call_count,1)
+                self.assertEqual(call.call_count,2)
 
     def test_wifi_toggle_is_available_for_every_supported_key(self):
         for product in ('u30air','v50','u30pro','f50pro'):

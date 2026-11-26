@@ -7,6 +7,7 @@ import * as ubus from 'ubus';
 import * as uloop from 'uloop';
 import * as rtnl from 'rtnl';
 import { colours,output,boot_colours } from 'mu300.f50pro-led';
+import { feedback } from 'mu300.f50pro-feedback';
 
 if(trim(fs.readfile('/etc/mu300/model') || '')!='f50pro')exit(0);
 uloop.init();
@@ -16,6 +17,7 @@ const cfg=uci.cursor();
 let last={};
 let booting=!fs.stat('/run/f50pro-led-ready'),step=0;
 let animation=null;
+let shortcut;
 function readjson(path) { try { return json(fs.readfile(path)||'null'); } catch(e) { return null; } }
 function lamp(bank,colour) {
     let values=output(bank,colour,cfg.get('system','mu300_leds',bank=='net'?'signal_brightness':'wifi_brightness'),
@@ -44,7 +46,8 @@ function render() {
     }
     if(booting) {
         let value=boot_colours(step++);
-        lamp('net',value.net);lamp('wifi',value.wifi);
+        if(!shortcut.active())lamp('net',value.net);
+        lamp('wifi',value.wifi);
         return;
     }
     cfg.unload('unisoc_modem');
@@ -68,9 +71,15 @@ function render() {
     for(let name in ['signal_4g','signal_5g','signal_offline','wifi_2g','wifi_5g'])
         settings[name]=cfg.get('system','mu300_leds',name);
     let value=colours(registered,nr,band,settings);
-    lamp('net',value.net);lamp('wifi',value.wifi);
+    if(!shortcut.active())lamp('net',value.net);
+    lamp('wifi',value.wifi);
 }
+shortcut=feedback((delay,callback)=>uloop.timer(delay,callback),
+    (colour)=>{cfg.unload('system');lamp('net',colour);},()=>render());
 const listeners=[];
+let switched=bus.listener('f50pro.sim-switch',(event,message)=>shortcut.event(message));
+if(!switched)die('F50 Pro LEDs: shortcut subscription failed\n');
+push(listeners,switched);
 for(let name in ['mu300.registration','mu300.sim-state','network.interface',
                  'f50pro.led','f50pro.config']) {
     let listener=bus.listener(name,()=>render());
@@ -99,4 +108,5 @@ const term=uloop.signal(15,()=>uloop.end());
 const intr=uloop.signal(2,()=>uloop.end());
 render();
 uloop.run();
+shortcut.stop();
 if(animation)animation.cancel();

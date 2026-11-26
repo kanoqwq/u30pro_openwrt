@@ -9,8 +9,6 @@ const common=new Function('rpc','baseclass','L','document','navigator','sessionS
 assert.equal(common.selectedSlot(),'0');
 common.selectViewedSlot(1); assert.equal(common.selectedSlot(),'1');
 assert.equal(common.selectViewedSlot(2),false); assert.equal(common.selectedSlot(),'1');
-common.callAt('AT'); common.selectViewedSlot(0);
-assert.deepEqual(called[0],['at',['AT','1']]);
 for(const [routes,names] of [[[0,4],['Built-in SIM 1','External SIM 1']],[[3,4],['External SIM 2','External SIM 1']],[[0,1],['Built-in SIM 1','Built-in SIM 2']]]) {
     const info={physical:{model:'f50pro',ready:true,logical_cards:routes}};
     for(const slot of [0,1])assert.equal(common.slotName(slot,info),names[slot]);
@@ -34,6 +32,8 @@ function element(tag) {return {tag,children:[],style:{},isConnected:true,append(
 function find(root,tag){return root.tag===tag?root:root.children.map(n=>find(n,tag)).find(Boolean);}
 const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
 (async()=>{
+    await common.callAt('AT');common.selectViewedSlot(0);
+    assert.deepEqual(called[0],['at',['AT','1']]);
     for(const outcome of ['cancel','error','done']) {
         common.selectViewedSlot('0'); let requests=0;
         const M={injectCss(){},localizeMenu(){},translate:s=>s,selectViewedSlot:common.selectViewedSlot,
@@ -92,7 +92,8 @@ const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
     }
     for(const [model,board,cards,target] of [['v50',0,[0,1,2],2],['v50',1,[0,1,2,3],3],['v50',2,[0,1,3],3],['v50',3,[0,1],1],['u30pro',0,[0,1,2,3],3],['u30pro',1,[0,1,2],2],['u30pro',2,[0,1],1],['u30pro',3,[0,1,3],3],['u30pro',4,[0,1,2,3],2],['u30pro',5,[3],3],['u30pro',6,[0,2],2],['f50pro',0,[0,1,2],2],['f50pro',1,[0,1],1],['f50pro',2,[0,2],2],['f50pro',3,[0,2,3,4],4],['f50pro',4,[0,1,3,4],4],['f50pro',4,[0,1,3,4],3],['f50pro',5,[3,4],4],['f50pro',5,[3,4],3]]) {
         common.selectViewedSlot('0');const requests=[],confirmations=[];
-        const physical={ok:1,supported:true,ready:true,model,board_id:board,cards,active_card:0,saved_card:0,logical_cards:model==='f50pro'?[cards.includes(0)?0:3,cards.includes(1)?1:cards.includes(2)?2:4]:[]};
+        const physical={ok:1,supported:true,ready:true,model,board_id:board,cards,active_card:0,saved_card:0,
+            logical_cards:[cards.includes(0)?0:cards.includes(3)?3:null,cards.includes(1)?1:cards.includes(2)?2:cards.includes(4)?4:null]};
         const M={injectCss(){},localizeMenu(){},translate:s=>s,selectViewedSlot:common.selectViewedSlot,
             confirmBox:(title,body)=>{confirmations.push(body);return Promise.resolve(true);},busy(){},toast:()=>({close(){}})};
         const rpc={declare:o=>arg=>{
@@ -117,7 +118,7 @@ const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
         }
         if(model==='u30pro')for(const option of select.children)
             assert.equal(option.textContent,Number(option.value)===3?'外置 SIM 1':'内置 SIM '+(Number(option.value)+1));
-        if(model==='f50pro') {
+        if(model==='f50pro'||model==='u30pro'&&board!==5) {
             const source0=all(root,'select').find(n=>n.id==='mud-f50-source0');
             const source1=all(root,'select').find(n=>n.id==='mud-f50-source1');
             assert.deepEqual(source0.children.map(n=>Number(n.value)),cards.filter(n=>n===0||n===3));
@@ -127,14 +128,14 @@ const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
         assert.deepEqual(requests,[model+'-card-'+target]);
         if(model==='f50pro' && target>=3)assert.deepEqual(confirmations,[target===4?'外置 SIM 1':'外置 SIM 2']);
         assert.equal(common.selectedSlot(),target===0||target===3?'0':'1','physical IDs never become AT slot IDs');
-        if(model==='f50pro') {
+        if(model==='f50pro'||model==='u30pro'&&board!==5) {
             const source0=all(root,'select').find(n=>n.id==='mud-f50-source0');
             const source1=all(root,'select').find(n=>n.id==='mud-f50-source1');
             const first=cards.includes(3)?3:0,second=cards.includes(4)?4:cards.includes(1)?1:2;
             source0.value=String(first);source1.value=String(second);
             requests.length=0;
             all(root,'button').find(n=>n.id==='mud-f50-pair-apply').onclick();await tick();
-            assert.deepEqual(requests,['f50pro-pair-'+first+'-'+second]);
+            assert.deepEqual(requests,[model+'-pair-'+first+'-'+second]);
             assert.equal(common.selectedSlot(),target===0||target===3?'0':'1','source combinations do not change the viewed/data slot');
         }
         physical.ready=false;await view.refresh();assert(button.disabled);

@@ -275,6 +275,97 @@ class F50ProCards(fixtures.PhysicalCardsFixture):
             self.assertNotIn('AT+SPACTCARD=0;+SFUN=4',calls)
             self.assertNotIn('AT+SPACTCARD=0;+CPIN?',calls)
 
+    def test_pair_changed_source_initializes_mode_before_rf_without_reselecting_data(self):
+        for shell in self.each_shell():
+            state=dict(self.initial,data_sim=1,radio=[1,1],cfun=[0,1],work_modes='152,3,1,19,3,1')
+            self.state.write_text(json.dumps(state));(self.run/'mu300-data-sim-actual').write_text('1\n')
+            (self.hw/'chip_select').write_text('0\n');(self.hw/'psim_select').write_text('0\n')
+            (self.tmp/'commands').unlink(missing_ok=True)
+            result=self.pair(shell,0,4,REQUIRE_MODE_INIT='1')
+            self.assertEqual(result.returncode,0,result.stderr)
+            calls=(self.tmp/'commands').read_text()
+            order=['AT+SPACTCARD=0;+SFUN=2','AT+SPACTCARD=0;+SPTESTMODE?',
+                   'AT+SPACTCARD=0;+SPTESTMODEM=152,3','replay 0 replay early','AT+SPACTCARD=0;+SFUN=4']
+            self.assertEqual([calls.index(x) for x in order],sorted(calls.index(x) for x in order))
+            self.assertNotIn('AT+SPACTCARD=1;',calls)
+            self.assertNotIn('logical',calls)
+            self.assertNotIn('ifdown',calls)
+            self.assertEqual(json.loads(self.state.read_text())['data_sim'],1)
+            self.assertEqual((self.run/'mu300-data-sim-actual').read_text(),'1\n')
+
+    def test_pair_mode_initialization_keeps_all_four_routes_and_saved_radio_intent(self):
+        for shell in self.each_shell():
+            for first,second in [(0,1),(0,4),(3,1),(3,4)]:
+                state=dict(self.initial,data_sim=1,radio=[1,1],work_modes='3,152,1,19,3,1')
+                self.state.write_text(json.dumps(state));(self.run/'mu300-data-sim-actual').write_text('1\n')
+                (self.hw/'chip_select').write_text('0\n');(self.hw/'psim_select').write_text('0\n')
+                (self.tmp/'commands').unlink(missing_ok=True)
+                result=self.pair(shell,first,second,REQUIRE_MODE_INIT='1')
+                self.assertEqual(result.returncode,0,result.stderr)
+                current=json.loads(self.state.read_text())
+                self.assertEqual([current['f50pro_route0'],current['f50pro_route1']],[first,second])
+                self.assertEqual(current['radio'],[1,1]);self.assertEqual(current['data_sim'],1)
+                calls=(self.tmp/'commands').read_text() if (self.tmp/'commands').exists() else ''
+                self.assertEqual(calls.count('+SPTESTMODEM=3,152'),int(first!=3)+int(second!=4))
+                self.assertNotIn('AT+SPSWDATA',calls)
+
+    def test_pair_mode_rejection_restores_routes_settings_and_manual_wan_off(self):
+        for shell in self.each_shell():
+            state=dict(self.initial,data_sim=1,radio=[1,1],autostart=False,up=False,
+                       f50pro_route0=3,f50pro_route1=4,f50pro_card=4)
+            self.state.write_text(json.dumps(state));(self.run/'mu300-data-sim-actual').write_text('1\n')
+            (self.hw/'chip_select').write_text('0\n');(self.hw/'psim_select').write_text('0\n')
+            (self.tmp/'commands').unlink(missing_ok=True);(self.tmp/'mode-failed-once').unlink(missing_ok=True)
+            result=self.pair(shell,0,1,FAIL_MODE_INIT='1',REQUIRE_MODE_INIT='1')
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('sim_switch_failed_restored',result.stderr)
+            current=json.loads(self.state.read_text())
+            for key in ('data_sim','radio','f50pro_route0','f50pro_route1','f50pro_card','up','autostart'):
+                self.assertEqual(current[key],state[key],key)
+            self.assertEqual((self.hw/'psim_select').read_text().strip(),'0')
+            self.assertEqual((self.hw/'chip_select').read_text().strip(),'0')
+            calls=(self.tmp/'commands').read_text()
+            self.assertNotIn('ifup',calls)
+            self.assertEqual(calls.count('+SFUN=4'),1) # Old route only; rejected target never reaches RF-on.
+
+    def test_pair_bad_mode_readback_never_enables_target_or_reports_success(self):
+        for shell in self.each_shell():
+            # Failed rollback intentionally retains the runtime marker; reset
+            # this isolated fixture before exercising the next shell.
+            (self.run/'mu300/f50pro-switch-incomplete').unlink(missing_ok=True)
+            state=dict(self.initial,data_sim=1,radio=[1,1],work_modes='invalid')
+            self.state.write_text(json.dumps(state));(self.run/'mu300-data-sim-actual').write_text('1\n')
+            (self.hw/'chip_select').write_text('0\n');(self.hw/'psim_select').write_text('0\n')
+            (self.tmp/'commands').unlink(missing_ok=True)
+            result=self.pair(shell,0,4)
+            self.assertNotEqual(result.returncode,0)
+            self.assertIn('sim_read_failed',result.stderr)
+            calls=(self.tmp/'commands').read_text()
+            self.assertNotIn('+SFUN=4',calls);self.assertNotIn('+SPTESTMODEM=',calls)
+            self.assertNotIn('f50pro_route0',json.loads(self.state.read_text()))
+            self.assertTrue((self.run/'mu300/f50pro-switch-incomplete').exists())
+
+    def test_pair_same_sources_do_not_initialize_or_interrupt_the_current_data_card(self):
+        for shell in self.each_shell():
+            state=dict(self.initial,data_sim=1,radio=[1,1])
+            self.state.write_text(json.dumps(state));(self.run/'mu300-data-sim-actual').write_text('1\n')
+            (self.hw/'chip_select').write_text('0\n');(self.hw/'psim_select').write_text('0\n')
+            (self.tmp/'commands').unlink(missing_ok=True)
+            result=self.pair(shell,3,4)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertFalse((self.tmp/'commands').exists())
+
+    def test_single_physical_source_switch_uses_the_same_mode_initialization(self):
+        for shell in self.each_shell():
+            self.state.write_text(json.dumps(self.initial));(self.run/'mu300-data-sim-actual').write_text('0\n')
+            (self.hw/'chip_select').write_text('1\n');(self.hw/'psim_select').write_text('1\n')
+            (self.tmp/'commands').unlink(missing_ok=True)
+            result=self.call(shell,'apply','4',REQUIRE_MODE_INIT='1')
+            self.assertEqual(result.returncode,0,result.stderr)
+            calls=(self.tmp/'commands').read_text()
+            self.assertLess(calls.index('+SPTESTMODEM='),calls.index('+SFUN=4'))
+            self.assertEqual(json.loads(self.state.read_text())['f50pro_card'],4)
+
     def test_all_two_stack_source_combinations_keep_default_data_and_wan_intent(self):
         for shell in self.each_shell():
             for first,second in [(0,1),(0,4),(3,1),(3,4)]:

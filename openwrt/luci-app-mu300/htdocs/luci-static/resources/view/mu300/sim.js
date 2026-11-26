@@ -111,8 +111,10 @@ return view.extend({
             physicalButton=el('button',M.translate('切换上网卡'),'mud-btn');physicalButton.type='button';
             physicalRow.append(physicalLabel,physicalSelect,physicalButton);
             physicalNote=el('p',null,'mud-note');physicalBox.append(physicalNote);
-            if(physical.model==='f50pro') {
-                // Hardware routing comes from MU3356, not an operator match.
+            if((physical.model==='f50pro'||physical.model==='u30pro')&&
+               choices.some(function(id){return id===0||id===3;})&&
+               choices.some(function(id){return id!==0&&id!==3;})) {
+                // The product owner supplies the fitted sources; never infer an operator.
                 physicalBox.append(el('p',M.translate('射频、锁定及 AT 查看仍按两个逻辑卡槽控制。'),'mud-note'));
                 var pairBox=el('div',null,'mud-data-sim');physicalBox.append(pairBox);
                 pairBox.append(el('h3',M.translate('卡源组合')));
@@ -133,7 +135,7 @@ return view.extend({
                     M.confirmBox('应用卡源组合？','IMEI1: '+physicalName(first)+' · IMEI2: '+physicalName(second),{danger:true}).then(function(yes){
                         if(!yes||!root.isConnected)return;
                         var toast=M.toast('正在应用卡源组合…',{type:'busy',timeout:0});
-                        return start('f50pro-pair-'+first+'-'+second).then(function(r){
+                        return start(physical.model+'-pair-'+first+'-'+second).then(function(r){
                             if(!r.ok||!r.id)throw new Error(r.error||'网络设置提交失败');return wait(r.id);
                         }).then(function(){M.toast('卡源组合已保存',{type:'success'});})
                           .catch(function(e){if(root.isConnected)M.toast(message(e.message),{type:'error'});})

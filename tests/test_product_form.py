@@ -206,6 +206,20 @@ elif args[0]=='batch':
             for key in ('v50_card','v50_route0','v50_route1'):self.assertNotIn(key,values)
             self.assertEqual(values['data_sim'],'1')
 
+    def test_u30pro_incompatible_pair_is_pruned_before_boot_but_valid_pair_survives(self):
+        self.product('u30pro',0)
+        self.config(u30pro_card='3',u30pro_route0='3',u30pro_route1='2',data_sim='1')
+        self.mod.execute('set',{'model':'u30pro','mode':'3'})
+        self.mod.execute('boot',{})
+        self.assertNotIn('u30pro_route0',self.values())
+        self.assertNotIn('u30pro_route1',self.values())
+        self.assertEqual(self.values()['u30pro_card'],'3')
+        self.assertEqual(self.values()['data_sim'],'1')
+        self.config(u30pro_route0='3',u30pro_route1='1')
+        self.mod.execute('boot',{})
+        self.assertEqual(self.values()['u30pro_route0'],'3')
+        self.assertEqual(self.values()['u30pro_route1'],'1')
+
     def test_v50_valid_pair_survives_manual_form_change(self):
         self.config(v50_card='3',v50_route0='3',v50_route1='1',dual_standby='1')
         self.mod.execute('set',{'model':'v50','mode':'2'})

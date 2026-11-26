@@ -102,10 +102,15 @@ exec sleep 300
                 state = call(sid, 'mu300dash', 'button_get', {})[1]
                 values = {key: state[key] for key in FIELDS}
                 values.update(long='wifi-band', double='custom', double_command='logger button-fixture')
+                if model in ('f50pro','u30pro'):values['cycle']='list'
                 result = call(sid, 'mu300dash', 'button_set', values)
                 assert result[0] == 0 and result[1]['ok'] == 1, (model, result)
                 read = call(login('root'), 'mu300dash', 'button_get', {})[1]
                 assert all(read[key] == value for key, value in values.items()), (model, read)
+                if model in ('f50pro','u30pro'):
+                    assert call(sid,'mu300dash','button_set',{'cycle':'bad'})[1]['ok']==0
+                    assert call(sid,'mu300dash','button_get',{})[1]['cycle']=='list'
+                    assert call(sid,'mu300dash','button_set',{'cycle':'pair'})[1]['ok']==1
                 assert not any('ubus_rpc_session' in p.read_text() for p in (fixture/'config').iterdir() if p.is_file())
             assert 'user-value' in (fixture/'config/unisoc_modem').read_text()
             assert 'screen-value' in (fixture/'config/u30pro_native_control').read_text()

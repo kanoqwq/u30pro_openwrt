@@ -32,11 +32,15 @@ def keys(product):
             'short': 'home_short_action', 'long': 'home_long_action', 'double': 'home_double_action',
             'short_command': 'home_short_command', 'long_command': 'home_long_command', 'double_command': 'home_double_command',
             'power_short': 'power_short_action', 'power_command': 'power_short_command',
-            'power_double': 'power_double_action', 'power_double_command': 'power_double_command'}.items()}
+            'power_double': 'power_double_action', 'power_double_command': 'power_double_command',
+            'cycle': 'home_button_cycle'}.items()}
     base = 'unisoc_modem.main.' + product + '_button_'
-    return {name: base + name for name in
+    mapping = {name: base + name for name in
             ('short', 'long', 'double', 'short_command', 'long_command', 'double_command',
              'power_short', 'power_command', 'power_double', 'power_double_command')}
+    if product == 'f50pro':
+        mapping['cycle'] = base + 'cycle'
+    return mapping
 
 
 def read_setting(key, default):
@@ -49,13 +53,15 @@ def settings(product):
                     long='none' if product in ('f50pro', 'u30pro', 'v50') else 'default',
                     double='wifi-band' if product == 'u30air' else 'none', double_command='',
                     short_command='', long_command='', power_short='default', power_command='',
-                    power_double='none', power_double_command='')
+                    power_double='none', power_double_command='', cycle='pair')
     fixed = ('short', 'short_command', 'power_short', 'power_command')
     return {name: defaults[name] if name in fixed else read_setting(key, defaults[name])
             for name, key in keys(product).items()}
 
 
 def validate(product, values):
+    if product in ('f50pro', 'u30pro') and values['cycle'] not in ('pair', 'list'):
+        raise ValueError('invalid_button_cycle')
     for kind, command in (('short', 'short_command'), ('long', 'long_command'),
                           ('double', 'double_command'), ('power_short', 'power_command'),
                           ('power_double', 'power_double_command')):
@@ -79,6 +85,8 @@ def save(product, values, incoming):
     # rpcd adds the authenticated session to HTTP calls. It is transport
     # metadata, never a button setting or a substitute for rpcd's ACL checks.
     incoming = {key: value for key, value in incoming.items() if key != 'ubus_rpc_session'}
+    if product != 'f50pro' and incoming.get('cycle') in ('', None):
+        incoming.pop('cycle', None)
     if set(incoming) & {'short', 'short_command', 'power_short', 'power_command'}:
         raise ValueError('single_press_fixed')
     if set(incoming) - set(values):
@@ -101,31 +109,37 @@ def save(product, values, incoming):
 
 
 def next_data_target(product):
+    actual = call([BIN / 'mu300-data-sim', 'current'])
+    if actual not in ('0', '1'):
+        raise ValueError('sim_read_failed')
     if product in ('u30pro', 'f50pro', 'v50'):
         owner = 'mu300-v50-sim' if product == 'v50' else 'mu300-physical-sim'
         state = json.loads(call([BIN / owner, 'status']))
+        if product in ('f50pro', 'u30pro'):
+            # Selection policy is ucode; this existing dispatcher only passes
+            # the owner's current snapshot and applies its selected target.
+            reply = json.loads(call(['ucode', LIB / 'button-cycle.uc',
+                read_setting(keys(product)['cycle'], 'pair'), actual], input=json.dumps(state)))
+            if not reply.get('ok'):
+                raise ValueError(reply.get('error', 'sim_read_failed'))
+            return reply['target']
         if not state.get('ok') or not state.get('supported') or not state.get('ready') or state.get('model') != product:
             raise ValueError('sim_unavailable')
         cards = state.get('cards')
-        maximum = 4 if product == 'f50pro' else 3
         if (not isinstance(cards, list) or not cards or
-                any(type(card) is not int or not 0 <= card <= maximum for card in cards) or
+                any(type(card) is not int or not 0 <= card <= 3 for card in cards) or
                 len(set(cards)) != len(cards)):
             raise ValueError('sim_unavailable')
-        # Match SIM management's order: MU3356 external 1 is raw card 4,
-        # external 2 is raw card 3. Board/form filtering stays with the owner.
-        if product == 'f50pro':
-            cards = sorted(cards, key=lambda card: {4: 3, 3: 4}.get(card, card))
-        current = state.get('active_card')
+        routes = state.get('logical_cards')
+        if not isinstance(routes, list) or len(routes) != 2:
+            raise ValueError('sim_read_failed')
+        current = routes[int(actual)]
         if type(current) is not int or current not in cards:
             raise ValueError('sim_read_failed')
         if len(cards) == 1:
             return None
         return product + '-card-' + str(cards[(cards.index(current) + 1) % len(cards)])
-    slot = (RUN / 'mu300-data-sim-actual').read_text().strip()
-    if slot not in ('0', '1'):
-        raise ValueError('sim_read_failed')
-    return str(1 - int(slot))
+    return str(1 - int(actual))
 
 
 def execute(product, action, command):
@@ -150,6 +164,13 @@ def execute(product, action, command):
             raise ValueError(result.get('error', 'nfc_apply_failed'))
         return
     elif action == 'data-switch':
+        if product == 'f50pro':
+            try:
+                call(['ucode', LIB / 'f50pro-sim-key.uc',
+                      read_setting('unisoc_modem.main.f50pro_button_cycle', 'pair')])
+            except subprocess.CalledProcessError as error:
+                raise ValueError((error.stderr or '').strip() or 'sim_switch_failed') from None
+            return
         target = next_data_target(product)
         if target is None:
             return

@@ -217,6 +217,7 @@ static void feed_set(const char *k, char *v)
 #define F(name, dst) do { if (!strcmp(k, name)) { dst = (float)atof(v); return; } } while (0)
 	/* an empty access technology means "not reported this time" (modem busy or restarting): the last known one stays */
 	if (!strcmp(k, "rat")) { if (*v) snprintf(D.rat, sizeof D.rat, "%s", v); return; }
+	if (!strcmp(k, "high_rail")) { D.high_rail = !strcmp(v, "1"); return; }
 	if (!strcmp(k, "sinr")) { D.sinr = (float)atof(v); D.sinr_ok = 1; return; }
 	if (!strcmp(k, "nr_rsrp")) { D.nr_rsrp = (float)atof(v); D.nr_rsrp_ok = 1; return; }
 	if (!strcmp(k, "nr_sinr")) { D.nr_sinr = (float)atof(v); D.nr_sinr_ok = 1; return; }

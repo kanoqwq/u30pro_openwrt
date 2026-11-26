@@ -1,5 +1,6 @@
 #!/usr/bin/ucode
 import * as native_channel from 'mu300.native-channel';
+import { tracker } from 'mu300.high-rail';
 // mu300-modemd -- the modem's AT channels in one event-driven daemon (docs/MODEMD.md, FINDINGS 206).
 //
 // It does what one shell mu300-atd per channel did, for every channel of the boot's layout at once: one request at a
@@ -190,12 +191,15 @@ function log_line(path, line) {
 
 // ------------------------------------------------------------------ ubus
 let bus = null;
+const high_rail = tracker(trim(fs.readfile('/etc/mu300/platform') || '') == 'u30pro',
+	state => { if (bus) bus.event('mu300.modem.high_rail', state); });
 const registration = cache(env('MU300_REGISTRATION_DIR', RUN + '/mu300-registration'),
 	(name, data) => { if (bus) bus.event(name, data); });
 function urc_event(chan, line) {
 	// NR0 is the sole unsolicited ingress. A spool completion is an internal
 	// notification to request slot-scoped storage reads, never a slot identity.
 	if (chan != 'stty_nr0' && index(['+CMT (unassigned PDU saved)', '+CMT (not spooled)'], line) < 0) return;
+	high_rail.ingest(chan, line);
 	if (bus)
 		bus.event('mu300.modem.urc', { channel: chan, line: line });
 }
@@ -213,6 +217,7 @@ function io_send(rec) {
 	return true;
 }
 function io_drop() {
+	high_rail.reset();
 	if (ioh)
 		ioh.delete();
 	if (io)
@@ -511,7 +516,7 @@ function cmd_line(b, c, line) {
 	// Voice notices also arrive on this command-owned NR0. Do not publish
 	// solicited +CLCC rows or infer their SIM from the ingress port.
 	if (trim(fs.readfile('/etc/mu300/platform') || '') == 'u30pro' &&
-	    match(line, /^(\+CGEV:|\+SPPCODATA:|NO CARRIER$|RING$|BUSY$|NO ANSWER$|\+CRING:|\+CLIP:|\+CCWA:|\+CLCCS:|\^ORIG:|\^CONF:|\^CONN:|\^CEND:|\^DSCI:)/))
+	    match(line, /^(\+SPHIGHRAILINFO:|\+CGEV:|\+SPPCODATA:|NO CARRIER$|RING$|BUSY$|NO ANSWER$|\+CRING:|\+CLIP:|\+CCWA:|\+CLCCS:|\^ORIG:|\^CONF:|\^CONN:|\^CEND:|\^DSCI:)/))
 		urc_event(c.name, line);
 	if (b.phase == 'collect') {
 		if (line == '')
@@ -636,6 +641,7 @@ on_record = function(rec) {
 	let type = p[0], name = p[1], c = chans[name];
 	switch (type) {
 	case 'HELLO':
+		high_rail.reset();
 		io_pid = +(p[2] ?? '0');
 		io_waited = false;
 		log('connected to mu300-atd-io (pid ' + io_pid + ')');
@@ -653,6 +659,7 @@ on_record = function(rec) {
 			break;
 		}
 		let was = c.state;
+		if (name == 'stty_nr0' && state != was) high_rail.reset();
 		c.state = state;
 		if (state == 'open' && was != 'open')
 			chan_open(c);
@@ -680,15 +687,18 @@ on_record = function(rec) {
 		break;
 	}
 	case 'OPENFAIL':
+		if (name == 'stty_nr0') high_rail.reset();
 		if (c) log(c.dev + ' is not ready yet (errno ' + (p[2] ?? '?') + '); the bridge keeps trying');
 		break;
 	case 'EOF':
+		if (name == 'stty_nr0') high_rail.reset();
 		if (c) { c.state = 'eof'; log(c.dev + ' reached end of file; it stays closed'); }
 		break;
 	case 'TXERR':
 		if (c) log('a command to ' + c.dev + ' could not be written (errno ' + (p[2] ?? '?') + ')');
 		break;
 	case 'DROPPED':
+		if (name == 'stty_nr0') high_rail.reset();
 		log((p[2] ?? '?') + ' records of ' + (name ?? '?') + ' were dropped while modemd was away');
 		break;
 	}
@@ -1148,6 +1158,7 @@ function ubus_setup() {
 		return;
 	}
 	let obj = bus.publish('mu300.modem', {
+		high_rail: { call: (req) => req.reply(high_rail.snapshot()) },
 		status: { call: (req) => req.reply(status_reply()) },
 		// at { cmd, timeout, channel }: one command on a broker (its name, channel or directory; the first broker
 		// without one), under the client lock; answered once the reply is in

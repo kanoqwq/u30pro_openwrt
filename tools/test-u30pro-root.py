@@ -184,6 +184,21 @@ def main(include_modem=True):
     # These are production inputs, never files recovered from a hotfixed device.
     # Compare the assembled root too: source-only syntax tests miss stale staging.
     inputs={
+        'usr/libexec/unisoc-boot-default':'openwrt/overlay/usr/libexec/unisoc-boot-default',
+        'usr/share/ucode/unisoc/boot-default.uc':'openwrt/overlay/usr/share/ucode/unisoc/boot-default.uc',
+        'opt/mu300/bin/mu300-next-boot':'rootfs/overlay/opt/mu300/bin/mu300-next-boot',
+        'etc/init.d/mu300-post':'devices/u30pro/overlay/etc/init.d/mu300-post',
+        'usr/share/ucode/mu300/button-cycle.uc':'rootfs/overlay/usr/share/ucode/mu300/button-cycle.uc',
+        'usr/libexec/unisoc-modem/button-cycle.uc':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/button-cycle.uc',
+        'opt/mu300/bin/u30pro-card-pair':'devices/u30pro/overlay/opt/mu300/bin/u30pro-card-pair',
+        'usr/share/ucode/mu300/u30pro-card-pair.uc':'devices/u30pro/overlay/usr/share/ucode/mu300/u30pro-card-pair.uc',
+        'usr/sbin/u30pro-sim-preinit':'devices/u30pro/overlay/usr/sbin/u30pro-sim-preinit',
+        'opt/mu300/bin/mobile-data':'rootfs/overlay/opt/mu300/bin/mobile-data',
+        'usr/libexec/unisoc-modem/product-form':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/product-form',
+        'usr/libexec/unisoc-modem/data-sim':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/data-sim',
+        'www/luci-static/resources/view/mu300/sim.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/sim.js',
+        'usr/share/ucode/mu300/high-rail.uc':'rootfs/overlay/usr/share/ucode/mu300/high-rail.uc',
+        'usr/sbin/u30pro-ui-feed':'devices/u30pro/overlay/usr/sbin/u30pro-ui-feed',
         'usr/libexec/unisoc-modem/wifi-relay':'devices/u30pro/overlay/usr/libexec/unisoc-modem/wifi-relay',
         'usr/libexec/rpcd/u30pro-wifi-relay':'devices/u30pro/overlay/usr/libexec/rpcd/u30pro-wifi-relay',
         'usr/share/ucode/mu300/wifi-relay.uc':'devices/u30pro/overlay/usr/share/ucode/mu300/wifi-relay.uc',
@@ -343,13 +358,14 @@ def main(include_modem=True):
     assert 'iproute2' in run('chroot /target /sbin/ip -V')
     for script in ('/usr/sbin/u30pro-usb-role', '/usr/libexec/unisoc-modem/device-usb', '/opt/mu300/bin/mu300-usb',
                    '/opt/mu300/bin/mu300-physical-sim','/opt/mu300/bin/mu300-u30pro-sim',
-                   '/usr/sbin/u30pro-sim-preinit',
+                   '/usr/sbin/u30pro-sim-preinit','/opt/mu300/bin/u30pro-card-pair',
                    '/usr/sbin/u30pro-nfc-control','/etc/hotplug.d/net/95-u30pro-nfc',
                    '/usr/libexec/rpcd/unisoc-nfc','/usr/libexec/unisoc-modem/nfc','/opt/mu300/bin/mu300-nfc'):
         assert os.access(ROOT/script.lstrip('/'), os.X_OK), script+' is not executable'
         run('chroot /target /bin/sh -n '+script)
     run('chroot /target /bin/sh -n /opt/mu300/bin/cpu-voltage-platform')
     run('chroot /target /bin/sh -n /opt/mu300/bin/f50pro-card-pair')
+    run('chroot /target /usr/bin/ucode -c /usr/share/ucode/mu300/u30pro-card-pair.uc -o /dev/null')
     assert os.access(ROOT/'usr/libexec/unisoc-modem/product-form', os.X_OK)
     assert os.access(ROOT/'usr/libexec/rpcd/unisoc-product-form', os.X_OK)
     run('chroot /target /bin/sh -n /usr/libexec/rpcd/unisoc-product-form')
@@ -473,6 +489,7 @@ def main(include_modem=True):
         daemon=(TOP/'devices/f50pro/overlay/usr/sbin/f50pro-leds').read_text()
         daemon='\n'.join(line for line in daemon.splitlines() if not line.startswith(('#!','import ')))
         lifecycle.write_text("import { colours,output,boot_colours } from 'mu300.f50pro-led';\n"+
+                             "import { feedback } from 'mu300.f50pro-feedback';\n"+
                              (TOP/'tests/f50pro_led_lifecycle.uc').read_text()+'\n'+daemon+'\n')
         for case in ('boot','ready','disabled','race','wireless'):
             print(run('chroot /target /usr/bin/ucode /tmp/f50pro-led-lifecycle.uc '+case),end='')

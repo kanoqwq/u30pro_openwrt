@@ -1774,6 +1774,10 @@ static int host_main(const char *dir, int argc, char **argv)
 			compose(); ov = a; ov_arg = b; sms_scroll = 0;
 		} else if (sscanf(line, "set battery %d", &a) == 1) {
 			D.bat_pct = a; D.charging = 0;
+		} else if (sscanf(line, "set highrail %d", &a) == 1) {
+			D.high_rail = a == 1;
+		} else if (sscanf(line, "set rat %7s", name) == 1) {
+			snprintf(D.rat, sizeof D.rat, "%.7s", name);
 		} else if (!strncmp(line, "set nosig", 9)) {
 			D.have_sig = 0; D.cell_connected = 0; snprintf(D.cell_state, sizeof D.cell_state, "waiting-sim");
 		} else if (!strncmp(line, "notice", 6)) {

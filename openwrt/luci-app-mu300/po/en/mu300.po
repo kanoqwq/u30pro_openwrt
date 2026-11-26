@@ -228,3 +228,33 @@ msgstr "Traffic management"
 
 msgid "Wi-Fi 中继"
 msgstr "Wi-Fi uplink"
+
+msgid "切换到 Android"
+msgstr "Switch to Android"
+
+msgid "高铁模式"
+msgstr "High-speed rail mode"
+
+msgid "快捷键切卡方式"
+msgstr "Data SIM cycling"
+
+msgid "当前双卡卡源来回切（默认）"
+msgstr "Current IMEI1 / IMEI2 sources (default)"
+
+msgid "全部卡源列表循环"
+msgstr "Cycle all available sources"
+
+
+
+
+msgid "仅影响切卡快捷键，保存不切卡。"
+msgstr "Only affects SIM shortcuts. Saving does not switch SIMs."
+
+msgid "切卡按列表序号闪灯：内置绿、外置白，失败红。保存不切卡。"
+msgstr "SIM switching flashes the list position: green for internal, white for external, red on failure. Saving does not switch SIMs."
+
+msgid "CPU0 供 TEE 使用，必须保持在线"
+msgstr "CPU0 is reserved for TEE and must remain online"
+
+msgid "高铁模式运行中..."
+msgstr "High-speed rail mode active..."

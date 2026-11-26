@@ -3,6 +3,7 @@
 'require uci';
 'require mu300.refresh as R';
 'require mu300.common as M';
+'require mu300.boot-controls as Boot';
 'require mu300.sim-radio as SimRadio';
 
 /* MU300 状态看板 -- LuCI 落地页（menu.d 挂在 admin/home）。
@@ -92,7 +93,8 @@ return view.extend({
                 .then(function(rows){return rows[0];});
         };
         this._stopStatus = R.poll(homeStatus, function(st) { self.update(st || {}); },
-			function() { return intervalMs; }, null, null, active);
+			function() { return intervalMs; }, function() { self.paintHighRail(null); },
+            function() { self.paintHighRail(null); }, active);
 		this._stopRates = R.poll(M.callRates, function(sample) { self.updateRates(sample); },
 			function() { return 1000; }, function() { self.updateRates(null); },
 			function() { self.lastNet = null; }, active);
@@ -153,6 +155,10 @@ return view.extend({
 <div class="mud-card mud-boot-notice" id="mud-boot-notice" hidden style="padding:1rem;margin-bottom:1rem;gap:.75rem;align-items:center;flex-wrap:wrap">
   <div style="flex:1;min-width:12rem"><b>当前为临时启动 OpenWrt</b><div>是否将 OpenWrt 设为默认启动？不会立即重启或断网。</div></div>
   <button class="mud-btn" id="mud-btn-default">设为默认启动</button>
+</div>
+<div class="mud-card mud-boot-notice" id="mud-high-rail-notice" hidden style="display:none;padding:.75rem 1rem;margin-bottom:1rem;gap:.5rem;align-items:center">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="24" height="24" fill="currentColor" aria-hidden="true" focusable="false" style="flex:none;color:var(--brand,var(--primary,#009f95))"><path d="M931.739736 503.636518a22.101367 22.101367 0 0 0-4.264116-4.702092L608.650247 235.743142c-46.64639-47.701418-106.83419-73.941036-169.597653-73.941036H89.021499c-0.300852 0-0.580215 0.076748-0.877996 0.089028-0.297782-0.01228-0.577145-0.089028-0.877997-0.089028-12.137435 0-21.974477 9.837042-21.974477 21.974477v538.326599c0 5.826705 2.312672 11.419074 6.434549 15.540951a21.978571 21.978571 0 0 0 15.539928 6.433526h738.429009c47.070039 0 89.590458-27.006074 113.713878-72.226998 28.28623-52.979632 25.273616-119.014604-7.668657-168.214143zM624.523773 307.383786c0.577145 0 1.119497-0.125867 1.685385-0.169869l186.515974 153.986093H433.364035V307.383786h191.159738z m-515.28379 0h136.832412v153.816224H109.239983V307.383786z m804.544823 302.121945h-485.916948c-12.138458 0-21.974477 9.845229-21.974478 21.974477 0 12.137435 9.837042 21.976524 21.974478 21.976524h471.453538c-16.715707 29.683043-43.403532 46.671972-73.626881 46.671973H109.239983v-46.671973h91.568509c12.138458 0 21.974477-9.839089 21.974477-21.976524 0-12.129248-9.837042-21.974477-21.974477-21.974477h-91.568509V505.151012h158.806889a21.968337 21.968337 0 0 0 21.975501-21.976524V285.409308a21.971407 21.971407 0 0 0-21.975501-21.974477h-158.806889v-57.681724h329.812611c49.487088 0 97.230462 20.466124 135.067209 57.681724H411.389558a21.966291 21.966291 0 0 0-21.974477 21.974477v197.76518c0 5.834892 2.314719 11.420097 6.434549 15.541974a21.974477 21.974477 0 0 0 15.539928 6.43455h454.572056l30.928407 25.534559c14.710027 23.312962 20.380166 51.488675 16.894785 78.82016zM845.381903 818.246893H92.755544c-12.130272 0-21.974477 9.837042-21.974478 21.974477 0 12.131295 9.844206 21.975501 21.974478 21.975501h752.626359c12.137435 0 21.974477-9.844206 21.974477-21.975501 0-12.137435-9.837042-21.974477-21.974477-21.974477z"/><path d="M339.967902 609.505731h-51.267641c-12.129248 0-21.967314 9.845229-21.967314 21.974477 0 12.137435 9.838066 21.976524 21.967314 21.976524h51.267641c12.137435 0 21.974477-9.839089 21.974477-21.976524 0-12.129248-9.837042-21.974477-21.974477-21.974477z"/></svg>
+  <b style="font-size:.875rem;line-height:1.4">高铁模式运行中...</b>
 </div>
 <div class="mud-card mud-body">
 
@@ -270,8 +276,7 @@ return view.extend({
   </div>
 </div>
 <div class="mud-sec">
-  <h3>邻区</h3>
-  <div class="mud-note mud-progress" id="mud-slow-progress" role="status"></div>
+  <h3 class="mud-home-heading"><span class="mud-heading-label">邻区</span><span class="mud-progress mud-home-progress" id="mud-slow-progress" role="status"></span></h3>
   <div class="mud-scroll">
   <table class="mud-table"><thead><tr><th>制式/频段</th><th>PCI</th><th>频点</th><th>RSRP</th><th>RSRQ</th><th>SINR</th><th></th></tr></thead>
   <tbody id="mud-neigh"><tr><td colspan="7" style="color:var(--text-muted,var(--text-light,#777))">--</td></tr></tbody></table>
@@ -311,7 +316,7 @@ return view.extend({
 			if (op === 'wifi') { if (self._wifiBusy) return; self._wifiBusy = true; btn.disabled = true; }
 			M.busy(btn, true);
 			M.toast(note || ('正在执行 ' + op + ' …'), { type: 'busy' });
-			return L.resolveDefault(M.callAct(op, arg)).then(function(r) {
+			return L.resolveDefault(((op === 'os' || op === 'reboot' || op === 'poweroff') ? M.callBootAct(op, arg) : M.callAct(op, arg))).then(function(r) {
                 if(op==='radio' && r && r.ok && r.id)
                     return SimRadio.wait(r,function(){return !self._disposed && root.isConnected;}).then(function(done) {
                         return done && Object.assign({},done,{op:'radio '+arg});
@@ -364,31 +369,7 @@ return view.extend({
 			return confirmAction(this, '重启调制解调器', '蜂窝连接会中断 1-2 分钟。',
 				{ danger: true }, 'modem-reset', null);
 		};
-		q('btn-reboot').onclick = function() {
-			var btn = this;
-			if (self._disposed || self._quickPending || btn.disabled) return;
-			self._quickPending = true;
-			return M.choiceBox('关机或重启', '请选择关机或重启，执行后所有连接都会断开。', [
-				{ label: '取消', value: undefined },
-				{ label: '关机', value: 'poweroff', danger: true },
-				{ label: '重启', value: 'reboot', danger: true }
-			]).then(function(op) {
-				if ((op !== 'poweroff' && op !== 'reboot') || self._disposed || !root.isConnected) return;
-				return act(op, null, op === 'poweroff' ? '正在关机…' : '正在重启…', btn);
-			}).finally(function() { self._quickPending = false; });
-		};
-		q('btn-default').onclick = function() {
-			return confirmAction(this, '设为默认启动',
-				'以后开机默认进入 OpenWrt；启动失败仍保留 Android 回退。现在不会重启。',
-				{ okText: '确定' }, 'os', 'linux-default');
-		};
-		q('btn-android').onclick = function() {
-			return confirmAction(this, '切换到 Android 系统',
-				'下次启动将进入 Android 并立即重启，此管理页面与蜂窝共享都会断开。\n' +
-				'回到 OpenWrt：在 Android 上执行 mu300-next-boot linux 后重启；\n' +
-				'或什么都不做，连续 7 次开机未完成会自动回退。',
-				{ danger: true, okText: '切换并重启' }, 'os', 'android', '正在武装 Android 引导并重启…');
-		};
+		Boot.bind(self, root, act, function() { return !self._disposed && root.isConnected; });
 		q('reveal').onclick = function() {
 			self.identShown = !self.identShown;
 			M.v('reveal').textContent = self.identShown ? '隐藏卡号信息' : '显示卡号信息';
@@ -463,8 +444,16 @@ return view.extend({
 		if (el && this.lastCell) el.innerHTML = M.neighborRows(this.lastCell, this.lockedCell);
 	},
 
+    paintHighRail: function(state) {
+        var el = document.getElementById('mud-high-rail-notice');
+        if (!el) return;
+        var show = !!(state && state.supported === true && state.known === true && state.active === true);
+        el.hidden = !show;
+        el.style.display = show ? 'flex' : 'none';
+    },
 	update: function(st) {
 		var i = st.info || {};
+        this.paintHighRail(i.modem && i.modem.high_rail);
 		this.lastInfo = i;
 		if (i.ts && this._bootEl) {
 			this._bootEl.classList.remove('mud-booting');

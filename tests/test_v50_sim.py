@@ -62,9 +62,18 @@ elif name=='mu300-at':
   count=s.get('pin_queries',0);s['pin_queries']=count+1;save()
   if count<int(os.environ.get('PIN_DELAY','0')):print('+CME ERROR: 10');sys.exit(0)
   print('+CPIN: READY')
+ elif '+SPTESTMODE?' in cmd:
+  print('+SPTESTMODE: '+s.get('work_modes','152,3,1,19,3,1'))
+ elif '+SPTESTMODEM=' in cmd:
+  if os.environ.get('FAIL_MODE_INIT')=='1' and not (p/'mode-failed-once').exists():
+   (p/'mode-failed-once').touch();print('ERROR');sys.exit(1)
+  s.setdefault('mode_initialized',{})[str(slot)]=True;save()
  else:
   f=int(cmd.rsplit('=',1)[-1]);s['cfun'][slot]=1 if f==4 else 0
+  if f==3:s.setdefault('mode_initialized',{})[str(slot)]=False
   if f==4:
+   if os.environ.get('REQUIRE_MODE_INIT')=='1' and not s.get('mode_initialized',{}).get(str(slot)):
+    print('ERROR');sys.exit(1)
    if os.environ.get('RF_STUCK_ONCE')=='1' and not (p/'rf-stuck-once').exists():
     (p/'rf-stuck-once').touch();s['cfun'][slot]=0
    elif os.environ.get('RF_DELAY'):
@@ -80,6 +89,8 @@ elif name=='mobile-data':
  try:sys.exit(subprocess.run(a[1:]).returncode)
  finally:lock.unlink(missing_ok=True)
 elif name=='mu300-data-sim':
+ if a==['current']:
+  print(s.get('actual',s['data_sim']));sys.exit(0)
  log('logical '+a[-1]);assert os.environ.get('MU300_DATA_SIM_GATE_HELD')=='1'
  assert (p/'run/unisoc-data-sim-switch/pid').read_text().strip()==str(os.getppid())
  if os.environ.get('FAIL_LOGICAL')=='1' and not (p/'failed-logical-once').exists():

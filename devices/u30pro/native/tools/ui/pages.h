@@ -5,6 +5,7 @@
 #include "common.h"
 #include "qr.h"
 #include "plugins.h"
+#include "high_rail_icon.h"
 
 #define FN12 (&ui_font_F12)
 #define FN14 (&ui_font_F14)
@@ -622,12 +623,20 @@ static void page_home(Cv *c)
 		const char *ct = cell_text(b, sizeof b);
 		int rat5 = !strcmp(D.rat, "5G"), tw = gx_text_w(FN14, ct);
 		/* the pill names the access technology only when it is known (the reader keeps the last reported one); never a guessed "4G" */
-		int pw = D.cell_connected && D.rat[0] ? gx_text_w(FN14, D.rat) + 14 : 0, total = pw + (pw ? 6 : 0) + 20 + 6 + tw;
+		int rat_w = gx_text_w(FN14, D.rat);
+		int rail_w = D.high_rail ? HIGH_RAIL_ICON_SIZE + 4 : 0;
+		int pw = D.cell_connected && D.rat[0] ? rat_w + 14 + rail_w : 0, total = pw + (pw ? 6 : 0) + 20 + 6 + tw;
 		float x = 120.f - (float)total / 2.f;
 
 		if (pw) {
 			pill(c, x, 131.f, (float)pw, 19.f, rat5 ? th->b : th->a, 255);
-			TXTM(c, FN14, (int)x + pw / 2, 140, D.rat, 0x10151F);
+			TXTM(c, FN14, (int)x + 7 + rat_w / 2, 140, D.rat, 0x10151F);
+			if (D.high_rail) {
+				int ix = (int)x + 7 + rat_w + 4;
+				for (int j = 0; j < HIGH_RAIL_ICON_SIZE; j++)
+					for (int i = 0; i < HIGH_RAIL_ICON_SIZE; i++)
+						gx_put(c, ix + i, 132 + j, 0x10151F, high_rail_icon_alpha[j * HIGH_RAIL_ICON_SIZE + i]);
+			}
 			x += (float)pw + 6.f;
 		}
 		ic_signal(c, x, 132.f, 20.f, 17.f, D.cell_connected ? signal_bars_from_rsrp(D.rsrp, D.have_sig) : 0, D.cell_connected ? th->a : C_FAINT);

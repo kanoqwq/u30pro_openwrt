@@ -1,6 +1,7 @@
 """First introduction and later button-code updates through the pinned OTA generator."""
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -18,11 +19,28 @@ class Delivery(unittest.TestCase):
     def test_first_and_second_update_preserve_saved_actions_and_user_data(self):
         with tempfile.TemporaryDirectory() as folder:
             base=Path(folder);live=base/'live';live.mkdir()
-            config=b"config modem 'main'\n option u30air_button_double 'custom'\n option u30air_button_double_command 'logger mine'\n"
-            native=b"config control 'settings'\n option power_short_action 'none'\n"
+            config=b"config modem 'main'\n option u30air_button_double 'custom'\n option u30air_button_double_command 'logger mine'\n option f50pro_button_cycle 'list'\n option f50pro_route0 '3'\n option f50pro_route1 '4'\n option u30pro_route0 '3'\n option u30pro_route1 '2'\n"
+            native=b"config control 'settings'\n option power_short_action 'none'\n option home_button_cycle 'list'\n option home_double_action 'data-switch'\n"
             saved={'etc/config/unisoc_modem':config,'etc/config/u30pro_native_control':native,
                    'etc/config/wireless':b'USER WIFI','root/user-data':b'KEEP DATA'}
             code={
+              **{dest:(TOP/src).read_bytes() for dest,src in {
+                'opt/mu300/bin/u30pro-card-pair':'devices/u30pro/overlay/opt/mu300/bin/u30pro-card-pair',
+                'usr/share/ucode/mu300/u30pro-card-pair.uc':'devices/u30pro/overlay/usr/share/ucode/mu300/u30pro-card-pair.uc',
+                'usr/sbin/u30pro-sim-preinit':'devices/u30pro/overlay/usr/sbin/u30pro-sim-preinit',
+                'opt/mu300/bin/mobile-data':'rootfs/overlay/opt/mu300/bin/mobile-data',
+                'opt/mu300/bin/mu300-data-sim':'rootfs/overlay/opt/mu300/bin/mu300-data-sim',
+                'usr/libexec/unisoc-modem/data-sim':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/data-sim',
+                'usr/libexec/unisoc-modem/product-form':'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/product-form',
+                'www/luci-static/resources/view/mu300/sim.js':'openwrt/luci-app-mu300/htdocs/luci-static/resources/view/mu300/sim.js'}.items()},
+              **{'www/luci-static/resources/'+name:(TOP/'openwrt/luci-app-mu300/htdocs/luci-static/resources'/name).read_bytes()
+                 for name in ('mu300/common.js','view/mu300/traffic.js')},
+              'opt/mu300/bin/mu300-physical-sim':(TOP/'rootfs/overlay/opt/mu300/bin/mu300-physical-sim').read_bytes(),
+              'usr/share/ucode/mu300/f50pro-feedback.uc':(TOP/'devices/f50pro/overlay/usr/share/ucode/mu300/f50pro-feedback.uc').read_bytes(),
+              'usr/sbin/f50pro-leds':(TOP/'devices/f50pro/overlay/usr/sbin/f50pro-leds').read_bytes(),
+              'usr/libexec/unisoc-modem/f50pro-sim-key.uc':(TOP/'devices/f50pro/overlay/usr/libexec/unisoc-modem/f50pro-sim-key.uc').read_bytes(),
+              'usr/libexec/unisoc-modem/button-cycle.uc':(TOP/'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/button-cycle.uc').read_bytes(),
+              'usr/share/ucode/mu300/button-cycle.uc':(TOP/'rootfs/overlay/usr/share/ucode/mu300/button-cycle.uc').read_bytes(),
               'usr/libexec/unisoc-modem/buttons':(TOP/'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/buttons').read_bytes(),
               'usr/libexec/unisoc-modem/buttons.py':(TOP/'openwrt/luci-app-mu300/root/usr/libexec/unisoc-modem/buttons.py').read_bytes(),
               'www/luci-static/resources/mu300/buttons.js':(TOP/'openwrt/luci-app-mu300/htdocs/luci-static/resources/mu300/buttons.js').read_bytes(),
@@ -51,6 +69,11 @@ class Delivery(unittest.TestCase):
                 for name,raw in saved.items():self.assertEqual((live/name).read_bytes(),raw)
                 for name,raw in code.items():
                     self.assertEqual((live/name).read_bytes(),raw+(b'\n' if number else b''))
+            engine=TOP/'installer/runtime/luci-app-unisoc-ota/root/usr/lib/unisoc-ota/engine.py'
+            p=subprocess.run([sys.executable,str(engine),'rollback','--root',str(live)],capture_output=True,text=True)
+            self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+            for name,raw in code.items():self.assertEqual((live/name).read_bytes(),raw)
+            for name,raw in saved.items():self.assertEqual((live/name).read_bytes(),raw)
 
 
 if __name__=='__main__':unittest.main()

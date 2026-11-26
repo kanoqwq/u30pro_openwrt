@@ -228,3 +228,33 @@ msgstr "Veri yönetimi"
 
 msgid "Wi-Fi 中继"
 msgstr "Wi-Fi bağlantısı"
+
+msgid "切换到 Android"
+msgstr "Android’e geç"
+
+msgid "高铁模式"
+msgstr "Hızlı tren modu"
+
+msgid "快捷键切卡方式"
+msgstr "Veri SIM geçişi"
+
+msgid "当前双卡卡源来回切（默认）"
+msgstr "Mevcut IMEI1 / IMEI2 kaynakları (varsayılan)"
+
+msgid "全部卡源列表循环"
+msgstr "Kullanılabilir tüm kaynaklar arasında geçiş"
+
+
+
+
+msgid "仅影响切卡快捷键，保存不切卡。"
+msgstr "Yalnızca SIM kısayollarını etkiler. Kaydetmek SIM değiştirmez."
+
+msgid "切卡按列表序号闪灯：内置绿、外置白，失败红。保存不切卡。"
+msgstr "SIM geçişinde liste sırası kadar yanıp söner: dahili yeşil, harici beyaz, hata kırmızı. Kaydetmek SIM değiştirmez."
+
+msgid "CPU0 供 TEE 使用，必须保持在线"
+msgstr "CPU0 TEE için ayrılmıştır ve çevrimiçi kalmalıdır"
+
+msgid "高铁模式运行中..."
+msgstr "Hızlı tren modu etkin..."

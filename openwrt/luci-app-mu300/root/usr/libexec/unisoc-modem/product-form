@@ -175,7 +175,7 @@ def prune(product, board):
         return bool(value) and (not value.isdigit() or int(value) not in allowed)
     if invalid(product + '_card'):
         remove.append(product + '_card')
-    if product in ('f50pro', 'v50'):
+    if product in ('f50pro', 'u30pro', 'v50'):
         routes = [get_option(product + '_route0'), get_option(product + '_route1')]
         # A partial pair must not make the pre-CP controller fail startup.
         if any(routes):

@@ -12,6 +12,10 @@ uloop.init();
 const bus=connect(null,3), config=cursor();
 if(!bus)die('Screen feed: ubus is unavailable\n');
 let requested={}, timer, sms_reads={}, sms_open=null, sms_text=null;
+let rail_revision=0, rail_active=false;
+function high_rail_active(state) {
+    return state?.supported===true && state.known===true && state.active===true;
+}
 function clean(v) { return replace(''+(type(v)=='bool'?(v?1:0):(v ?? '')) ,/[\r\n\t]/g,' '); }
 function object(path) { try{return json(fs.readfile(path) || '{}');}catch(e){return {}; } }
 function cell_status(view,cell,sig,wanted,slot) {
@@ -78,6 +82,7 @@ function screen_data_cards(physical) {
         data_card_ready:physical?.ready && known?1:0};
 }
 function run() {
+    let rail_start=rail_revision;
     let screen=bus.call('u30pro.panel','status',{}) || {}, req=requested;
     requested={};
     for(let name in ['wireless','unisoc_modem','network']) {config.unload(name);config.load(name);}
@@ -141,6 +146,8 @@ function run() {
     for(let key in keys(sms))data[key]=sms[key];
     // List fields are already sanitized individually; keep their TAB framing.
     for(let key in keys(data))if(!match(key,/^(cl|sms)\./))data[key]=clean(data[key]);
+    // An exit event received during the other RPCs must win over the earlier snapshot.
+    data.high_rail=(rail_revision!=rail_start?rail_active:high_rail_active(view.modem?.high_rail))?'1':'0';
     bus.call('u30pro.panel','feed',{data});
     timer.set(screen.screen_on===false?15000:3000);
 }
@@ -160,5 +167,15 @@ const modem_events=bus.listener('mu300.modem.urc',(type,msg)=>{
     if(match(msg?.line || '',/^\+CMT/))timer.set(100);
 });
 const sim_events=bus.listener('mu300.sim-state',()=>timer.set(1));
+const rail_events=bus.listener('mu300.modem.high_rail',(event,msg)=>{
+    rail_revision++;rail_active=high_rail_active(msg);
+    bus.call('u30pro.panel','feed',{partial:true,data:{high_rail:rail_active?'1':'0'}});
+});
+const owner_events=bus.listener('ubus.object.remove',(event,msg)=>{
+    if(msg?.path=='mu300.modem') {
+        rail_revision++;rail_active=false;
+        bus.call('u30pro.panel','feed',{partial:true,data:{high_rail:'0'}});
+    }
+});
 const terminate=uloop.signal(15,()=>uloop.end()), interrupt=uloop.signal(2,()=>uloop.end());
 uloop.run();

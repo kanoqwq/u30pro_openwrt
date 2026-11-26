@@ -90,6 +90,28 @@ with sync_playwright() as p:
                 assert not card.locator('[data-core="0"]').is_checked()
                 assert not card.locator('[data-core="0"]').is_disabled()
                 assert card.locator('[data-core="3"]').is_disabled()
+                if (app.parents[1]/'devices/f50pro/profile.json').is_file():
+                    # Reservation wins over a contradictory hotplug flag and a
+                    # forged checkbox edit; submit/error/reset keep it fixed.
+                    page.evaluate('''() => {
+                        state.cores[0].required_online=true;state.cores[0].online=true;
+                        return Promise.all(ticks.slice(0,1).map(f=>f()));
+                    }''')
+                    assert card.locator('[data-core="0"]').is_disabled()
+                    assert 'TEE' in card.locator('[data-core="0"]').get_attribute('title')
+                    card.locator('[data-core="0"]').evaluate('n=>n.checked=false')
+                    card.locator('button.on').click()
+                    page.wait_for_function('requests.length===5 && !document.querySelector(".mud-cpu-cores button").disabled')
+                    assert page.evaluate('requests[4][0][0]')=={'id':0,'online':True}
+                    assert card.locator('[data-core="0"]').is_disabled()
+                    page.evaluate('fail=true')
+                    card.locator('button.on').click();page.wait_for_selector('.mud-core-error')
+                    assert card.locator('[data-core="0"]').is_disabled()
+                    page.evaluate('fail=false')
+                    card.locator('button').nth(1).click()
+                    page.wait_for_function('requests.length===7 && !document.querySelector(".mud-cpu-cores button").disabled')
+                    assert card.locator('[data-core="0"]').is_checked()
+                    assert card.locator('[data-core="0"]').is_disabled()
                 assert not errors,errors
                 page.close()
     browser.close()

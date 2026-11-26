@@ -270,8 +270,10 @@ static int m_command(struct ubus_context *c, struct ubus_object *o, struct ubus_
 	return m_status(c, o, req, method, msg);
 }
 
-enum { F_DATA, __F_MAX };
-static const struct blobmsg_policy feed_policy[__F_MAX] = { [F_DATA] = { "data", BLOBMSG_TYPE_TABLE } };
+enum { F_DATA, F_PARTIAL, __F_MAX };
+static const struct blobmsg_policy feed_policy[__F_MAX] = {
+	[F_DATA] = { "data", BLOBMSG_TYPE_TABLE }, [F_PARTIAL] = { "partial", BLOBMSG_TYPE_BOOL }
+};
 
 static int m_feed(struct ubus_context *c, struct ubus_object *o, struct ubus_request_data *req, const char *method, struct blob_attr *msg)
 {
@@ -282,13 +284,15 @@ static int m_feed(struct ubus_context *c, struct ubus_object *o, struct ubus_req
 	(void)c; (void)o; (void)req; (void)method;
 	blobmsg_parse(feed_policy, __F_MAX, tb, blob_data(msg), blob_len(msg));
 	if (!tb[F_DATA]) return UBUS_STATUS_INVALID_ARGUMENT;
-	D.nsms = 0;
-	for (int i = 0; i < 6; i++) D.sms[i].id[0] = 0;
-	D.sinr_ok = D.nr = D.nr_idle = D.nr_rsrp_ok = D.nr_sinr_ok = 0;
-	D.bw_idx = -1;
-	D.lte_bw[0] = 0;
-	D.nr_bw = 0;
-	memset(D.cl, 0, sizeof D.cl);
+	if (!tb[F_PARTIAL] || !blobmsg_get_bool(tb[F_PARTIAL])) {
+		D.nsms = 0;
+		for (int i = 0; i < 6; i++) D.sms[i].id[0] = 0;
+		D.sinr_ok = D.nr = D.nr_idle = D.nr_rsrp_ok = D.nr_sinr_ok = 0;
+		D.bw_idx = -1;
+		D.lte_bw[0] = 0;
+		D.nr_bw = 0;
+		memset(D.cl, 0, sizeof D.cl);
+	}
 	blobmsg_for_each_attr(cur, tb[F_DATA], rem) {
 		switch (blobmsg_type(cur)) {
 		case BLOBMSG_TYPE_STRING: snprintf(v, sizeof v, "%s", blobmsg_get_string(cur)); break;

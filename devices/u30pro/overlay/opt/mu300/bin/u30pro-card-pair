@@ -1,0 +1,22 @@
+#!/bin/sh
+# Keep the existing eUICC guard and SIM locks around the ucode transaction.
+set -eu
+TOOL=${MU300_U30PRO_PAIR_TOOL:-/usr/share/ucode/mu300/u30pro-card-pair.uc}
+if [ "${1:-}" = validate ]; then exec ucode "$TOOL" "$@"; fi
+[ "${1:-}" = apply ] || exit 2
+if [ "${UNISOC_EUICC_GUARDED:-0}" != 1 ]; then
+    exec "${MU300_EUICC_TOOL:-/usr/libexec/unisoc-modem/euicc}" --guard /bin/sh "$0" "$@"
+fi
+run=${MU300_U30PRO_RUN:-/run}
+native=${MU300_SIM_CONTROL_LOCK:-$run/mu300/sim-control.lock}
+gate=${MU300_SIM_MUTEX:-$run/unisoc-data-sim-switch}
+mkdir -p "$(dirname "$native")"
+exec 9>"$native"
+flock -n 9 || { echo modem_busy >&2; exit 1; }
+mkdir "$gate" 2>/dev/null || { echo modem_busy >&2; exit 1; }
+echo $$ > "$gate/pid"
+trap 'rm -f "$gate/pid"; rmdir "$gate" 2>/dev/null || true' EXIT
+ucode "$TOOL" "$@" &
+worker=$!
+trap 'kill -TERM "$worker" 2>/dev/null || true; wait "$worker" || true; exit 143' INT TERM
+wait "$worker"

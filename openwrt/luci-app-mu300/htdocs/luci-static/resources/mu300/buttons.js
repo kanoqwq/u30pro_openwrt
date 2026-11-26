@@ -2,10 +2,15 @@
 'require baseclass';
 'require rpc';
 'require mu300.common as M';
-var params=['long','long_command','double','double_command','power_double','power_double_command'];
+var params=['long','long_command','double','double_command','power_double','power_double_command','cycle'];
 var get=rpc.declare({object:'mu300dash',method:'button_get',nobatch:true,expect:{'':{}}});
 var set=rpc.declare({object:'mu300dash',method:'button_set',params:params,nobatch:true,expect:{'':{}}});
 var words={
+ '快捷键切卡方式':['Data SIM cycling','Veri SIM geçişi'],
+ '当前双卡卡源来回切（默认）':['Current IMEI1 / IMEI2 sources (default)','Mevcut IMEI1 / IMEI2 kaynakları (varsayılan)'],
+ '全部卡源列表循环':['Cycle all available sources','Kullanılabilir tüm kaynaklar arasında geçiş'],
+ '仅影响切卡快捷键，保存不切卡。':['Only affects SIM shortcuts. Saving does not switch SIMs.','Yalnızca SIM kısayollarını etkiler. Kaydetmek SIM değiştirmez.'],
+ '切卡按列表序号闪灯：内置绿、外置白，失败红。保存不切卡。':['SIM switching flashes the list position: green for internal, white for external, red on failure. Saving does not switch SIMs.','SIM geçişinde liste sırası kadar yanıp söner: dahili yeşil, harici beyaz, hata kırmızı. Kaydetmek SIM değiştirmez.'],
  '实体按键':['Physical buttons','Fiziksel tuşlar'],
  '功能键 · 短按':['Function · short press','İşlev · kısa basma'],
  '功能键 · 双击':['Function · double press','İşlev · çift basma'],
@@ -48,20 +53,21 @@ function defaultAction(model,key){
  return '无动作';
 }
 function replyError(reply){
+ if(reply&&reply.error==='invalid_button_cycle')return Error(t('设置参数无效，请刷新页面后重试'));
  var names={invalid_button_settings:'设置参数无效，请刷新页面后重试',invalid_button_action:'设置参数无效，请刷新页面后重试',invalid_button_command:'请输入一行命令，不能包含换行。',empty_button_command:'请输入一行命令，不能包含换行。',storage_failed:'设置无法写入，请检查可用空间和文件系统写入权限',power_button_unavailable:'这台设备没有可自定义的电源键'};
  return Error(reply&&reply.error?(names[reply.error]?t(names[reply.error]):String(reply.error)):t('设置参数无效，请刷新页面后重试'));
 }
 function node(tag,text,cls){var n=document.createElement(tag);if(text)n.textContent=t(text);if(cls)n.className=cls;return n;}
 return baseclass.extend({mount:function(root){
  var card=node('section',null,'mud-card mud-buttons');card.hidden=true;card.style.marginTop='14px';
- card.append(node('style','.mud-buttons[hidden],.mud-buttons [hidden]{display:none!important}.mud-buttons .mud-device-field{min-width:0}.mud-buttons .mud-note{line-height:1.6}'));
+ card.append(node('style','.mud-buttons[hidden],.mud-buttons [hidden]{display:none!important}.mud-buttons .mud-device-field{min-width:0}.mud-buttons .mud-note{line-height:1.4;margin:6px 0}.mud-buttons .mud-note:empty{display:none}'));
  card.append(node('h3','实体按键'),node('p','保留原有按键行为；设置后重启仍保留。','mud-note'));
  var fields=node('div',null,'mud-device-grid'),powerFields=node('div',null,'mud-device-grid'),rows=[],disposed=false,busy=true,loaded=false;
  var writable=typeof L.hasViewPermission!=='function'||L.hasViewPermission();
  fields.style.gridTemplateColumns=powerFields.style.gridTemplateColumns='repeat(auto-fit,minmax(min(100%,220px),1fr))';
  powerFields.style.cssText+=';margin-top:14px;padding-top:10px;border-top:1px solid var(--hairline,var(--border,#ccc))';
  var fixed=node('p',null,'mud-note');card.append(fixed);
- card.append(fields,powerFields,node('p','单击立即响应。未配置双击时，连按逐次响应；已配置时，250 毫秒内再按一次执行双击动作。','mud-note'));
+ card.append(fields,powerFields);
  [['double','double_command','功能键 · 双击',3],['long','long_command','功能键 · 长按',1],['power_double','power_double_command','电源键 · 双击',4]].forEach(function(item){
   var index=item[3];
   var row=node('div',null,'mud-device-field'),label=node('label',item[2]),select=node('select');
@@ -76,12 +82,21 @@ return baseclass.extend({mount:function(root){
   select.onchange=function(){commandBox.hidden=select.value!=='custom';};
   rows.push(field);
  });
+ var cycleField=node('div',null,'mud-device-field'),cycle=node('select'),cycleLabel=node('label','快捷键切卡方式'),cycleNote=node('p','切卡按列表序号闪灯：内置绿、外置白，失败红。保存不切卡。','mud-note');
+ cycleField.hidden=true;cycleField.style.gridColumn='1 / -1';cycle.style.maxWidth='480px';cycle.id='mud-button-cycle';cycleLabel.htmlFor=cycle.id;
+ cycleNote.style.margin='0';
+ [['pair','当前双卡卡源来回切（默认）'],['list','全部卡源列表循环']].forEach(function(pair){var o=node('option',pair[1]);o.value=pair[0];cycle.append(o);});
+ cycleField.append(cycleLabel,cycle,cycleNote);fields.append(cycleField);
  var powerNote=node('p','电源键长按固定用于关机，不能自定义。','mud-note'),save=node('button','保存按键设置','mud-btn'),result=node('p',null,'mud-note');
  save.type='button';result.setAttribute('role','status');card.append(powerNote,save,result);root.append(card);
- function disable(){save.disabled=busy||!loaded||!writable;rows.forEach(function(r){r.select.disabled=r.command.disabled=busy||!loaded||!writable;});card.setAttribute('aria-busy',String(busy));}
+ function disable(){save.disabled=cycle.disabled=busy||!loaded||!writable;rows.forEach(function(r){r.select.disabled=r.command.disabled=busy||!loaded||!writable;});card.setAttribute('aria-busy',String(busy));}
  function paint(reply){
   if(!reply||!reply.ok)throw replyError(reply);
   card.hidden=!reply.supported;if(!reply.supported)return;
+  cycleField.hidden=reply.model!=='f50pro'&&reply.model!=='u30pro';cycle.value=reply.cycle||'pair';
+  cycleNote.textContent=t(reply.model==='f50pro'?'切卡按列表序号闪灯：内置绿、外置白，失败红。保存不切卡。':'仅影响切卡快捷键，保存不切卡。');
+  fields.style.marginBottom=cycleField.hidden?'':'8px';
+  if(!cycleField.hidden&&!cycle.value)throw replyError({error:'invalid_button_cycle'});
   fixed.textContent=t('功能键 · 短按')+'：'+t(defaultAction(reply.model,'short'))+(reply.power?' · '+t('电源键 · 短按')+'：'+t(defaultAction(reply.model,'power_short')):'');
   rows.forEach(function(r){r.row.hidden=r.key.indexOf('power_')===0&&!reply.power;});powerNote.hidden=!reply.power;powerFields.hidden=!reply.power;
   rows.forEach(function(r,index){
@@ -104,7 +119,7 @@ return baseclass.extend({mount:function(root){
  disable();get().then(function(r){if(!disposed)paint(r);}).catch(function(){if(!disposed){card.hidden=false;result.textContent=t('按键设置读取失败');}}).finally(function(){busy=false;if(!disposed)disable();});
  save.onclick=function(){
   if(disposed||busy||!loaded||!writable)return;
-  var values={};
+  var values={cycle:cycleField.hidden?'':cycle.value};
   for(var r of rows){
    if(!r.row.hidden&&r.select.value==='custom'&&(!r.command.value.trim()||/[\r\n\x00]/.test(r.command.value))){result.textContent=t('请输入一行命令，不能包含换行。');r.command.focus();return;}
    values[r.key]=r.select.value;values[r.commandKey]=r.command.value;
