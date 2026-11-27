@@ -258,3 +258,33 @@ msgstr "CPU0 TEE için ayrılmıştır ve çevrimiçi kalmalıdır"
 
 msgid "高铁模式运行中..."
 msgstr "Hızlı tren modu etkin..."
+
+msgid "PIN 解锁"
+msgstr "PIN kilit açma"
+
+msgid "检测到需要 PIN 的卡时在此输入；输错次数有限，连续失败会转为 PUK 锁定。"
+msgstr "PIN gerektiren bir kart algılandığında buraya girin; deneme hakkı sınırlıdır, art arda hatalı girişler PUK kilidine yol açar."
+
+msgid "解锁"
+msgstr "Kilidi aç"
+
+msgid "新 PIN"
+msgstr "Yeni PIN"
+
+msgid "请输入数字 PIN/PUK"
+msgstr "Sayısal PIN/PUK girin"
+
+msgid "PUK 解锁需要同时设置新 PIN"
+msgstr "PUK kilit açma yeni bir PIN belirlemeyi gerektirir"
+
+msgid "正在解锁…"
+msgstr "Kilit açılıyor…"
+
+msgid "PIN 已解锁"
+msgstr "PIN kilidi açıldı"
+
+msgid "解锁失败"
+msgstr "Kilit açma başarısız"
+
+msgid "PUK 锁定：输入 PUK 与新 PIN"
+msgstr "PUK kilitli: PUK ve yeni bir PIN girin"

@@ -9,6 +9,7 @@ var get=rpc.declare({object:'mu300dash',method:'data_sim_get',nobatch:true,expec
 var getPhysical=rpc.declare({object:'mu300dash',method:'physical_sim_get',nobatch:true,expect:{'':{}}});
 var start=rpc.declare({object:'mu300dash',method:'data_sim_set',params:['target'],nobatch:true,expect:{'':{}}});
 var status=rpc.declare({object:'mu300dash',method:'data_sim_status',params:['id'],nobatch:true,expect:{'':{}}});
+var atSlot=rpc.declare({object:'mu300dash',method:'at',params:['cmd','slot'],nobatch:true,expect:{'':{}}});
 var errors={dual_sim_unavailable:'当前配置不支持双卡切换',invalid_sim:'SIM 卡槽无效',modem_busy:'另一项模组操作正在执行',sim_read_failed:'无法核验当前上网卡',sim_not_ready:'目标 SIM 尚未就绪',data_disconnect_failed:'旧数据连接未停止，已取消切换',sim_switch_failed_restored:'切换失败，已恢复原上网卡',sim_rollback_failed:'切换失败且恢复不完整，请检查 SIM 和信号',storage_failed:'设置保存失败'};
 errors['Enable the target SIM radio before switching']='请先开启目标 SIM 的射频，再切换上网卡';
 errors.dual_boot_required='双卡尚未共同初始化，请重启后检查状态';
@@ -165,6 +166,53 @@ return view.extend({
                 });
             };
         } else if(physical.error)panel.append(el('p',message(physical.error),'mud-note'));
+        var pinBox=el('div',null,'mud-data-sim');pinBox.hidden=true;panel.append(pinBox);
+        pinBox.append(el('h3',M.translate('PIN 解锁')));
+        pinBox.append(el('p',M.translate('检测到需要 PIN 的卡时在此输入；输错次数有限，连续失败会转为 PUK 锁定。'),'mud-note'));
+        var pinRows={};
+        [0,1].forEach(function(slot){
+            if(slot>=(data[0].slots||1))return;
+            var row=el('div',null,'mud-data-sim-controls');row.hidden=true;
+            var label=el('label','IMEI'+(slot+1)+' · '+M.translate('解锁'));
+            var input=el('input');input.type='password';input.inputMode='numeric';input.autocomplete='off';
+            input.maxLength=16;input.placeholder='PIN';
+            var input2=el('input');input2.type='password';input2.inputMode='numeric';input2.autocomplete='off';
+            input2.maxLength=8;input2.placeholder=M.translate('新 PIN');input2.hidden=true;
+            var btn=el('button',M.translate('解锁'),'mud-btn');btn.type='button';
+            var note=el('span',null,'mud-note');
+            var pending='';
+            btn.onclick=function(){
+                if(self.busy)return;
+                var a=input.value.trim(),b=input2.value.trim();
+                if(!/^[0-9]{4,16}$/.test(a)){M.toast(M.translate('请输入数字 PIN/PUK'),{type:'error'});return;}
+                if(pending==='SIM PUK'&&!/^[0-9]{4,8}$/.test(b)){M.toast(M.translate('PUK 解锁需要同时设置新 PIN'),{type:'error'});return;}
+                self.busy=true;btn.disabled=true;
+                var toast=M.toast(M.translate('正在解锁…'),{type:'busy',timeout:0});
+                atSlot('AT+CPIN='+a+(pending==='SIM PUK'?','+b:''),String(slot)).then(function(r){
+                    var rep=(r&&r.reply)||'';
+                    if(/(^|\n)OK/.test(rep)&&!/ERROR/.test(rep)){M.toast(M.translate('PIN 已解锁'),{type:'success'});input.value='';input2.value='';}
+                    else throw new Error(rep.replace(/\s+/g,' ').trim()||M.translate('解锁失败'));
+                }).catch(function(e){if(root.isConnected)M.toast(e.message,{type:'error'});})
+                  .finally(function(){toast.close();self.busy=false;btn.disabled=false;if(root.isConnected&&self.refreshPins)self.refreshPins();});
+            };
+            row.append(label,input,input2,btn,note);pinBox.append(row);
+            pinRows[slot]={row:row,input:input,input2:input2,btn:btn,note:note,
+                set pending(v){pending=v;input2.hidden=v!=='SIM PUK';input.placeholder=v==='SIM PUK'?'PUK':'PIN';}};
+        });
+        self.refreshPins=function(){
+            var slots=Object.keys(pinRows);
+            if(!slots.length)return Promise.resolve();
+            return Promise.all(slots.map(function(slot){
+                var R=pinRows[slot];
+                return atSlot('AT+CPIN?',String(slot)).then(function(r){
+                    var rep=(r&&r.reply)||'',m=rep.match(/\+CPIN:\s*([A-Z0-9 ]+)/),st=m?m[1].trim():'';
+                    if(st==='READY'){R.row.hidden=true;R.pending='';}
+                    else if(st){R.row.hidden=false;R.pending=st;R.note.textContent=st==='SIM PUK'?M.translate('PUK 锁定：输入 PUK 与新 PIN'):st;}
+                    else{R.row.hidden=true;R.pending='';}
+                    return st;
+                }).catch(function(){return '';});
+            })).then(function(states){pinBox.hidden=!states.some(function(s){return s&&s!=='READY';});});
+        };
         button.disabled=data[0].slots!==2 || !data[1].ok || data[1].ready===false;
         select.disabled=data[0].slots!==2 || !data[1].ok;
         if(button.disabled)panel.append(el('p',message(data[1].ready===false && data[0].slots===2?'dual_boot_required':'dual_sim_unavailable'),'mud-note'));
@@ -203,7 +251,8 @@ return view.extend({
             if(document.hidden||!root.isConnected||self.busy||self.inflight)return Promise.resolve();
             self.inflight=true;
             return Promise.all([get().then(function(r){if(root.isConnected)paint(r,false);}),
-                physicalButton?getPhysical().then(function(r){if(root.isConnected)paintPhysical(r,false);}):Promise.resolve()])
+                physicalButton?getPhysical().then(function(r){if(root.isConnected)paintPhysical(r,false);}):Promise.resolve(),
+                self.refreshPins()])
                 .catch(function(){}).finally(function(){self.inflight=false;});
         };
         poll.add(this.refresh,2);

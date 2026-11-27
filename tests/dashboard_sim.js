@@ -79,7 +79,7 @@ const tick=async()=>{for(let i=0;i<30;i++)await Promise.resolve();};
         const root=view.render([{slots:2},{...state}]);
         function all(n,tag){return (n.tag===tag?[n]:[]).concat(...n.children.map(c=>all(c,tag)));}
         const buttons=all(root,'button');
-        assert.equal(buttons.length,1,'U30 has no separate hot-switch policy controls');
+        assert.equal(buttons.length,3,'data-switch plus one hidden PIN-unlock row per stack');
         const switchButton=buttons[0], select=find(root,'select');
         assert(switchButton.disabled,'uninitialized dual stacks require cold boot');
         assert(!select.disabled);
