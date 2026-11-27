@@ -258,3 +258,33 @@ msgstr "CPU0 is reserved for TEE and must remain online"
 
 msgid "高铁模式运行中..."
 msgstr "High-speed rail mode active..."
+
+msgid "PIN 解锁"
+msgstr "PIN unlock"
+
+msgid "检测到需要 PIN 的卡时在此输入；输错次数有限，连续失败会转为 PUK 锁定。"
+msgstr "Enter the PIN here when a card that requires one is detected; attempts are limited and repeated failures escalate to a PUK lock."
+
+msgid "解锁"
+msgstr "Unlock"
+
+msgid "新 PIN"
+msgstr "New PIN"
+
+msgid "请输入数字 PIN/PUK"
+msgstr "Enter a numeric PIN/PUK"
+
+msgid "PUK 解锁需要同时设置新 PIN"
+msgstr "PUK unlock requires setting a new PIN"
+
+msgid "正在解锁…"
+msgstr "Unlocking…"
+
+msgid "PIN 已解锁"
+msgstr "PIN unlocked"
+
+msgid "解锁失败"
+msgstr "Unlock failed"
+
+msgid "PUK 锁定：输入 PUK 与新 PIN"
+msgstr "PUK locked: enter the PUK and a new PIN"
