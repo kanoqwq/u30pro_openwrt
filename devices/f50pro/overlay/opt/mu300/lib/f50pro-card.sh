@@ -74,22 +74,23 @@ f50pro_active_card() {
 
 # Stage an initial preference in a new root, without AT, NV or live UCI writes.
 # Both the Android importer and an authorized RAM trial use this same mapping.
+# Return 2 for an unusable optional stock snapshot, 1 for staging I/O errors.
 f50pro_import_card() {
     local destination=$1 board=$2 card=$3 dsds=${4:-} chip=${5:-} psim=${6:-} mapping stack flags first second
-    case $dsds in ''|0|1) ;; *) return 1;; esac
-    mapping=$(f50pro_card_map "$board" "$card") || return 1
+    case $dsds in ''|0|1) ;; *) return 2;; esac
+    mapping=$(f50pro_card_map "$board" "$card") || return 2
     stack=${mapping%% *}
     first=; second=
     case "$chip:$psim" in 0:0|0:1|1:0|1:1)
-        first=$(f50pro_active_card "$board" 0 "$chip" "$psim") || return 1
-        second=$(f50pro_active_card "$board" 1 "$chip" "$psim") || return 1
-        case "$stack:$card" in "0:$first"|"1:$second") ;; *) return 1;; esac
+        first=$(f50pro_active_card "$board" 0 "$chip" "$psim") || return 2
+        second=$(f50pro_active_card "$board" 1 "$chip" "$psim") || return 2
+        case "$stack:$card" in "0:$first"|"1:$second") ;; *) return 2;; esac
         ;;
         :) ;;
-        *) return 1;;
+        *) return 2;;
     esac
     mkdir -p "$destination/etc/uci-defaults" || return 1
-    cat > "$destination/etc/uci-defaults/99-zz-f50pro-card" <<EOF
+    cat > "$destination/etc/uci-defaults/99-zz-f50pro-card" <<EOF || return 1
 #!/bin/sh
 [ -z "\$(uci -q get unisoc_modem.main.f50pro_card)" ] || exit 0
 uci -q set unisoc_modem.main.f50pro_card='$card' &&
@@ -98,7 +99,7 @@ uci -q set unisoc_modem.main.dual_standby='0' &&
 uci -q commit unisoc_modem
 EOF
     if [ -n "$first$second" ]; then
-        cat >> "$destination/etc/uci-defaults/99-zz-f50pro-card" <<EOF
+        cat >> "$destination/etc/uci-defaults/99-zz-f50pro-card" <<EOF || return 1
 [ "\$?" = 0 ] || exit 1
 uci -q set unisoc_modem.main.f50pro_route0='$first' &&
 uci -q set unisoc_modem.main.f50pro_route1='$second' &&
@@ -108,7 +109,7 @@ EOF
     # New installations default to single standby, as requested. Import the
     # actual card sources, but do not enable peer RF without an OpenWrt opt-in.
     flags='1 0'; [ "$stack" != 1 ] || flags='0 1'
-        cat >> "$destination/etc/uci-defaults/99-zz-f50pro-card" <<EOF
+        cat >> "$destination/etc/uci-defaults/99-zz-f50pro-card" <<EOF || return 1
 [ "\$?" = 0 ] || exit 1
 policy=\${UNISOC_RADIO_POLICY:-/etc/mu300/sim-radio}
 if [ ! -e "\$policy" ]; then

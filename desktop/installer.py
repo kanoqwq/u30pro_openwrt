@@ -169,6 +169,10 @@ def encrypted(properties, source, raw_magic):
 
 def android_profile(model,platform=''):
     names=[s.strip().upper() for s in model.splitlines()]
+    if 'MU5352' in names:
+        if names!=['MU5352','MU5352'] or platform.strip()!='ums9620':
+            raise ValueError('M3 requires MU5352 / MU5352 and the UMS9620 platform')
+        return 'u30air'
     if 'MU3356' in names or 'F50PRO' in names or 'F50 PRO' in names:
         if platform.strip()!='ums9632':raise ValueError('F50 Pro requires the UMS9632 platform')
         return 'f50pro'

@@ -52,6 +52,8 @@ bc_setup() {
     command -v getprop >/dev/null 2>&1 || { bc_refuse "this is not Android: the boot chain is only ever copied from Android"; return 1; }
     _m="$(getprop ro.product.model) / $(getprop ro.product.device)"
     case $_m in
+        'MU5352 / MU5352')
+            [ "$(getprop ro.board.platform)" = ums9620 ] || { bc_refuse 'M3/MU5352 is not the UMS9620 platform'; return 1; } ;;
         *MU3356*|*F50Pro*|*"F50 Pro"*)
             [ "$(getprop ro.board.platform)" = ums9632 ] || { bc_refuse 'F50 Pro is not the UMS9632 platform'; return 1; }
             ;;

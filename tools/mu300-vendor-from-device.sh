@@ -42,7 +42,17 @@ if [ "${MU300_PLATFORM:-$(cat "$R/etc/mu300/platform" 2>/dev/null)}" = u30pro ];
         case $chip in [01][01]) chip=${chip#?};; esac
         psim=$(cat /sys/module/sim_gpio_ctl/parameters/gpio_sim_ctrl_psim 2>/dev/null || true)
         if f50pro_card_map "$board" "$card" >/dev/null; then
-            f50pro_import_card "$R" "$board" "$card" "$dsds" "$chip" "$psim"
+            if f50pro_import_card "$R" "$board" "$card" "$dsds" "$chip" "$psim"; then
+                :
+            else
+                rc=$?
+                if [ "$rc" = 2 ]; then
+                    echo "Stock SIM settings inconsistent (board=$board card=$card chip=$chip psim=$psim); keeping new OpenWrt defaults" >&2
+                else
+                    echo 'Failed to write initial F50 Pro SIM settings' >&2
+                    exit "$rc"
+                fi
+            fi
         fi
     fi
     exit 0
